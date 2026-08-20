@@ -1,0 +1,15 @@
+# 默认负责人
+* @antonchou
+
+# 后端、配置、数据和文档
+/backend/  @antonchou
+/configs/  @antonchou
+/data/     @antonchou
+/docs/     @antonchou
+
+# 前端与固件
+/frontend/ @xixi1-13
+/firmware/ @antonchou
+
+# GitHub协作配置
+/.github/  @antonchou

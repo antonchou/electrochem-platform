@@ -1,0 +1,17 @@
+{
+  "name": "ec-web-ui-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "溶液导电性相对比较 · Web 前端验收测试（F01-F10 / P01-P04）",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

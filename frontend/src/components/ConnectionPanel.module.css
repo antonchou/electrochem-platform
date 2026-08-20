@@ -1,0 +1,68 @@
+.panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.connected {
+  color: var(--success);
+}
+.connected.dot {
+  background: var(--success);
+}
+
+.disconnected {
+  color: var(--danger);
+}
+.disconnected.dot {
+  background: var(--danger);
+}
+
+.reconnecting,
+.connecting {
+  color: var(--warning);
+}
+.reconnecting.dot,
+.connecting.dot {
+  background: var(--warning);
+}
+
+.idle {
+  color: var(--text-sub);
+}
+.idle.dot {
+  background: var(--text-sub);
+}
+
+.mode {
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+  color: var(--text-sub);
+}
+
+.reconnect {
+  margin-left: 8px;
+  padding: 3px 12px;
+  font-size: 12px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  color: var(--danger);
+  background: #fff;
+  cursor: pointer;
+}
+
+.reconnect:hover {
+  background: #fef2f2;
+}

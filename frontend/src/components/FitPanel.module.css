@@ -1,0 +1,153 @@
+.reserved {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #fafbfd;
+}
+
+.fitHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.reservedTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.reservedHint {
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+.axisRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.axisLabel {
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+.axisChip {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+.axisChipActive {
+  border-color: var(--primary);
+  background: #eef3ff;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.modelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.modelChip {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+.modelChipActive {
+  border-color: var(--primary);
+  background: #eef3ff;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.fitBtn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  cursor: pointer;
+}
+
+.fitBtn:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.fitBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.fitError {
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.fitResults {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.table th {
+  background: #f1f3f8;
+}
+
+.bestRow {
+  background: #eef7f0;
+}
+
+.params {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.bestHint {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--success);
+}
+
+.fitChart {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}

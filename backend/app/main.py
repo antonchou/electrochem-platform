@@ -1,75 +1,36 @@
-import asyncio
-import math
-import time
-from datetime import datetime, timezone
+"""FastAPI 应用入口：溶液导电性相对比较 · 模拟数据源。"""
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from contextlib import asynccontextmanager
 
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .persistence import persist
+from .routes import router, start_acquisition, stop_acquisition
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动时初始化 SQLite、启动后台落库任务与单一采集任务；关闭时反向停止。"""
+    await persist.start()
+    await start_acquisition()
+    yield
+    await stop_acquisition()
+    await persist.stop()
+
 
 app = FastAPI(
-    title="Raspberry Pi Electrochem Platform",
-    version="0.1.0",
+    title="溶液导电性相对比较 · 模拟数据源",
+    description="供前端联调与演示；真实后端接入后仅需更换前端连接地址。",
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
-STARTED_MONOTONIC = time.monotonic()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 仅开发/演示用途
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/", include_in_schema=False)
-async def root():
-    return RedirectResponse(url="/docs", status_code=307)
-
-@app.get("/")
-async def root() -> dict:
-    return {
-        "service": "electrochem-backend",
-        "status": "running",
-        "health": "/health",
-        "docs": "/docs",
-        "mock_websocket": "/ws/mock",
-    }
-
-@app.get("/health")
-async def health() -> dict:
-    return {
-        "status": "ok",
-        "service": "electrochem-backend",
-        "phase": "0.3",
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-@app.websocket("/ws/mock")
-async def mock_stream(websocket: WebSocket) -> None:
-    await websocket.accept()
-    seq = 0
-
-    try:
-        while True:
-            elapsed = time.monotonic() - STARTED_MONOTONIC
-            ec_value = 500.0 + 20.0 * math.sin(elapsed / 8.0)
-            temperature = 25.0 + 0.3 * math.sin(elapsed / 15.0)
-
-            await websocket.send_json(
-                {
-                    "schema_version": "0.1.0",
-                    "seq": seq,
-                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                    "monotonic_ms": round(elapsed * 1000),
-                    "sensor_path_id": "MOCK_EC_01",
-                    "calibration_id": None,
-                    "quality_flags": [],
-                    "raw": {
-                        "ec_us_cm": round(ec_value, 3),
-                        "temperature_c": round(temperature, 3),
-                    },
-                    "calibrated": None,
-                    "derived": None,
-                    "status": "streaming",
-                }
-            )
-
-            seq += 1
-            await asyncio.sleep(1)
-
-    except WebSocketDisconnect:
-        pass
+app.include_router(router)

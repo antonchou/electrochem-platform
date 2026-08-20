@@ -1,0 +1,22 @@
+.stats {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+
+.item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.label {
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+.value {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
