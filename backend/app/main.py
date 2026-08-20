@@ -6,14 +6,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .persistence import persist
-from .routes import router
+from .routes import router, start_acquisition, stop_acquisition
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时初始化 SQLite 并启动后台落库任务；关闭时清空队列。"""
+    """启动时初始化 SQLite、启动后台落库任务与单一采集任务；关闭时反向停止。"""
     await persist.start()
+    await start_acquisition()
     yield
+    await stop_acquisition()
     await persist.stop()
 
 

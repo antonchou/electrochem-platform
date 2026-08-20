@@ -24,6 +24,8 @@ export class WebSocketClient implements DataClient {
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private lastMessageAt = 0;
   private manualClosed = false;
+  /** 最近收到消息所反映的实验是否运行中（看门狗只在 running 时检查，P2-5） */
+  private running = false;
 
   constructor(private readonly url: string) {}
 
@@ -46,6 +48,14 @@ export class WebSocketClient implements DataClient {
 
   connect(): void {
     this.manualClosed = false;
+    // P2-6 修复：手动重连前取消已排队的自动重连定时器，并关闭可能存在的旧连接，
+    // 避免重连后旧定时器再开一个连接，造成双 WebSocket 重复收帧。
+    this.clearTimers();
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+      this.ws.onclose = null;
+      this.ws.close();
+      this.ws = null;
+    }
     this.open();
   }
 
@@ -82,6 +92,7 @@ export class WebSocketClient implements DataClient {
 
     ws.onopen = () => {
       this.reconnectAttempts = 0;
+      this.running = false; // 新连接未收到数据前，看门狗不检查（避免空闲误报）
       this.setStatus('connected');
       this.armWatchdog();
     };
@@ -95,8 +106,10 @@ export class WebSocketClient implements DataClient {
         return;
       }
       if ('ec' in parsed) {
+        this.running = parsed.status === 'running';
         this.emit({ type: 'message', frame: parsed as ExperimentFrame });
       } else {
+        this.running = parsed.status === 'running';
         this.emit({ type: 'status', status: parsed.status });
       }
     };
@@ -124,14 +137,15 @@ export class WebSocketClient implements DataClient {
   }
 
   /**
-   * 看门狗：连接已建立但持续无数据（超过 staleThresholdMs）→ 提示数据流超时。
-   * 用于发现"TCP 还活着但服务端停止推送"的异常。
+   * 看门狗：实验运行中连接已建立但持续无数据（超过 staleThresholdMs）→ 提示数据流超时。
+   * 仅在 running 时检查（P2-5）：空闲/停止/刚连接未运行时不检查，避免误报。
    */
   private armWatchdog(): void {
     this.lastMessageAt = Date.now();
     this.clearWatchdog();
     this.watchdogTimer = setInterval(() => {
       if (this.status !== 'connected') return;
+      if (!this.running) return;
       if (Date.now() - this.lastMessageAt > config.chart.staleThresholdMs) {
         this.emit({ type: 'error', message: `数据流超时（${config.chart.staleThresholdMs / 1000} 秒无数据）` });
       }
