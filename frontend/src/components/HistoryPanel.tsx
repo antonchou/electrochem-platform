@@ -49,9 +49,10 @@ export function HistoryPanel({ api, onClose }: Props) {
       setLoadingDetail(true);
       setError(null);
       try {
+        // P2-7 修复：拉取全部帧（而非前 3000 帧），曲线降采样显示、拟合用全量
         const [detail, rawFrames] = await Promise.all([
           api.getExperiment(id),
-          api.getFrames(id, 3000),
+          api.getFrames(id, 100_000),
         ]);
         setSelected(detail);
         setFrames(rawFrames);
@@ -84,6 +85,15 @@ export function HistoryPanel({ api, onClose }: Props) {
     f.t_seconds ?? 0,
     f.ec_raw,
   ]);
+
+  // P2-7：曲线最多降采样到 2000 点显示（保趋势、防卡顿）；拟合仍用全量帧
+  const MAX_CHART_POINTS = 2000;
+  const displayData: [number, number][] =
+    chartData.length > MAX_CHART_POINTS
+      ? Array.from({ length: MAX_CHART_POINTS }, (_, i) =>
+          chartData[Math.floor((i * chartData.length) / MAX_CHART_POINTS)],
+        )
+      : chartData;
 
   // 历史详情拟合用的数据点（复用 FitPanel 化学公式拟合，X 轴可切时间/温度）
   const historyPoints: DataPoint[] = frames.map((f) => ({
@@ -173,7 +183,15 @@ export function HistoryPanel({ api, onClose }: Props) {
               {loadingDetail ? (
                 <div className={styles.hint}>加载中…</div>
               ) : chartData.length > 0 ? (
-                <StaticChart data={chartData} />
+                <>
+                  {chartData.length > MAX_CHART_POINTS && (
+                    <div className={styles.hint} data-testid="history-downsample-note">
+                      共 {chartData.length} 帧，曲线按 {MAX_CHART_POINTS} 点降采样显示；拟合基于全部{' '}
+                      {chartData.length} 帧
+                    </div>
+                  )}
+                  <StaticChart data={displayData} />
+                </>
               ) : (
                 <div className={styles.hint}>该实验暂无原始帧</div>
               )}

@@ -36,7 +36,9 @@ export function useRealtimeData(bridge: ExperimentBridge) {
         setLatest(p);
         setCount(arr.length);
       }
-      if (ev.type === 'status' && ev.status === 'idle') {
+      // P1-2 修复：stopped/error 后直接开始，服务端会先广播 running 状态帧，
+      // 此时清空上一轮缓冲，避免新旧两轮数据混合进曲线/统计/拟合。
+      if (ev.type === 'status' && (ev.status === 'idle' || ev.status === 'running')) {
         pointsRef.current = [];
         runStartTRef.current = null;
         setCount(0);

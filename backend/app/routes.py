@@ -6,6 +6,7 @@ import json
 import math
 import time
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect
 
@@ -17,8 +18,11 @@ from .stream import generate_frame
 
 router = APIRouter()
 
-# 活跃的 WebSocket 连接集合（用于状态广播）
+# 活跃的 WebSocket 连接集合（用于状态/数据广播）
 _connections: set[WebSocket] = set()
+
+# 单一后台采集任务（P1-1 修复）：采集/落库与连接数无关，所有客户端收到同一帧广播
+_acquisition_task: Optional[asyncio.Task] = None
 
 
 async def broadcast(payload: dict) -> None:
@@ -29,6 +33,46 @@ async def broadcast(payload: dict) -> None:
             await ws.send_text(text)
         except Exception:
             _connections.discard(ws)
+
+
+async def start_acquisition() -> None:
+    """启动单一采集任务（幂等）。"""
+    global _acquisition_task
+    if _acquisition_task is None or _acquisition_task.done():
+        _acquisition_task = asyncio.create_task(_acquisition_loop())
+
+
+async def stop_acquisition() -> None:
+    """停止采集任务。"""
+    global _acquisition_task
+    if _acquisition_task is not None:
+        _acquisition_task.cancel()
+        try:
+            await _acquisition_task
+        except asyncio.CancelledError:
+            pass
+        _acquisition_task = None
+
+
+async def _acquisition_loop() -> None:
+    """后台采集循环：实验 running 期间以 10 Hz 生成一帧 → 落库 → 广播给所有客户端。
+
+    无论有没有浏览器连接都会持续生成并落库（解决"无连接时漏采"）；
+    多连接也只产生一套数据并写入同一实验（解决"多连接重复采集"）。
+    """
+    while True:
+        try:
+            if state.status == "running":
+                frame = generate_frame(state.elapsed())
+                # 先落库再推送：客户端收到帧时，该帧必然已进入持久化队列（避免停止时丢帧）
+                _enqueue_frame(frame["timestamp"], frame["ec"], frame["temperature"])
+                await broadcast(frame)
+            await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            # 单个循环出错不终止采集任务（如单次广播失败）
+            await asyncio.sleep(0.1)
 
 
 def _utc_now() -> str:
@@ -61,18 +105,18 @@ def _enqueue_frame(t_seconds: float, ec: float, temperature: float) -> None:
 
 @router.websocket("/ws/stream")
 async def ws_stream(ws: WebSocket) -> None:
-    """实时数据流：实验 running 期间以 10 Hz 推送数据帧，并异步落库。"""
+    """实时数据流订阅端：连接即订阅广播（数据由单一采集任务生成并推送）。
+
+    服务端不在此处采集/落库（P1-1 修复），仅把连接加入广播集合，
+    直到客户端断开。running 期间 10 Hz 数据帧与状态帧均由 broadcast 送达。
+    """
     await ws.accept()
     _connections.add(ws)
     try:
+        # 客户端不发送业务消息，这里阻塞等待断连信号
         while True:
-            if state.status == "running":
-                frame = generate_frame(state.elapsed())
-                # 先落库再推送：客户端收到帧时，该帧必然已进入持久化队列（避免停止时丢帧）
-                _enqueue_frame(frame["timestamp"], frame["ec"], frame["temperature"])
-                await ws.send_text(json.dumps(frame, ensure_ascii=False))
-            await asyncio.sleep(0.1)
-    except WebSocketDisconnect:
+            await ws.receive_text()
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         _connections.discard(ws)
@@ -81,35 +125,46 @@ async def ws_stream(ws: WebSocket) -> None:
 @router.post("/api/experiment/start")
 async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
     body = body or ExperimentStartRequest()
-    ok = await state.start(
-        sample_id=body.sample_id or "SAMPLE",
-        sensor_path_id=body.sensor_path_id or "CM2_WIDE",
-        title=body.title or "不同溶液导电性相对比较",
-    )
-    if not ok:
+    # 预检查（真正的原子判定在 state.start 锁内）
+    if state.status == "running":
         return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
-    # Phase 7：新建实验记录与样品记录（溯源）
+    # Phase 7：先建实验记录与样品记录（此时尚未进入 running，采集任务不会落库）
+    sample_id = body.sample_id or "SAMPLE"
+    sensor_path_id = body.sensor_path_id or "CM2_WIDE"
+    title = body.title or "不同溶液导电性相对比较"
     uid = f"EXP-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:4]}"
     exp_id = await persist.create_experiment(
         experiment_id=uid,
-        title=body.title or "不同溶液导电性相对比较",
+        title=title,
         operator=body.operator,
         objective=body.objective,
-        sample_id=state.sample_id,
-        sensor_path_id=state.sensor_path_id,
+        sample_id=sample_id,
+        sensor_path_id=sensor_path_id,
         metadata={
-            "sample_id": state.sample_id,
-            "sensor_path_id": state.sensor_path_id,
+            "sample_id": sample_id,
+            "sensor_path_id": sensor_path_id,
             "concentration_mmol_l": body.concentration_mmol_l,
         },
     )
-    state.experiment_db_id = exp_id
-    state.experiment_uid = uid
+
+    # 原子进入 running 并绑定新实验上下文（P1-3 修复：采集任务一旦运行即写新记录）
+    ok = await state.start(
+        sample_id=sample_id,
+        sensor_path_id=sensor_path_id,
+        title=title,
+        experiment_db_id=exp_id,
+        experiment_uid=uid,
+    )
+    if not ok:
+        # 极罕见竞态：另一请求已抢先进入 running；把刚建的空记录标记结束
+        await persist.finish_experiment(exp_id, "idle")
+        return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
+
     await persist.upsert_sample(
         experiment_id=exp_id,
-        sample_id=state.sample_id,
-        sensor_path_id=state.sensor_path_id,
+        sample_id=sample_id,
+        sensor_path_id=sensor_path_id,
         concentration_mmol_l=body.concentration_mmol_l,
     )
 
@@ -118,7 +173,7 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
         ok=True,
         status="running",
         experiment_id=exp_id,
-        sample_id=state.sample_id,
+        sample_id=sample_id,
     )
 
 

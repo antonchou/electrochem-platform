@@ -220,7 +220,7 @@ def upsert_sample(
 # ---------------- 原始帧 ----------------
 
 def insert_frames(frames: List[Dict[str, Any]]) -> None:
-    """批量写入原始帧（append-only）。"""
+    """批量写入原始帧（append-only），并累加对应样品的 frame_count（P2-4）。"""
     if not frames:
         return
     with _conn() as conn:
@@ -234,6 +234,16 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
             """,
             frames,
         )
+        # 按 (experiment_id, sample_id) 聚合计数，累加到 samples.frame_count
+        counts: Dict[tuple, int] = {}
+        for f in frames:
+            key = (f["experiment_id"], f["sample_id"])
+            counts[key] = counts.get(key, 0) + 1
+        for (exp_id, sample_id), n in counts.items():
+            conn.execute(
+                "UPDATE samples SET frame_count = frame_count + ? WHERE experiment_id = ? AND sample_id = ?",
+                (n, exp_id, sample_id),
+            )
 
 
 # ---------------- 查询 ----------------

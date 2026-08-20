@@ -27,8 +27,14 @@ class ExperimentState:
         sample_id: str = "SAMPLE",
         sensor_path_id: str = "CM2_WIDE",
         title: str = "不同溶液导电性相对比较",
+        experiment_db_id: Optional[int] = None,
+        experiment_uid: Optional[str] = None,
     ) -> bool:
-        """成功进入 running 返回 True；已在运行返回 False。"""
+        """成功进入 running 返回 True；已在运行返回 False。
+
+        进入 running 的同时原子绑定新实验的持久化上下文（experiment_db_id 等），
+        确保采集任务一旦看到 running，落库目标就是新实验记录（P1-3 修复）。
+        """
         async with self.lock:
             if self.status == "running":
                 return False
@@ -37,6 +43,8 @@ class ExperimentState:
             self.seq_no = 0
             self.sample_id = sample_id
             self.sensor_path_id = sensor_path_id
+            self.experiment_db_id = experiment_db_id
+            self.experiment_uid = experiment_uid
             return True
 
     async def stop(self) -> bool:
