@@ -1,22 +1,46 @@
-.venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.env
-.env.*
-!.env.example
-
+# ===== 依赖与构建产物 =====
 node_modules/
+dist/
 frontend/dist/
+.vite/
+*.tsbuildinfo
 
+# ===== Python =====
+__pycache__/
+*.pyc
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# ===== 日志与数据库（原始数据不可变，不入库，rule 11.1）=====
 *.log
 *.db
 *.sqlite
 *.sqlite3
-
 data/raw/*
 data/calibrated/*
 data/derived/*
 !data/raw/.gitkeep
 !data/calibrated/.gitkeep
 !data/derived/.gitkeep
+
+# ===== 测试产物 =====
+test-results/
+playwright-report/
+coverage/
+
+# ===== 本地配置与机密（rule 37：不得提交）=====
+.env
+.env.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets.*
+*.secret
+credentials.json
+
+# ===== 系统 =====
+.DS_Store
+Thumbs.db

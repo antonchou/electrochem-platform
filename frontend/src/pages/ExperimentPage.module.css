@@ -1,0 +1,115 @@
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.historyBtn {
+  padding: 7px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.historyBtn:hover {
+  background: #f3f5f9;
+  border-color: #c7cbd6;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.controlLeft {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.sampleInputWrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sampleLabel {
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+.sampleInput {
+  width: 150px;
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.sampleInput:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.sampleInput:disabled {
+  opacity: 0.6;
+  background: #f3f5f9;
+}
+
+.values {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.chartCard {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+
+.chartHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.chartTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.chartBody {
+  height: 380px;
+}
