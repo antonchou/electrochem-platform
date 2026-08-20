@@ -1,0 +1,39 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.badge::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.idle {
+  color: #6b7280;
+  background: #f0f1f4;
+}
+
+.running {
+  color: #15803d;
+  background: #ecfdf3;
+}
+
+.stopped {
+  color: #6b7280;
+  background: #f3f4f6;
+}
+
+.error {
+  color: #dc2626;
+  background: #fef2f2;
+}

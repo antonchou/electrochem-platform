@@ -1,0 +1,220 @@
+.panel {
+  padding: 16px 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.headRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sampleTag {
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+.download {
+  padding: 5px 14px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  color: var(--primary);
+  background: #fff;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.download:hover {
+  background: #f4f7ff;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: auto auto auto auto auto auto;
+  gap: 8px 20px;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
+.label {
+  color: var(--text-sub);
+}
+
+.empty {
+  margin: 0;
+  color: var(--text-sub);
+  font-size: 14px;
+}
+
+.reserved {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #fafbfd;
+}
+
+.fitHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.reservedTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.reservedHint {
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+.axisRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.axisLabel {
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+.axisChip {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+.axisChipActive {
+  border-color: var(--primary);
+  background: #eef3ff;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.modelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.modelChip {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+.modelChipActive {
+  border-color: var(--primary);
+  background: #eef3ff;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.fitBtn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  cursor: pointer;
+}
+
+.fitBtn:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.fitBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.fitError {
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.fitResults {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.table th {
+  background: #f1f3f8;
+}
+
+.bestRow {
+  background: #eef7f0;
+}
+
+.params {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.bestHint {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--success);
+}
+
+.fitChart {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
