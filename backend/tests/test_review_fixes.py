@@ -65,3 +65,14 @@ def test_sample_frame_count_updated(client):
     assert len(samples) == 1
     assert samples[0]["frame_count"] == storage.count_frames(exp_id)
     assert samples[0]["frame_count"] > 0
+
+
+def test_mock_quality_flag_is_persisted(client):
+    """集成后的 MockDriver 标记必须进入 raw_frames，实时协议保持不变。"""
+    exp_id = _start(client, "MOCK_FLAGS")
+    time.sleep(0.3)
+    client.post("/api/experiment/stop")
+
+    frames = storage.get_frames(exp_id, limit=10)
+    assert frames
+    assert all("SIMULATED" in (frame["quality_flags"] or "") for frame in frames)

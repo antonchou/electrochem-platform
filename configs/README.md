@@ -7,7 +7,7 @@
 
 ```
 configs/
-├── devices/      # 设备驱动配置（Mock / BA121S / CM2 / DS18B20，rule 34 统一接口）
+├── devices/      # 设备驱动配置（含 mock.example.json）
 ├── experiments/  # 实验模板（样品梯度、测量参数）
 └── calibration/  # 校准记录（标准液、系数、批次）
 ```
@@ -36,3 +36,6 @@ configs/
   }
 }
 ```
+
+Mock 后端可通过 `EC_MOCK_CONFIG=configs/devices/mock.example.json` 加载完整配置；
+`EC_MOCK_SCENARIO`、`EC_SAMPLE_RATE_HZ`、`EC_MOCK_SEED` 可覆盖常用运行参数。
