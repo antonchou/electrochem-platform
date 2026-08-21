@@ -78,22 +78,8 @@ export function HistoryPanel({ api, onClose }: Props) {
     [api],
   );
 
-  if (!api) {
-    return (
-      <div className={styles.overlay} data-testid="history-panel">
-        <div className={styles.modal}>
-          <div className={styles.head}>
-            <h2>历史实验</h2>
-            <button className={styles.close} onClick={onClose} aria-label="关闭">
-              ×
-            </button>
-          </div>
-          <p className={styles.hint}>浏览器模拟模式下无历史数据；请切换 server 模式连接后端。</p>
-        </div>
-      </div>
-    );
-  }
-
+  // 注意：所有 Hook 必须位于任何 early return 之前，否则 api 变化时 React 会因
+  // Hook 数量不一致直接崩溃（"Rendered more hooks than during the previous render"）。
   const chartData: [number, number][] = useMemo(
     () => frames.map((f) => [f.t_seconds ?? 0, f.ec_raw]),
     [frames],
@@ -120,6 +106,22 @@ export function HistoryPanel({ api, onClose }: Props) {
       })),
     [frames],
   );
+
+  if (!api) {
+    return (
+      <div className={styles.overlay} data-testid="history-panel">
+        <div className={styles.modal}>
+          <div className={styles.head}>
+            <h2>历史实验</h2>
+            <button className={styles.close} onClick={onClose} aria-label="关闭">
+              ×
+            </button>
+          </div>
+          <p className={styles.hint}>浏览器模拟模式下无历史数据；请切换 server 模式连接后端。</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.overlay} data-testid="history-panel">

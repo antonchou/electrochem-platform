@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { DataPoint, FitAxis, FitResultItem } from '../types/protocol';
 import type { ApiClient } from '../services/apiClient';
 import { StaticChart, type ChartOverlay } from './StaticChart';
@@ -70,6 +70,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
   const [fitResults, setFitResults] = useState<FitResultItem[] | null>(null);
   const [fitLoading, setFitLoading] = useState(false);
   const [fitError, setFitError] = useState<string | null>(null);
+  const fitRequestIdRef = useRef(0);
 
   // 按 X 轴语义构造 (x, y)：时间轴取 t，温度轴取帧内温度 tc；
   // 浓度轴取 p.concentration，缺省用序号 1..N 占位（当前帧无浓度字段）
@@ -94,30 +95,41 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
 
   const runFit = async () => {
     if (!api || fitPoints.length < 3 || selectedModels.length === 0) return;
+    const requestId = ++fitRequestIdRef.current;
     setFitLoading(true);
     setFitError(null);
     try {
       const res = await api.fitPoints(fitPoints, selectedModels, xAxis);
+      if (requestId !== fitRequestIdRef.current) return;
       setFitResults(res.models);
     } catch (err) {
+      if (requestId !== fitRequestIdRef.current) return;
       setFitError(err instanceof Error ? err.message : '拟合失败');
     } finally {
-      setFitLoading(false);
+      if (requestId === fitRequestIdRef.current) setFitLoading(false);
     }
+  };
+
+  const invalidateFit = () => {
+    // 允许用户在慢请求期间调整条件；旧响应返回后不得覆盖当前选择。
+    fitRequestIdRef.current += 1;
+    setFitLoading(false);
+    setFitResults(null);
+    setFitError(null);
   };
 
   const toggleModel = (key: string) => {
     setSelectedModels((prev) =>
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
     );
+    invalidateFit();
   };
 
   const switchAxis = (axis: FitAxis) => {
     if (axis === xAxis) return;
     setXAxis(axis);
     setSelectedModels(AXIS_MODELS[axis].map((m) => m.key));
-    setFitResults(null);
-    setFitError(null);
+    invalidateFit();
   };
 
   const canFit = api !== null && fitPoints.length >= 3 && selectedModels.length > 0 && !fitLoading;
@@ -160,6 +172,12 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
         </div>
       )}
 
+      {!api && (
+        <div className={styles.axisNote} data-testid={`${testIdPrefix}-no-api-note`}>
+          浏览器模拟模式下无后端拟合接口，「开始拟合」不可用；请切换 server 模式连接后端。
+        </div>
+      )}
+
       {arrheniusUnavailable && (
         <div className={styles.axisNote} data-testid={`${testIdPrefix}-arrhenius-note`}>
           当前温度跨度不足 {ARRHENIUS_MIN_TEMPERATURE_SPAN_C.toFixed(1)} °C，Arrhenius
@@ -195,6 +213,12 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
 
       {fitError && <div className={styles.fitError}>{fitError}</div>}
 
+      {fitResults && fitResults.length === 0 && (
+        <div className={styles.axisNote} data-testid={`${testIdPrefix}-empty`}>
+          所选模型均未产生有效拟合结果：数据点不足或不满足模型约束（如对数/幂函数要求 x&gt;0）。
+        </div>
+      )}
+
       {fitResults && fitResults.length > 0 && (
         <div className={styles.fitResults} data-testid={`${testIdPrefix}-results`}>
           <table className={styles.table}>
@@ -210,7 +234,17 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
             <tbody>
               {fitResults.map((r, i) => (
                 <tr key={r.model} className={i === 0 ? styles.bestRow : undefined}>
-                  <td>{r.label}</td>
+                  <td>
+                    {/* 色块与曲线图 overlay 颜色一一对应；仅前 4 条绘制曲线 */}
+                    {i < 4 && (
+                      <span
+                        className={styles.swatch}
+                        style={{ background: CURVE_COLORS[i % CURVE_COLORS.length] }}
+                        aria-hidden
+                      />
+                    )}
+                    {r.label}
+                  </td>
                   <td className={styles.params}>{fmtParams(r.params)}</td>
                   <td>{r.r2.toFixed(4)}</td>
                   <td>{r.rmse.toFixed(4)}</td>
@@ -223,6 +257,9 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
             <div className={styles.bestHint}>
               最优：{fitResults[0].label}（R² = {fitResults[0].r2.toFixed(4)}）
             </div>
+          )}
+          {fitResults.length > 4 && (
+            <div className={styles.curveNote}>曲线图仅绘制 R² 最高的前 4 条</div>
           )}
         </div>
       )}

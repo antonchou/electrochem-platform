@@ -154,6 +154,21 @@
   color: var(--success);
 }
 
+/* 结果表中的曲线色块：与曲线图 overlay 颜色一一对应 */
+.swatch {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.curveNote {
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
 .fitChart {
   border: 1px solid var(--border);
   border-radius: 8px;
