@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "driver": "mock",
+  "scenario": "stable",
+  "seed": 2026,
+  "sample_rate_hz": 10.0,
+  "base_ec": 1413.0,
+  "base_temperature": 25.0,
+  "base_ph": 7.0,
+  "ec_noise": 1.5,
+  "temperature_noise": 0.15,
+  "ph_noise": 0.01,
+  "drift_ec_per_second": 0.2,
+  "dropout_every_n": 10
+}

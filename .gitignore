@@ -11,6 +11,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+.tmp/
 
 # ===== 日志与数据库（原始数据不可变，不入库，rule 11.1）=====
 *.log

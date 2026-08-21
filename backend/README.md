@@ -10,6 +10,8 @@ backend/
 ├── app/
 │   ├── main.py          # FastAPI 入口（lifespan 启停持久化）
 │   ├── routes.py        # WS 实时流 + REST 控制 + 历史/导出
+│   ├── broadcast.py     # 每客户端独立有界队列，隔离慢连接
+│   ├── drivers/         # DeviceDriver 接口 + 可配置 MockDevice
 │   ├── schemas.py       # 协议模型
 │   ├── state.py         # 实验状态机 + 溯源上下文
 │   ├── stream.py        # 模拟数据发生器
@@ -31,6 +33,24 @@ python3 -m venv .venv
 
 原始数据默认落库到 `data/raw/ec.db`（仓库约定 11.1：原始数据不可变，只追加）。
 可用环境变量 `EC_DB_PATH` 覆盖（测试用临时库）。
+
+## Mock 驱动配置
+
+默认使用固定随机种子的 `stable` 场景，以 10 Hz 生成可复现的 EC/温度数据。
+完整配置样例见 `configs/devices/mock.example.json`：
+
+```bash
+# 使用版本化配置文件
+EC_MOCK_CONFIG=../configs/devices/mock.example.json
+
+# 或只覆盖常用参数
+EC_MOCK_SCENARIO=drift       # stable / noisy / drift / dropout
+EC_SAMPLE_RATE_HZ=10
+EC_MOCK_SEED=2026
+```
+
+Mock 驱动内部同时预留 pH 原始读数，但当前电导率实验的 WS/SQLite 协议仍只发布
+EC 与温度，避免破坏已交付前端。真实设备后续实现同一个 `DeviceDriver` 接口。
 
 ## 接口一览
 
@@ -69,7 +89,19 @@ python3 -m venv .venv
 ```
 
 覆盖：健康检查、控制状态机（含重复 start 拒绝）、WS 协议格式、停止后停流、坏帧注入、
-SQLite append-only 约束（UPDATE/DELETE 被拒）、实验生命周期、历史/详情/CSV 导出。
+SQLite append-only 约束（UPDATE/DELETE 被拒）、实验生命周期、历史/详情/CSV 导出、
+Mock 场景可复现性、质量标志落库，以及慢 WebSocket 客户端隔离。
+
+Phase 2 快速长跑冒烟：
+
+```bash
+python ../scripts/phase2_soak.py --duration 5 --sample-rate 20
+# 树莓派正式验收
+python ../scripts/phase2_soak.py --duration 1800 --sample-rate 10
+```
+
+脚本走完整的 REST 启停、WebSocket 接收与 SQLite 落库链路，并检查帧数量、
+`seq_no` 连续性、单调时钟和 `SIMULATED` 质量标志。
 
 ## 接入真实后端的约定
 
