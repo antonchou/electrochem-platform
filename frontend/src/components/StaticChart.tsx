@@ -19,10 +19,12 @@ interface Props {
   /** 叠加曲线（如拟合曲线），可多条 */
   overlays?: ChartOverlay[];
   height?: number;
+  /** X 轴名称（默认「时间 (s)」，调用方可按物理含义覆盖） */
+  xLabel?: string;
 }
 
 /** 静态曲线图：渲染数据点 + 可选叠加拟合/参考曲线。 */
-export function StaticChart({ data, overlays, height = 260 }: Props) {
+export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)' }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,7 +38,7 @@ export function StaticChart({ data, overlays, height = 260 }: Props) {
       grid: { left: 60, right: 20, top: 30, bottom: 40 },
       xAxis: {
         type: 'value',
-        name: '时间 (s)',
+        name: xLabel,
         nameLocation: 'middle',
         nameGap: 26,
         splitLine: { lineStyle: { type: 'dashed' } },
@@ -71,7 +73,7 @@ export function StaticChart({ data, overlays, height = 260 }: Props) {
       window.removeEventListener('resize', onResize);
       chart.dispose();
     };
-  }, [data, overlays]);
+  }, [data, overlays, xLabel]);
 
   return <div ref={ref} className={styles.chart} style={{ height }} />;
 }

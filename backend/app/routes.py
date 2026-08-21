@@ -3,6 +3,7 @@
 import asyncio
 import datetime
 import json
+import logging
 import math
 import time
 import uuid
@@ -18,6 +19,8 @@ from .stream import generate_frame
 
 router = APIRouter()
 
+logger = logging.getLogger("app.routes")
+
 # 活跃的 WebSocket 连接集合（用于状态/数据广播）
 _connections: set[WebSocket] = set()
 
@@ -32,6 +35,7 @@ async def broadcast(payload: dict) -> None:
         try:
             await ws.send_text(text)
         except Exception:
+            logger.debug("WebSocket 广播失败，移除连接: %r", ws)
             _connections.discard(ws)
 
 
@@ -71,7 +75,8 @@ async def _acquisition_loop() -> None:
         except asyncio.CancelledError:
             break
         except Exception:
-            # 单个循环出错不终止采集任务（如单次广播失败）
+            # 单个循环出错不终止采集任务（如单次广播失败），但必须留下日志避免静默丢数据
+            logger.exception("采集循环异常")
             await asyncio.sleep(0.1)
 
 
@@ -181,10 +186,11 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
 async def stop() -> ControlResponse:
     changed = await state.stop()
     exp_id = state.experiment_db_id
-    if exp_id is not None:
+    if changed and exp_id is not None:
+        # 仅在 running→stopped 时结束实验：重复 stop 不再刷新 ended_at_utc
         await persist.flush()  # 确保在途帧先落库
         await persist.finish_experiment(exp_id, "stopped")
-    await broadcast({"status": state.status})
+        await broadcast({"status": state.status})
     return ControlResponse(
         ok=True,
         status=state.status,
@@ -199,7 +205,8 @@ async def reset() -> ControlResponse:
     if exp_id is not None:
         await persist.flush()
         if state.status == "running":
-            await persist.finish_experiment(exp_id, "idle")
+            # 运行中被打断 → aborted（与 SRS 状态机语义一致），而非 idle
+            await persist.finish_experiment(exp_id, "aborted")
     await state.reset()
     await broadcast({"status": "idle"})
     return ControlResponse(ok=True, status="idle")
@@ -301,7 +308,10 @@ async def close_connections() -> dict:
 
 @router.post("/api/debug/burst")
 async def burst(count: int = 10000) -> dict:
-    """快速推送 count 帧（默认 1 万），用于验证前端大点数负载与 30 分钟模拟（P03/P04）。"""
+    """快速推送 count 帧（默认 1 万），用于验证前端大点数负载与 30 分钟模拟（P03/P04）。
+
+    仅广播、不落库、不消耗 seq：注入帧不进入 raw_frames（B-3 修复，保证原始数据纯净）。
+    """
     sent = 0
     for i in range(count):
         frame = generate_frame(i * 0.1)
@@ -311,8 +321,8 @@ async def burst(count: int = 10000) -> dict:
                 await ws.send_text(text)
                 sent += 1
             except Exception:
+                logger.debug("WebSocket 广播失败，移除连接: %r", ws)
                 _connections.discard(ws)
-        _enqueue_frame(frame["timestamp"], frame["ec"], frame["temperature"])
         if i % 200 == 199:
             await asyncio.sleep(0.002)
     return {"ok": True, "sent": sent}
