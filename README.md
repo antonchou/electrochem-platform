@@ -4,6 +4,9 @@
 仓库结构遵循《仓库与工程约定》11.1；当前覆盖 **Phase 3（Web 前端）+ Phase 7（数据存储与导出）**，
 后端为模拟数据源，真实设备驱动（BA121S/CM2/DS18B20）按约定在 backend 内逐步替换。
 
+> **进度声明**：本仓库的 `README.md` 与 `docs/` 为当前进度的唯一真相（Phase 3 + Phase 7 + 备选公式拟合已交付，见「里程碑」）。
+> 桌面版《树莓派电化学项目_交接文档_v1.0.docx》（2026-08-19）为历史快照，其「Phase 0 进行中、Phase 1/2 待开始」表述已过时，仅作参考。
+
 ## 目录结构
 
 ```
@@ -102,3 +105,17 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 - **Phase 7（M3–M4 前置）**：SQLite 存储 + 历史查询 + 导出 ✅（append-only 已验证）
 - **备选公式拟合**：化学公式（一阶饱和 / Arrhenius / Kohlrausch）按 X 轴语义拟合 ✅
 - 后续：校准/温补、拟合报告、真实 EC 采集（垂直切片推进）
+
+## 已知缺口与交付阶段（冻结 SRS 未实现项）
+
+以下为**冻结基线 SRS 中当前未实现**的强制需求（评审 R-1~R-6），均属后续交付范围，**勿误判为已满足全部 REQ**。
+每项标注交付阶段，随垂直切片（rule 40）逐步补齐。
+
+| 需求编号 | 需求内容 | 现状 | 交付阶段 |
+|---|---|---|---|
+| REQ-M-001 | 帧需同时保存 κ(T)、T、κ25（k25 温补） | k25 恒为 NULL，温补/α 未实现 | 后续阶段（校准/温补） |
+| REQ-F-001 / REQ-F-002 | 拟合需输出 CI/残差/RMSE/MAE/AICc/留一交叉验证，声明有效浓度区间、禁止外推 | 仅 R²/RMSE/params/fitted | 后续阶段（拟合报告） |
+| REQ-D-003 | 自动判稳（窗口/统计量/阈值/失败原因）与 QC PASS/WARN/FAIL | 未实现，samples.k25_* 恒 NULL | 后续阶段（判稳与 QC） |
+| REQ-C-001 | 每次结果关联 calibration_id 与标准液批次 | calibration_records 表已建但未写入 | 后续阶段（校准 SOP） |
+| REQ-U-001 | UI 区分原始值/温补值/滤波值/最终代表值 | 仅显示 EC 与温度 | 后续阶段（分层显示） |
+| SRS 3.3 | 协议需含 schema_version/device_id/firmware_version/range_id/quality_flags | 实时帧为简化 4 字段 | 后续阶段（真实设备接入） |
