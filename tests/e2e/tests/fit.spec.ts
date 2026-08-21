@@ -64,6 +64,30 @@ test('温度轴：切到温度→Arrhenius 模型可用并出结果', async ({ p
   await expect(page.getByTestId('fit-results')).toContainText('Ea_kJ_mol');
 });
 
+test('浓度轴：切到浓度→线性标定/Kohlrausch 模型可用', async ({ page }) => {
+  // 跑一轮实验并停止
+  await page.getByTestId('btn-start').click();
+  await expect
+    .poll(async () => Number(await page.getByTestId('stat-count').innerText()), { timeout: 8000 })
+    .toBeGreaterThanOrEqual(3);
+  await page.getByTestId('btn-stop').click();
+  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
+
+  // 切到浓度轴：模型池变为 线性标定/二次/Kohlrausch
+  await page.getByTestId('fit-axis-concentration').click();
+  await expect(page.getByTestId('fit-axis-concentration')).toHaveClass(/active/i);
+  await expect(page.getByTestId('fit-model-kohlrausch')).toHaveCount(1);
+  await expect(page.getByTestId('fit-model-kohlrausch')).toBeVisible();
+  await expect(page.getByTestId('fit-model-linear')).toBeVisible();
+  await expect(page.getByTestId('fit-model-quadratic')).toBeVisible();
+
+  // 跨轴隔离：时间轴专属模型（一阶指数饱和）不出现
+  await expect(page.getByTestId('fit-model-first_order')).toHaveCount(0);
+
+  // 浓度轴占位提示可见（当前帧无浓度字段）
+  await expect(page.getByTestId('fit-concentration-note')).toBeVisible();
+});
+
 test('历史详情页：复用化学公式拟合', async ({ page }) => {
   // 跑一轮实验并停止
   await page.getByTestId('btn-start').click();

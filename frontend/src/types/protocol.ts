@@ -135,6 +135,8 @@ export interface DataPoint {
   ec: number;
   /** °C */
   tc: number;
+  /** 浓度 mmol/L（可选）。实时帧/历史帧暂无该字段；浓度轴拟合时缺省用序号 1..N 占位 */
+  concentration?: number;
 }
 
 /** 客户端事件总线（供 hooks 订阅） */
