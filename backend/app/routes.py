@@ -2,7 +2,6 @@
 
 import asyncio
 import datetime
-import json
 import logging
 import math
 import time
@@ -12,6 +11,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect
 
 from . import analysis, storage
+from .broadcast import BroadcastHub
+from .drivers import DeviceDriver, MockDevice, load_mock_config
 from .persistence import persist
 from .schemas import ControlResponse, ExperimentStartRequest, FitRequest
 from .state import state
@@ -21,34 +22,35 @@ router = APIRouter()
 
 logger = logging.getLogger("app.routes")
 
-# 活跃的 WebSocket 连接集合（用于状态/数据广播）
-_connections: set[WebSocket] = set()
+# 活跃 WebSocket 使用独立有界队列发送，慢客户端不得阻塞采集循环。
+# 20_000 与前端最大点数一致，可承载 P04 的 10_000 点 burst，同时保持内存有界。
+_hub = BroadcastHub(queue_size=20_000)
 
 # 单一后台采集任务（P1-1 修复）：采集/落库与连接数无关，所有客户端收到同一帧广播
 _acquisition_task: Optional[asyncio.Task] = None
+_driver: Optional[DeviceDriver] = None
+_sample_period_seconds = 0.1
 
 
-async def broadcast(payload: dict) -> None:
-    """向所有活跃连接推送一条消息；连接异常则移除。"""
-    text = json.dumps(payload, ensure_ascii=False)
-    for ws in list(_connections):
-        try:
-            await ws.send_text(text)
-        except Exception:
-            logger.debug("WebSocket 广播失败，移除连接: %r", ws)
-            _connections.discard(ws)
+async def broadcast(payload: dict) -> int:
+    """把消息放入每个客户端的独立队列，返回接受消息的客户端数。"""
+    return await _hub.publish(payload)
 
 
 async def start_acquisition() -> None:
     """启动单一采集任务（幂等）。"""
-    global _acquisition_task
+    global _acquisition_task, _driver, _sample_period_seconds
     if _acquisition_task is None or _acquisition_task.done():
+        config = load_mock_config()
+        _driver = MockDevice(config)
+        await _driver.connect()
+        _sample_period_seconds = 1.0 / config.sample_rate_hz
         _acquisition_task = asyncio.create_task(_acquisition_loop())
 
 
 async def stop_acquisition() -> None:
     """停止采集任务。"""
-    global _acquisition_task
+    global _acquisition_task, _driver
     if _acquisition_task is not None:
         _acquisition_task.cancel()
         try:
@@ -56,22 +58,49 @@ async def stop_acquisition() -> None:
         except asyncio.CancelledError:
             pass
         _acquisition_task = None
+    if _driver is not None:
+        await _driver.close()
+        _driver = None
+    await _hub.close_all(code=1001, reason="server shutdown")
 
 
 async def _acquisition_loop() -> None:
-    """后台采集循环：实验 running 期间以 10 Hz 生成一帧 → 落库 → 广播给所有客户端。
+    """后台采集循环：实验 running 期间按配置频率读取 → 落库 → 广播。
 
     无论有没有浏览器连接都会持续生成并落库（解决"无连接时漏采"）；
     多连接也只产生一套数据并写入同一实验（解决"多连接重复采集"）。
     """
+    driver = _driver
+    if driver is None:
+        raise RuntimeError("acquisition driver is not configured")
+
     while True:
         try:
             if state.status == "running":
-                frame = generate_frame(state.elapsed())
+                elapsed = state.elapsed()
+                reading = await driver.read(elapsed)
+                if not reading.complete_for_conductivity:
+                    logger.warning(
+                        "设备读数不完整，跳过本周期: flags=%s",
+                        reading.quality_flags,
+                    )
+                    await asyncio.sleep(_sample_period_seconds)
+                    continue
+                frame = {
+                    "timestamp": round(elapsed, 2),
+                    "ec": reading.ec,
+                    "temperature": reading.temperature,
+                    "status": "running",
+                }
                 # 先落库再推送：客户端收到帧时，该帧必然已进入持久化队列（避免停止时丢帧）
-                _enqueue_frame(frame["timestamp"], frame["ec"], frame["temperature"])
+                _enqueue_frame(
+                    frame["timestamp"],
+                    frame["ec"],
+                    frame["temperature"],
+                    reading.quality_flags,
+                )
                 await broadcast(frame)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(_sample_period_seconds)
         except asyncio.CancelledError:
             break
         except Exception:
@@ -84,7 +113,12 @@ def _utc_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _frame_to_row(t_seconds: float, ec: float, temperature: float) -> dict:
+def _frame_to_row(
+    t_seconds: float,
+    ec: float,
+    temperature: float,
+    quality_flags: tuple[str, ...] = (),
+) -> dict:
     """把一帧实时数据转成 raw_frames 行（带溯源字段）。"""
     return {
         "experiment_id": state.experiment_db_id,
@@ -97,15 +131,22 @@ def _frame_to_row(t_seconds: float, ec: float, temperature: float) -> dict:
         "ec_raw": ec,
         "temperature_raw": temperature,
         "k25": None,
-        "quality_flags": None,
+        "quality_flags": "|".join(quality_flags) or None,
         "status": state.status,
     }
 
 
-def _enqueue_frame(t_seconds: float, ec: float, temperature: float) -> None:
+def _enqueue_frame(
+    t_seconds: float,
+    ec: float,
+    temperature: float,
+    quality_flags: tuple[str, ...] = (),
+) -> None:
     """后台异步落库（仅当前有实验上下文时）。"""
     if state.experiment_db_id is not None:
-        persist.enqueue_frame(_frame_to_row(t_seconds, ec, temperature))
+        persist.enqueue_frame(
+            _frame_to_row(t_seconds, ec, temperature, quality_flags)
+        )
 
 
 @router.websocket("/ws/stream")
@@ -113,10 +154,9 @@ async def ws_stream(ws: WebSocket) -> None:
     """实时数据流订阅端：连接即订阅广播（数据由单一采集任务生成并推送）。
 
     服务端不在此处采集/落库（P1-1 修复），仅把连接加入广播集合，
-    直到客户端断开。running 期间 10 Hz 数据帧与状态帧均由 broadcast 送达。
+    直到客户端断开。running 期间数据帧与状态帧均由 broadcast 送达。
     """
-    await ws.accept()
-    _connections.add(ws)
+    await _hub.connect(ws)
     try:
         # 客户端不发送业务消息，这里阻塞等待断连信号
         while True:
@@ -124,7 +164,7 @@ async def ws_stream(ws: WebSocket) -> None:
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        _connections.discard(ws)
+        await _hub.disconnect(ws)
 
 
 @router.post("/api/experiment/start")
@@ -297,12 +337,7 @@ async def inject_bad_frame() -> dict:
 @router.post("/api/debug/close-connections")
 async def close_connections() -> dict:
     """强制关闭所有 WS 连接，验证前端断线检测与重连（F08/F09）。"""
-    count = len(_connections)
-    for ws in list(_connections):
-        try:
-            await ws.close(code=1001, reason="debug close")
-        except Exception:
-            pass
+    count = await _hub.close_all(code=1001, reason="debug close")
     return {"ok": True, "closed": count}
 
 
@@ -315,14 +350,7 @@ async def burst(count: int = 10000) -> dict:
     sent = 0
     for i in range(count):
         frame = generate_frame(i * 0.1)
-        text = json.dumps(frame, ensure_ascii=False)
-        for ws in list(_connections):
-            try:
-                await ws.send_text(text)
-                sent += 1
-            except Exception:
-                logger.debug("WebSocket 广播失败，移除连接: %r", ws)
-                _connections.discard(ws)
+        sent += await broadcast(frame)
         if i % 200 == 199:
             await asyncio.sleep(0.002)
     return {"ok": True, "sent": sent}

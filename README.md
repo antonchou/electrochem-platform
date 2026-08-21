@@ -81,7 +81,7 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 
 | 规则 | 落实 |
 |---|---|
-| 34 统一 Driver Base Class | backend 内 `stream.py`（Mock）已具独立接口，后续 BA121S/CM2/DS18B20 同接口替换 |
+| 34 统一 Driver Base Class | `backend/app/drivers/base.py` 定义异步接口；Mock 已实现，后续 BA121S/CM2/DS18B20 同接口替换 |
 | 35 配置/schema 版本化 | `configs/` 带 schema_version；DB 由 `init_db()` 幂等建表（迁移走脚本，不手工改表） |
 | 36 配置地址集中 | 前端 `src/config/config.ts` 唯一入口；后端 DB 路径可用 `EC_DB_PATH` 覆盖 |
 | 37 机密不入 Git | 根 `.gitignore` 已排除 `.env*`/私钥/令牌 |
@@ -102,6 +102,7 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 **功能实现阶段（本仓库开发主线）**
 
 - **Phase 3（M1–M2）**：Web 前端 + 模拟数据源闭环 ✅（F01–F10 全过）
+- **Phase 2 集成加固**：统一驱动接口、可配置 Mock 场景、慢客户端隔离、SQLite 长跑验收 ✅
 - **Phase 7（M3–M4 前置）**：SQLite 存储 + 历史查询 + 导出 ✅（append-only 已验证）
 - **备选公式拟合**：化学公式（一阶饱和 / Arrhenius / Kohlrausch）按 X 轴语义拟合 ✅
 - 后续：校准/温补、拟合报告、真实 EC 采集（垂直切片推进）
