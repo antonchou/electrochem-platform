@@ -43,6 +43,45 @@ test('备选公式拟合：时间轴选模型→拟合→出结果表与曲线',
   await expect(page.getByTestId('fit-results')).toContainText('最优：');
 });
 
+test('拟合中切换模型：旧响应不得覆盖当前选择', async ({ page }) => {
+  await page.getByTestId('btn-start').click();
+  await expect
+    .poll(async () => Number(await page.getByTestId('stat-count').innerText()), { timeout: 8000 })
+    .toBeGreaterThanOrEqual(3);
+  await page.getByTestId('btn-stop').click();
+  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
+
+  let releaseRequest: (() => void) | undefined;
+  let markRequestIntercepted: (() => void) | undefined;
+  const requestIntercepted = new Promise<void>((resolve) => {
+    markRequestIntercepted = resolve;
+  });
+
+  await page.route('**/api/analysis/fit', async (route) => {
+    markRequestIntercepted?.();
+    await new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+    await route.continue();
+  });
+
+  await page.getByTestId('btn-fit').click();
+  await requestIntercepted;
+  await expect(page.getByTestId('btn-fit')).toHaveText('拟合中…');
+
+  await page.getByTestId('fit-model-exponential').click();
+  await expect(page.getByTestId('btn-fit')).toBeEnabled();
+
+  const oldResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/analysis/fit') && response.request().method() === 'POST',
+  );
+  releaseRequest?.();
+  await oldResponse;
+
+  await expect(page.getByTestId('fit-results')).toHaveCount(0);
+});
+
 test('温度轴：近恒温数据跳过无意义的 Arrhenius 结果', async ({ page }) => {
   // 跑一轮实验并停止（帧含温度数据）
   await page.getByTestId('btn-start').click();

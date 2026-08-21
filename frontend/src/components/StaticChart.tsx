@@ -35,8 +35,14 @@ export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)
     chartRef.current = chart;
     const onResize = () => chart.resize();
     window.addEventListener('resize', onResize);
+    // 容器尺寸变化不一定伴随 window resize（弹窗滚动条、提示条挤出布局等），
+    // 仅监听 window 会让 canvas 被 CSS 拉伸而模糊，故用 ResizeObserver 兜底。
+    const observer =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    observer?.observe(el);
     return () => {
       window.removeEventListener('resize', onResize);
+      observer?.disconnect();
       chart.dispose();
       chartRef.current = null;
     };
@@ -45,9 +51,13 @@ export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)
   useEffect(() => {
     chartRef.current?.setOption({
       animation: false,
+      // 全局调色板：图例色块 / tooltip 圆点从这里取色。
+      // 必须与各系列 lineStyle.color 一致，否则图例与线条颜色对不上。
+      color: ['#2f6fed', ...(overlays ?? []).map((ov) => ov.color ?? '#16a34a')],
       tooltip: { trigger: 'axis' },
-      legend: { top: 0, left: 12, icon: 'roundRect', itemWidth: 14, itemHeight: 6 },
-      grid: { left: 60, right: 20, top: 30, bottom: 40 },
+      // type:'scroll' 防止长公式名称（含 R²）单行溢出被裁；图标放大到 18×8 提升辨识度。
+      legend: { top: 0, left: 12, type: 'scroll', icon: 'roundRect', itemWidth: 18, itemHeight: 8 },
+      grid: { left: 12, right: 20, top: 34, bottom: 40, containLabel: true },
       xAxis: {
         type: 'value',
         name: xLabel,
@@ -68,6 +78,7 @@ export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)
           data,
           symbol: 'none',
           lineStyle: { width: 1.5, color: '#2f6fed' },
+          itemStyle: { color: '#2f6fed' },
           sampling: 'lttb',
         },
         ...(overlays ?? []).map((ov, i) => ({
@@ -76,6 +87,7 @@ export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)
           data: ov.data,
           symbol: 'none',
           lineStyle: { width: 2.5, color: ov.color ?? '#16a34a' },
+          itemStyle: { color: ov.color ?? '#16a34a' },
         })),
       ],
     }, { notMerge: true });
