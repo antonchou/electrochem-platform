@@ -5,6 +5,7 @@
 
 /** 实验状态 */
 export type ExperimentStatus = 'idle' | 'running' | 'stopped' | 'error';
+export type ExperimentHistoryStatus = 'running' | 'stopped' | 'aborted' | 'error';
 
 /** 实时数据帧：数据到达后的完整一帧 */
 export interface ExperimentFrame {
@@ -45,7 +46,7 @@ export interface ExperimentSummary {
   id: number;
   experiment_id: string;
   title: string;
-  status: string;
+  status: ExperimentHistoryStatus;
   sample_id: string | null;
   sensor_path_id: string | null;
   started_at_utc: string;
@@ -152,6 +153,13 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
+function parseFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 /**
  * 解析并校验一条服务端消息。
  * 字段缺失 / 非法数值 / 未知状态 → 返回 null（调用方丢弃并提示，页面不崩溃）。
@@ -172,23 +180,18 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
     return null;
   }
 
-  const hasMeasure =
-    raw.timestamp !== undefined && raw.ec !== undefined && raw.temperature !== undefined;
+  const measureKeys = ['timestamp', 'ec', 'temperature'] as const;
+  const measureFieldCount = measureKeys.filter((key) => raw[key] !== undefined).length;
 
-  if (!hasMeasure) {
+  if (measureFieldCount === 0) {
     return { status: status as ExperimentStatus } as StatusFrame;
   }
+  if (measureFieldCount !== measureKeys.length) return null;
 
-  const timestamp = Number(raw.timestamp);
-  const ec = Number(raw.ec);
-  const temperature = Number(raw.temperature);
-  if (
-    !Number.isFinite(timestamp) ||
-    !Number.isFinite(ec) ||
-    !Number.isFinite(temperature)
-  ) {
-    return null;
-  }
+  const timestamp = parseFiniteNumber(raw.timestamp);
+  const ec = parseFiniteNumber(raw.ec);
+  const temperature = parseFiniteNumber(raw.temperature);
+  if (timestamp === null || ec === null || temperature === null) return null;
 
   return { timestamp, ec, temperature, status: status as ExperimentStatus };
 }

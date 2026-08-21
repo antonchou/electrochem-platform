@@ -4,11 +4,12 @@ import asyncio
 import datetime
 import logging
 import math
+import os
 import time
 import uuid
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 
 from . import analysis, storage
 from .broadcast import BroadcastHub
@@ -30,6 +31,7 @@ _hub = BroadcastHub(queue_size=20_000)
 _acquisition_task: Optional[asyncio.Task] = None
 _driver: Optional[DeviceDriver] = None
 _sample_period_seconds = 0.1
+_start_lock = asyncio.Lock()
 
 
 async def broadcast(payload: dict) -> int:
@@ -77,8 +79,16 @@ async def _acquisition_loop() -> None:
     while True:
         try:
             if state.status == "running":
+                experiment_db_id = state.experiment_db_id
                 elapsed = state.elapsed()
                 reading = await driver.read(elapsed)
+                # 真实硬件读取可能让出事件循环较长时间。读取期间若 stop/reset/新一轮 start，
+                # 当前读数属于旧会话，必须丢弃，不能以 running 状态写入或推送。
+                if (
+                    state.status != "running"
+                    or state.experiment_db_id != experiment_db_id
+                ):
+                    continue
                 if not reading.complete_for_conductivity:
                     logger.warning(
                         "设备读数不完整，跳过本周期: flags=%s",
@@ -170,48 +180,46 @@ async def ws_stream(ws: WebSocket) -> None:
 @router.post("/api/experiment/start")
 async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
     body = body or ExperimentStartRequest()
-    # 预检查（真正的原子判定在 state.start 锁内）
-    if state.status == "running":
-        return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
+    async with _start_lock:
+        if state.status == "running":
+            return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
-    # Phase 7：先建实验记录与样品记录（此时尚未进入 running，采集任务不会落库）
-    sample_id = body.sample_id or "SAMPLE"
-    sensor_path_id = body.sensor_path_id or "CM2_WIDE"
-    title = body.title or "不同溶液导电性相对比较"
-    uid = f"EXP-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:4]}"
-    exp_id = await persist.create_experiment(
-        experiment_id=uid,
-        title=title,
-        operator=body.operator,
-        objective=body.objective,
-        sample_id=sample_id,
-        sensor_path_id=sensor_path_id,
-        metadata={
-            "sample_id": sample_id,
-            "sensor_path_id": sensor_path_id,
-            "concentration_mmol_l": body.concentration_mmol_l,
-        },
-    )
+        sample_id = body.sample_id or "SAMPLE"
+        sensor_path_id = body.sensor_path_id or "CM2_WIDE"
+        title = body.title or "不同溶液导电性相对比较"
+        uid = f"EXP-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:4]}"
 
-    # 原子进入 running 并绑定新实验上下文（P1-3 修复：采集任务一旦运行即写新记录）
-    ok = await state.start(
-        sample_id=sample_id,
-        sensor_path_id=sensor_path_id,
-        title=title,
-        experiment_db_id=exp_id,
-        experiment_uid=uid,
-    )
-    if not ok:
-        # 极罕见竞态：另一请求已抢先进入 running；把刚建的空记录标记结束
-        await persist.finish_experiment(exp_id, "idle")
-        return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
+        # 实验与样品在一个 SQLite 事务中创建。数据库失败时内存态不会进入 running，
+        # 并发 start 也由本锁串行化，避免遗留空的 running/idle 历史记录。
+        exp_id = await persist.create_experiment_with_sample(
+            experiment_id=uid,
+            title=title,
+            operator=body.operator,
+            objective=body.objective,
+            sample_id=sample_id,
+            sensor_path_id=sensor_path_id,
+            concentration_mmol_l=body.concentration_mmol_l,
+            metadata={
+                "sample_id": sample_id,
+                "sensor_path_id": sensor_path_id,
+                "concentration_mmol_l": body.concentration_mmol_l,
+            },
+        )
 
-    await persist.upsert_sample(
-        experiment_id=exp_id,
-        sample_id=sample_id,
-        sensor_path_id=sensor_path_id,
-        concentration_mmol_l=body.concentration_mmol_l,
-    )
+        try:
+            ok = await state.start(
+                sample_id=sample_id,
+                sensor_path_id=sensor_path_id,
+                title=title,
+                experiment_db_id=exp_id,
+                experiment_uid=uid,
+            )
+        except Exception:
+            await persist.finish_experiment(exp_id, "error")
+            raise
+        if not ok:
+            await persist.finish_experiment(exp_id, "error")
+            return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
     await broadcast({"status": "running"})
     return ControlResponse(
@@ -278,7 +286,11 @@ async def experiment_detail(exp_id: int) -> dict:
 
 
 @router.get("/api/experiments/{exp_id}/frames")
-async def experiment_frames(exp_id: int, limit: int = 1000, offset: int = 0) -> dict:
+async def experiment_frames(
+    exp_id: int,
+    limit: Annotated[int, Query(ge=1, le=100_000)] = 1000,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict:
     rows = await asyncio.to_thread(storage.get_frames, exp_id, limit=limit, offset=offset)
     return {"frames": rows}
 
@@ -327,22 +339,29 @@ async def fit(body: FitRequest) -> dict:
 # ---------- 调试接口（仅模拟源使用；用于验收 F08/F09/F10/P04） ----------
 
 
-@router.post("/api/debug/bad-frame")
+def _require_debug_enabled() -> None:
+    enabled = os.environ.get("EC_ENABLE_DEBUG_ENDPOINTS", "").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        # 对生产调用方隐藏调试面；测试/演示须显式启用。
+        raise HTTPException(status_code=404, detail="not found")
+
+
+@router.post("/api/debug/bad-frame", dependencies=[Depends(_require_debug_enabled)])
 async def inject_bad_frame() -> dict:
     """推送一条非法帧（ec 为非数值），验证前端容错不崩溃（F10）。"""
     await broadcast({"timestamp": 1.0, "ec": "abc", "temperature": 25.0, "status": "running"})
     return {"ok": True, "injected": "bad-frame"}
 
 
-@router.post("/api/debug/close-connections")
+@router.post("/api/debug/close-connections", dependencies=[Depends(_require_debug_enabled)])
 async def close_connections() -> dict:
     """强制关闭所有 WS 连接，验证前端断线检测与重连（F08/F09）。"""
     count = await _hub.close_all(code=1001, reason="debug close")
     return {"ok": True, "closed": count}
 
 
-@router.post("/api/debug/burst")
-async def burst(count: int = 10000) -> dict:
+@router.post("/api/debug/burst", dependencies=[Depends(_require_debug_enabled)])
+async def burst(count: Annotated[int, Query(ge=1, le=10_000)] = 10_000) -> dict:
     """快速推送 count 帧（默认 1 万），用于验证前端大点数负载与 30 分钟模拟（P03/P04）。
 
     仅广播、不落库、不消耗 seq：注入帧不进入 raw_frames（B-3 修复，保证原始数据纯净）。

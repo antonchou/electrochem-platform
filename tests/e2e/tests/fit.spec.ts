@@ -43,7 +43,7 @@ test('备选公式拟合：时间轴选模型→拟合→出结果表与曲线',
   await expect(page.getByTestId('fit-results')).toContainText('最优：');
 });
 
-test('温度轴：切到温度→Arrhenius 模型可用并出结果', async ({ page }) => {
+test('温度轴：近恒温数据跳过无意义的 Arrhenius 结果', async ({ page }) => {
   // 跑一轮实验并停止（帧含温度数据）
   await page.getByTestId('btn-start').click();
   await expect
@@ -57,11 +57,11 @@ test('温度轴：切到温度→Arrhenius 模型可用并出结果', async ({ p
   await expect(page.getByTestId('fit-model-arrhenius')).toBeVisible();
   await expect(page.getByTestId('fit-model-kohlrausch')).toHaveCount(0); // 跨轴模型不出现
 
-  // 拟合并断言 Arrhenius 出现在结果中
+  // Mock 温度波动小于 1 °C，界面应解释约束，后端不得伪造活化能结果
+  await expect(page.getByTestId('fit-arrhenius-note')).toContainText('温度跨度不足');
   await page.getByTestId('btn-fit').click();
   await expect(page.getByTestId('fit-results')).toBeVisible();
-  await expect(page.getByTestId('fit-results')).toContainText('Arrhenius');
-  await expect(page.getByTestId('fit-results')).toContainText('Ea_kJ_mol');
+  await expect(page.getByTestId('fit-results')).not.toContainText('Ea_kJ_mol');
 });
 
 test('浓度轴：切到浓度→线性标定/Kohlrausch 模型可用', async ({ page }) => {

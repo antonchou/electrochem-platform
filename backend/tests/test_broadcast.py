@@ -24,6 +24,11 @@ class _SlowWebSocket:
         self.closed = True
 
 
+class _FailingWebSocket(_SlowWebSocket):
+    async def send_text(self, text: str) -> None:
+        raise RuntimeError("send failed")
+
+
 def test_slow_subscriber_drops_oldest_without_blocking_publisher():
     async def scenario() -> None:
         hub = BroadcastHub(queue_size=2)
@@ -48,6 +53,22 @@ def test_slow_subscriber_drops_oldest_without_blocking_publisher():
         assert [json.loads(item)["seq"] for item in websocket.sent] == [0, 2, 3]
 
         assert await hub.close_all(reason="test complete") == 1
+        assert websocket.closed is True
+        assert hub.stats.subscriber_count == 0
+
+    asyncio.run(scenario())
+
+
+def test_sender_failure_closes_and_removes_subscriber():
+    async def scenario() -> None:
+        hub = BroadcastHub(queue_size=2)
+        websocket = _FailingWebSocket()
+        await hub.connect(websocket)  # type: ignore[arg-type]
+        await hub.publish({"seq": 1})
+        for _ in range(20):
+            if hub.stats.subscriber_count == 0:
+                break
+            await asyncio.sleep(0)
         assert websocket.closed is True
         assert hub.stats.subscriber_count == 0
 

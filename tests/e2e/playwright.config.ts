@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const channel = process.env.E2E_BROWSER;
+const e2eOutputDir = path.join(tmpdir(), 'ec-e2e-results');
 
 export default defineConfig({
   testDir: './tests',
@@ -24,7 +25,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   // 产物（trace/截图/HTML 报告）输出到系统临时目录，避免在项目目录产生大量待清理文件
-  outputDir: path.join(tmpdir(), 'ec-e2e-results'),
+  outputDir: e2eOutputDir,
   reporter: [['list']],
   use: {
     baseURL: 'http://localhost:5173',
@@ -38,8 +39,12 @@ export default defineConfig({
   webServer: [
     {
       command:
-        'cd ../../backend && .venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
+        'cd ../../backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
       url: 'http://127.0.0.1:8000/health',
+      env: {
+        EC_ENABLE_DEBUG_ENDPOINTS: '1',
+        EC_DB_PATH: path.join(e2eOutputDir, 'backend.db'),
+      },
       reuseExistingServer: true,
       timeout: 30_000,
     },

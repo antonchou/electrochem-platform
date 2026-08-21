@@ -40,13 +40,14 @@ MODELS: Dict[str, Dict[str, str]] = {
     },
     "concentration": {
         "linear": "线性标定 y = a + b·c",
-        "quadratic": "二次多项式 y = a + b·c + c·c²",
+        "quadratic": "二次多项式 y = a + b·c + q·c²",
         "kohlrausch": "Kohlrausch y = a + b·c − K·c^1.5",
     },
 }
 
 FIT_SAMPLES = 150  # 拟合曲线采样点数
 GAS_CONST = 8.314  # J/(mol·K)，用于 Arrhenius 活化能换算
+ARRHENIUS_MIN_TEMPERATURE_SPAN_C = 1.0
 
 
 def _solve_linear_system(a: List[List[float]], b: List[float]) -> List[float]:
@@ -137,7 +138,7 @@ def fit_quadratic(x: List[float], y: List[float], axis: str = "time") -> Optiona
     return {
         "model": "quadratic",
         "label": _label("quadratic", axis),
-        "params": {"a": a, "b": b, "c": c},
+        "params": {"a": a, "b": b, ("q" if axis == "concentration" else "c"): c},
         "r2": r2,
         "rmse": rmse,
         "n": len(x),
@@ -252,6 +253,9 @@ def fit_arrhenius(x: List[float], y: List[float], axis: str = "temperature") -> 
     """
     if len(x) < 3 or any(yi <= 0 for yi in y):
         return None
+    # 至少需要 3 个不同温度且覆盖 1 °C；恒温/近恒温数据无法稳定识别活化能。
+    if len(set(x)) < 3 or max(x) - min(x) < ARRHENIUS_MIN_TEMPERATURE_SPAN_C:
+        return None
     t_k = [xi + 273.15 for xi in x]
     if any(ti <= 0 for ti in t_k):
         return None
@@ -333,7 +337,8 @@ def fit_all(
     传入的模型若不属于当前 x_axis 的模型池则跳过（保证化学语境正确）。
     """
     available = MODELS.get(x_axis, MODELS["time"])
-    selected = models if models else list(available.keys())
+    # None 表示“使用该轴全部模型”；显式 [] 表示“不运行任何模型”。
+    selected = list(available.keys()) if models is None else models
     results: List[Dict[str, Any]] = []
     for name in selected:
         if name not in available:

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 # 仓库约定：原始数据不可变，统一存 data/raw/（backend/app/storage.py → 仓库根/data/raw/ec.db）
 DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "ec.db"
+FINAL_EXPERIMENT_STATUSES = frozenset({"stopped", "aborted", "error"})
 
 
 def _db_path() -> str:
@@ -159,9 +160,63 @@ def create_experiment(
         return int(cur.lastrowid)
 
 
+def create_experiment_with_sample(
+    experiment_id: str,
+    title: str,
+    sample_id: str,
+    sensor_path_id: str,
+    *,
+    operator: Optional[str] = None,
+    objective: Optional[str] = None,
+    concentration_mmol_l: Optional[float] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    started_at_utc: Optional[str] = None,
+) -> int:
+    """原子创建实验和首个样品；任一步失败都不留下半成品记录。"""
+    import datetime
+
+    started = started_at_utc or datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+    measured = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    with _conn() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO experiments
+                (experiment_id, title, operator, objective, started_at_utc, status,
+                 sample_id, sensor_path_id, metadata_json)
+            VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)
+            """,
+            (
+                experiment_id,
+                title,
+                operator,
+                objective,
+                started,
+                sample_id,
+                sensor_path_id,
+                json.dumps(metadata, ensure_ascii=False) if metadata else None,
+            ),
+        )
+        exp_id = int(cur.lastrowid)
+        conn.execute(
+            """
+            INSERT INTO samples
+                (experiment_id, sample_id, sensor_path_id, concentration_mmol_l,
+                 measured_at_utc, frame_count)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (exp_id, sample_id, sensor_path_id, concentration_mmol_l, measured),
+        )
+        return exp_id
+
+
 def finish_experiment(experiment_id: int, status: str = "stopped") -> None:
     import datetime
 
+    if status not in FINAL_EXPERIMENT_STATUSES:
+        allowed = ", ".join(sorted(FINAL_EXPERIMENT_STATUSES))
+        raise ValueError(f"invalid terminal experiment status {status!r}; expected one of: {allowed}")
     ended = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     with _conn() as conn:
         conn.execute(
@@ -234,15 +289,20 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
             """,
             frames,
         )
-        # 按 (experiment_id, sample_id) 聚合计数，累加到 samples.frame_count
-        counts: Dict[tuple, int] = {}
+        # 必须按完整样品链路聚合；同一样品编号可能同时走 WIDE/NARROW 等不同通道。
+        counts: Dict[tuple[int, str, str], int] = {}
         for f in frames:
-            key = (f["experiment_id"], f["sample_id"])
+            sample_id = f.get("sample_id")
+            if sample_id is None:
+                continue
+            key = (f["experiment_id"], sample_id, f["sensor_path_id"])
             counts[key] = counts.get(key, 0) + 1
-        for (exp_id, sample_id), n in counts.items():
+        for (exp_id, sample_id, sensor_path_id), n in counts.items():
             conn.execute(
-                "UPDATE samples SET frame_count = frame_count + ? WHERE experiment_id = ? AND sample_id = ?",
-                (n, exp_id, sample_id),
+                """UPDATE samples
+                   SET frame_count = frame_count + ?
+                   WHERE experiment_id = ? AND sample_id = ? AND sensor_path_id = ?""",
+                (n, exp_id, sample_id, sensor_path_id),
             )
 
 
@@ -284,6 +344,10 @@ def get_frames(
     limit: int = 1000,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
+    if not 1 <= limit <= 1_000_000:
+        raise ValueError("limit must be between 1 and 1000000")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
     with _conn() as conn:
         rows = conn.execute(
             """

@@ -81,13 +81,17 @@ class MockDeviceConfig:
 
 
 def load_mock_config() -> MockDeviceConfig:
-    """Load the optional versioned config and apply small env overrides."""
+    """Load config with actionable errors for invalid files/environment values."""
     config_path = os.environ.get("EC_MOCK_CONFIG")
-    config = (
-        MockDeviceConfig.from_json_file(config_path)
-        if config_path
-        else MockDeviceConfig()
-    )
+    try:
+        config = (
+            MockDeviceConfig.from_json_file(config_path)
+            if config_path
+            else MockDeviceConfig()
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        location = config_path or "built-in defaults"
+        raise ValueError(f"invalid mock configuration ({location}): {exc}") from exc
     overrides: dict[str, Any] = {
         "scenario": os.environ.get("EC_MOCK_SCENARIO"),
         "sample_rate_hz": os.environ.get("EC_SAMPLE_RATE_HZ"),
@@ -98,12 +102,31 @@ def load_mock_config() -> MockDeviceConfig:
         for field in MockDeviceConfig.__dataclass_fields__
     }
     if overrides["scenario"] is not None:
-        raw["scenario"] = MockScenario(overrides["scenario"])
+        try:
+            raw["scenario"] = MockScenario(overrides["scenario"])
+        except ValueError as exc:
+            choices = ", ".join(item.value for item in MockScenario)
+            raise ValueError(
+                f"invalid EC_MOCK_SCENARIO={overrides['scenario']!r}; expected one of: {choices}"
+            ) from exc
     if overrides["sample_rate_hz"] is not None:
-        raw["sample_rate_hz"] = float(overrides["sample_rate_hz"])
+        try:
+            raw["sample_rate_hz"] = float(overrides["sample_rate_hz"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid EC_SAMPLE_RATE_HZ={overrides['sample_rate_hz']!r}; expected a positive number"
+            ) from exc
     if overrides["seed"] is not None:
-        raw["seed"] = int(overrides["seed"])
-    return MockDeviceConfig(**raw)
+        try:
+            raw["seed"] = int(overrides["seed"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid EC_MOCK_SEED={overrides['seed']!r}; expected an integer"
+            ) from exc
+    try:
+        return MockDeviceConfig(**raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid mock configuration values: {exc}") from exc
 
 
 class MockDevice(DeviceDriver):

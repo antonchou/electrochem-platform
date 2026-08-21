@@ -13,8 +13,6 @@ echarts.use([LineChart, GridComponent, TooltipComponent, DataZoomComponent, Canv
 interface Props {
   /** 数据缓冲（由 useRealtimeData 提供，ref 保证读到最新） */
   pointsRef: React.MutableRefObject<DataPoint[]>;
-  /** 是否运行中（用于在停止后维持曲线显示） */
-  running: boolean;
 }
 
 /**
@@ -65,13 +63,37 @@ export function RealTimeChart({ pointsRef }: Props) {
       ],
     });
 
+    let lastRenderedPoint: DataPoint | null = null;
+    let renderedCount = 0;
+    const replaceAll = (points: DataPoint[]) => {
+      const data = points.map((point) => [point.t, point.ec] as [number, number]);
+      chart.setOption({ series: [{ data }] });
+      renderedCount = points.length;
+      lastRenderedPoint = points.length > 0 ? points[points.length - 1] : null;
+    };
+
     const timer = window.setInterval(() => {
       const pts = pointsRef.current;
-      const data: [number, number][] = new Array(pts.length);
-      for (let i = 0; i < pts.length; i++) {
-        data[i] = [pts[i].t, pts[i].ec];
+      if (pts.length === 0) {
+        if (renderedCount > 0) replaceAll(pts);
+        return;
       }
-      chartRef.current?.setOption({ series: [{ data }] });
+      if (lastRenderedPoint === pts[pts.length - 1]) return;
+
+      const lastIndex = lastRenderedPoint ? pts.indexOf(lastRenderedPoint) : -1;
+      const newPoints = lastIndex >= 0 ? pts.slice(lastIndex + 1) : pts;
+      if (lastIndex < 0 || renderedCount + newPoints.length > config.chart.maxPoints) {
+        replaceAll(pts);
+        return;
+      }
+      if (newPoints.length > 0) {
+        chart.appendData({
+          seriesIndex: 0,
+          data: newPoints.map((point) => [point.t, point.ec]),
+        });
+        renderedCount += newPoints.length;
+        lastRenderedPoint = newPoints[newPoints.length - 1] ?? lastRenderedPoint;
+      }
     }, config.chart.updateIntervalMs);
 
     const onResize = () => chart.resize();
