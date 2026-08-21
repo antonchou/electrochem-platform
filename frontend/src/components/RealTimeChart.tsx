@@ -1,14 +1,39 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts/core';
 import { LineChart } from 'echarts/charts';
-import { GridComponent, TooltipComponent, DataZoomComponent } from 'echarts/components';
+import { GridComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { DataPoint } from '../types/protocol';
 import { config } from '../config/config';
 import styles from './RealTimeChart.module.css';
 
 // 按需注册，避免全量打包（对树莓派端加载与渲染更友好）
-echarts.use([LineChart, GridComponent, TooltipComponent, DataZoomComponent, CanvasRenderer]);
+echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer]);
+
+interface AxisBounds {
+  min: number;
+  max: number;
+}
+
+/** 为电导率选择易读的刻度步长，避免首批少量数据导致坐标范围过窄或过宽。 */
+function niceStep(span: number): number {
+  const roughStep = Math.max(span / 6, Number.EPSILON);
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const normalized = roughStep / magnitude;
+  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return multiplier * magnitude;
+}
+
+function paddedYAxisBounds(dataMin: number, dataMax: number): AxisBounds {
+  const center = (dataMin + dataMax) / 2;
+  // 初始窗口至少 10 μS/cm，或约为读数的 1%；有真实波动时额外留 20% 空间。
+  const span = Math.max((dataMax - dataMin) * 1.2, Math.abs(center) * 0.01, 10);
+  const step = niceStep(span);
+  return {
+    min: Math.max(0, Math.floor((center - span / 2) / step) * step),
+    max: Math.ceil((center + span / 2) / step) * step,
+  };
+}
 
 interface Props {
   /** 数据缓冲（由 useRealtimeData 提供，ref 保证读到最新） */
@@ -38,6 +63,9 @@ export function RealTimeChart({ pointsRef }: Props) {
       grid: { left: 68, right: 28, top: 40, bottom: 48 },
       xAxis: {
         type: 'value',
+        min: 0,
+        max: 1,
+        minInterval: 1,
         name: '时间 (s)',
         nameLocation: 'middle',
         nameGap: 30,
@@ -49,7 +77,6 @@ export function RealTimeChart({ pointsRef }: Props) {
         scale: true,
         splitLine: { lineStyle: { type: 'dashed' } },
       },
-      dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }],
       series: [
         {
           name: 'EC',
@@ -63,19 +90,77 @@ export function RealTimeChart({ pointsRef }: Props) {
       ],
     });
 
+    let observedBuffer = pointsRef.current;
     let lastRenderedPoint: DataPoint | null = null;
     let renderedCount = 0;
-    const replaceAll = (points: DataPoint[]) => {
+    let maxTimeSeen = 0;
+    let minEcSeen = Number.POSITIVE_INFINITY;
+    let maxEcSeen = Number.NEGATIVE_INFINITY;
+    let yBounds: AxisBounds | null = null;
+
+    const resetAxisTracking = () => {
+      lastRenderedPoint = null;
+      renderedCount = 0;
+      maxTimeSeen = 0;
+      minEcSeen = Number.POSITIVE_INFINITY;
+      maxEcSeen = Number.NEGATIVE_INFINITY;
+      yBounds = null;
+    };
+
+    const includeInAxes = (points: DataPoint[]) => {
+      for (const point of points) {
+        maxTimeSeen = Math.max(maxTimeSeen, point.t);
+        minEcSeen = Math.min(minEcSeen, point.ec);
+        maxEcSeen = Math.max(maxEcSeen, point.ec);
+      }
+      if (Number.isFinite(minEcSeen) && Number.isFinite(maxEcSeen)) {
+        const candidate = paddedYAxisBounds(minEcSeen, maxEcSeen);
+        // 同一轮实验内坐标只扩展、不收缩，消除实时读数造成的刻度抖动。
+        yBounds = yBounds
+          ? { min: Math.min(yBounds.min, candidate.min), max: Math.max(yBounds.max, candidate.max) }
+          : candidate;
+      }
+    };
+
+    const axisOption = () => ({
+      xAxis: { min: 0, max: Math.max(1, Math.ceil(maxTimeSeen)) },
+      yAxis: yBounds
+        ? { min: yBounds.min, max: yBounds.max }
+        : { min: 'dataMin', max: 'dataMax' },
+    });
+
+    const publishAxisDiagnostics = () => {
+      el.dataset.chartXMin = '0';
+      el.dataset.chartXMax = String(Math.max(1, Math.ceil(maxTimeSeen)));
+      if (yBounds) {
+        el.dataset.chartYMin = String(yBounds.min);
+        el.dataset.chartYMax = String(yBounds.max);
+      } else {
+        delete el.dataset.chartYMin;
+        delete el.dataset.chartYMax;
+      }
+    };
+
+    const replaceAll = (points: DataPoint[], resetAxes = false) => {
+      if (resetAxes) resetAxisTracking();
+      includeInAxes(points);
       const data = points.map((point) => [point.t, point.ec] as [number, number]);
-      chart.setOption({ series: [{ data }] });
+      chart.setOption({ ...axisOption(), series: [{ data }] });
       renderedCount = points.length;
       lastRenderedPoint = points.length > 0 ? points[points.length - 1] : null;
+      publishAxisDiagnostics();
     };
 
     const timer = window.setInterval(() => {
       const pts = pointsRef.current;
+      // start/reset 会替换缓冲数组；新实验必须重新建立坐标范围。
+      if (pts !== observedBuffer) {
+        observedBuffer = pts;
+        replaceAll(pts, true);
+        return;
+      }
       if (pts.length === 0) {
-        if (renderedCount > 0) replaceAll(pts);
+        if (renderedCount > 0) replaceAll(pts, true);
         return;
       }
       if (lastRenderedPoint === pts[pts.length - 1]) return;
@@ -87,12 +172,16 @@ export function RealTimeChart({ pointsRef }: Props) {
         return;
       }
       if (newPoints.length > 0) {
+        includeInAxes(newPoints);
         chart.appendData({
           seriesIndex: 0,
           data: newPoints.map((point) => [point.t, point.ec]),
         });
+        // appendData 不会可靠地重算 value 轴范围，必须显式同步坐标轴。
+        chart.setOption(axisOption());
         renderedCount += newPoints.length;
         lastRenderedPoint = newPoints[newPoints.length - 1] ?? lastRenderedPoint;
+        publishAxisDiagnostics();
       }
     }, config.chart.updateIntervalMs);
 

@@ -66,6 +66,33 @@ test('F04 实时曲线：数据自动追加，无需刷新页面', async ({ page
   await expect(page.getByTestId('connection-status')).toHaveText('已连接');
 });
 
+test('F04b 实时曲线坐标：时间轴延伸且纵轴稳定覆盖读数', async ({ page }) => {
+  await page.getByTestId('btn-start').click();
+  await waitForPoints(page, 5);
+
+  const chart = page.getByTestId('realtime-chart');
+  await expect
+    .poll(async () => Number(await chart.getAttribute('data-chart-x-max')), {
+      timeout: 5000,
+      message: '时间轴上限应随实验时间超过 1 秒',
+    })
+    .toBeGreaterThan(1);
+
+  const yMin1 = Number(await chart.getAttribute('data-chart-y-min'));
+  const yMax1 = Number(await chart.getAttribute('data-chart-y-max'));
+  const ecText = await page.getByTestId('value-ec').innerText();
+  const ec = Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]);
+  expect(Number.isFinite(ec), '实时 EC 卡片应包含可解析的数值').toBe(true);
+  expect(ec).toBeGreaterThanOrEqual(yMin1);
+  expect(ec).toBeLessThanOrEqual(yMax1);
+
+  await page.waitForTimeout(1200);
+  const yMin2 = Number(await chart.getAttribute('data-chart-y-min'));
+  const yMax2 = Number(await chart.getAttribute('data-chart-y-max'));
+  expect(yMin2, '同一轮实验中纵轴下限不应向上跳动').toBeLessThanOrEqual(yMin1);
+  expect(yMax2, '同一轮实验中纵轴上限不应向下跳动').toBeGreaterThanOrEqual(yMax1);
+});
+
 test('F05 WebSocket：连接指定地址并解析约定 JSON', async ({ page }) => {
   await expect(page.getByTestId('connection-status')).toHaveText('已连接');
   await expect(page.getByTestId('connection-panel')).toContainText('后端(WS)');
