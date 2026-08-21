@@ -95,17 +95,33 @@ def test_first_order_saturation():
 
 
 def test_kohlrausch_law():
-    """Kohlrausch：κ = c·(Λ∞ − K·√c)，应还原 a=Λ∞=100、b=K=10。"""
+    """Kohlrausch（含截距）：κ = κblank + Λ0·c − K·c^1.5，应还原 a=κblank、b=Λ0、K。"""
     from app import analysis
 
     c = [float(i) for i in range(1, 11)]  # 1..10 mmol/L
-    y = [ci * (100 - 10 * math.sqrt(ci)) for ci in c]
+    # 含背景电导：κblank=15、Λ0=95、K=8
+    y = [15 + 95 * ci - 8 * ci**1.5 for ci in c]
     res = analysis.fit_kohlrausch(c, y)
     assert res is not None
     assert res["r2"] > 0.9999
-    assert abs(res["params"]["a"] - 100.0) < 1e-6
-    assert abs(res["params"]["b"] - 10.0) < 1e-6
+    assert abs(res["params"]["a"] - 15.0) < 1e-6  # κblank
+    assert abs(res["params"]["b"] - 95.0) < 1e-6  # Λ0
+    assert abs(res["params"]["K"] - 8.0) < 1e-6   # K
     assert "Kohlrausch" in res["label"]
+
+
+def test_kohlrausch_with_intercept_degrades_to_no_background():
+    """无背景电导（κblank=0）时新模型应退化还原旧场景（截距≈0）。"""
+    from app import analysis
+
+    c = [float(i) for i in range(1, 11)]
+    y = [ci * (100 - 10 * math.sqrt(ci)) for ci in c]  # 旧公式 y=c·(Λ∞−K·√c)
+    res = analysis.fit_kohlrausch(c, y)
+    assert res is not None
+    assert res["r2"] > 0.9999
+    assert abs(res["params"]["a"]) < 1e-6          # 截距≈0
+    assert abs(res["params"]["b"] - 100.0) < 1e-6  # Λ0
+    assert abs(res["params"]["K"] - 10.0) < 1e-6   # K
 
 
 def test_arrhenius_activation_energy():
@@ -154,9 +170,9 @@ def test_fit_endpoint_ok(client):
 
 
 def test_fit_endpoint_x_axis_kohlrausch(client):
-    """concentration 轴下 /api/analysis/fit 应可用 Kohlrausch 模型。"""
+    """concentration 轴下 /api/analysis/fit 应可用 Kohlrausch（含截距）模型。"""
     c = [float(i) for i in range(1, 9)]
-    y = [ci * (120 - 8 * math.sqrt(ci)) for ci in c]
+    y = [15 + 120 * ci - 8 * ci**1.5 for ci in c]  # κblank=15, Λ0=120, K=8
     r = client.post(
         "/api/analysis/fit",
         json={"x": c, "y": y, "models": ["kohlrausch", "linear"], "x_axis": "concentration"},
@@ -165,8 +181,9 @@ def test_fit_endpoint_x_axis_kohlrausch(client):
     body = r.json()
     assert body["best"] == "kohlrausch"
     kohl = next(m for m in body["models"] if m["model"] == "kohlrausch")
-    assert abs(kohl["params"]["a"] - 120.0) < 1e-6
-    assert abs(kohl["params"]["b"] - 8.0) < 1e-6
+    assert abs(kohl["params"]["a"] - 15.0) < 1e-6   # κblank
+    assert abs(kohl["params"]["b"] - 120.0) < 1e-6  # Λ0
+    assert abs(kohl["params"]["K"] - 8.0) < 1e-6    # K
 
 
 def test_fit_endpoint_bad_input(client):
