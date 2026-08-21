@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts/core';
 import { LineChart } from 'echarts/charts';
-import { GridComponent, TooltipComponent } from 'echarts/components';
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import styles from './StaticChart.module.css';
 
-echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
 export interface ChartOverlay {
   data: [number, number][];
@@ -26,12 +26,24 @@ interface Props {
 /** 静态曲线图：渲染数据点 + 可选叠加拟合/参考曲线。 */
 export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)' }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<echarts.ECharts | null>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const chart = echarts.init(el);
-    chart.setOption({
+    chartRef.current = chart;
+    const onResize = () => chart.resize();
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      chart.dispose();
+      chartRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    chartRef.current?.setOption({
       animation: false,
       tooltip: { trigger: 'axis' },
       legend: { top: 0, left: 12, icon: 'roundRect', itemWidth: 14, itemHeight: 6 },
@@ -66,13 +78,7 @@ export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)
           lineStyle: { width: 2.5, color: ov.color ?? '#16a34a' },
         })),
       ],
-    });
-    const onResize = () => chart.resize();
-    window.addEventListener('resize', onResize);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      chart.dispose();
-    };
+    }, { notMerge: true });
   }, [data, overlays, xLabel]);
 
   return <div ref={ref} className={styles.chart} style={{ height }} />;

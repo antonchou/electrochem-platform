@@ -53,8 +53,8 @@ src/
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `VITE_DATA_SOURCE` | `server` | `server` 连接后端；`browser` 用浏览器内置模拟源 |
-| `VITE_WS_URL` | `ws://localhost:8000/ws/stream` | 实时流地址 |
-| `VITE_API_BASE` | `http://localhost:8000` | REST 控制地址 |
+| `VITE_WS_URL` | 当前页面主机的 `ws(s)://…:8000/ws/stream` | 实时流地址 |
+| `VITE_API_BASE` | 当前页面主机的 `http(s)://…:8000` | REST 控制地址 |
 
 ## 命令
 

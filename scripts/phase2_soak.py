@@ -36,6 +36,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _receive_json_with_timeout(websocket: object, timeout: float) -> object:
+    """为 TestClient WebSocket 的阻塞 receive 增加可诊断的超时。"""
+    outcome: queue.Queue[object | BaseException] = queue.Queue(maxsize=1)
+
+    def receive() -> None:
+        try:
+            outcome.put(websocket.receive_json())  # type: ignore[attr-defined]
+        except BaseException as exc:
+            outcome.put(exc)
+
+    thread = threading.Thread(target=receive, name="phase2-soak-receive", daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    if thread.is_alive():
+        raise TimeoutError(f"WebSocket stream produced no message for {timeout:.1f} seconds")
+    result = outcome.get_nowait()
+    if isinstance(result, BaseException):
+        raise result
+    return result
+
+
 def _execute_session(args: argparse.Namespace, db_path: Path) -> dict[str, object]:
     """Run TestClient HTTP and WebSocket operations in one worker thread."""
     from fastapi.testclient import TestClient
@@ -62,9 +83,21 @@ def _execute_session(args: argparse.Namespace, db_path: Path) -> dict[str, objec
             deadline = time.monotonic() + args.duration
             try:
                 while args.points is None or received < args.points:
-                    if time.monotonic() >= deadline:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
                         break
-                    item = websocket.receive_json()
+                    stream_timeout = max(5.0, 3.0 / args.sample_rate)
+                    try:
+                        item = _receive_json_with_timeout(
+                            websocket,
+                            min(remaining, stream_timeout),
+                        )
+                    except TimeoutError as exc:
+                        if time.monotonic() >= deadline:
+                            break
+                        raise RuntimeError(f"WebSocket stream stalled: {exc}") from exc
+                    if not isinstance(item, dict):
+                        raise RuntimeError(f"unexpected WebSocket payload: {item!r}")
                     if "ec" not in item:
                         continue
 

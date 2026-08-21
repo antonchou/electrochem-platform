@@ -49,6 +49,10 @@ EC_SAMPLE_RATE_HZ=10
 EC_MOCK_SEED=2026
 ```
 
+调试注入接口默认关闭；仅在本地验收时显式设置 `EC_ENABLE_DEBUG_ENDPOINTS=1`。
+跨域来源默认只允许 localhost、私有网段和 `.local` 主机；如需额外来源，可用逗号分隔的
+`EC_CORS_ORIGINS` 或正则 `EC_CORS_ORIGIN_REGEX` 配置。
+
 Mock 驱动内部同时预留 pH 原始读数，但当前电导率实验的 WS/SQLite 协议仍只发布
 EC 与温度，避免破坏已交付前端。真实设备后续实现同一个 `DeviceDriver` 接口。
 

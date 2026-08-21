@@ -119,7 +119,7 @@ export function ExperimentPage() {
           <DataStats pointCount={count} durationSec={duration} />
         </div>
         <div className={styles.chartBody}>
-          <RealTimeChart pointsRef={pointsRef} running={status === 'running'} />
+          <RealTimeChart pointsRef={pointsRef} />
         </div>
       </section>
 

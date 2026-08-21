@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from app.drivers import MockDevice, MockDeviceConfig, MockScenario
+from app.drivers import MockDevice, MockDeviceConfig, MockScenario, load_mock_config
 
 
 def test_mock_device_is_seeded_and_repeatable():
@@ -60,3 +60,9 @@ def test_mock_device_requires_connection():
 def test_mock_config_rejects_unknown_fields():
     with pytest.raises(ValueError, match="unknown mock config fields"):
         MockDeviceConfig.from_mapping({"scenario": "stable", "typo": 1})
+
+
+def test_mock_env_error_names_the_invalid_variable(monkeypatch):
+    monkeypatch.setenv("EC_SAMPLE_RATE_HZ", "fast")
+    with pytest.raises(ValueError, match="EC_SAMPLE_RATE_HZ"):
+        load_mock_config()
