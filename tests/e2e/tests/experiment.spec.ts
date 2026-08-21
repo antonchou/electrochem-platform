@@ -49,10 +49,16 @@ test('F03 实时数值：EC/温度持续更新且单位正确', async ({ page })
   await expect(ec).toContainText('μS/cm');
   await expect(page.getByTestId('value-temperature')).toContainText('°C');
 
-  const t1 = await ec.innerText();
-  await page.waitForTimeout(600);
-  const t2 = await ec.innerText();
-  expect(t1).not.toBe(t2); // 数值在持续更新
+  const ecText = await ec.innerText();
+  const temperatureText = await page.getByTestId('value-temperature').innerText();
+  expect(Number.isFinite(Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]))).toBe(true);
+  expect(Number.isFinite(Number(temperatureText.match(/-?\d+(?:\.\d+)?/)?.[0]))).toBe(true);
+
+  // 稳定传感器连续两帧可能恰好显示同一舍入值；以采样点数增长证明数据仍在更新。
+  const countBefore = Number(await page.getByTestId('stat-count').innerText());
+  await expect
+    .poll(async () => Number(await page.getByTestId('stat-count').innerText()), { timeout: 3000 })
+    .toBeGreaterThan(countBefore);
 });
 
 test('F04 实时曲线：数据自动追加，无需刷新页面', async ({ page }) => {
