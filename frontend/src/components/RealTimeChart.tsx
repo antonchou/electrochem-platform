@@ -187,10 +187,16 @@ export function RealTimeChart({ pointsRef }: Props) {
 
     const onResize = () => chart.resize();
     window.addEventListener('resize', onResize);
+    // 与 StaticChart 一致：容器尺寸变化（布局挤出等）不一定触发 window resize，
+    // 用 ResizeObserver 兜底，避免 canvas 被 CSS 拉伸变模糊。
+    const observer =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    observer?.observe(el);
 
     return () => {
       window.clearInterval(timer);
       window.removeEventListener('resize', onResize);
+      observer?.disconnect();
       chart.dispose();
       chartRef.current = null;
     };
