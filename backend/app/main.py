@@ -1,5 +1,6 @@
 """FastAPI 应用入口：溶液导电性相对比较 · 模拟数据源。"""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .persistence import persist
 from .routes import router, start_acquisition, stop_acquisition
+
+# 模块加载时一次性初始化根日志（避免重复配置）；供 routes 采集循环等打点使用
+logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager

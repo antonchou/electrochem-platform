@@ -50,6 +50,9 @@ export class BrowserMockSource implements DataClient {
       }
       this.status = 'running';
       this.t0 = Date.now() / 1000;
+      // 与 server 模式一致：start 时先广播 running 状态帧，
+      // 触发 useRealtimeData 清空上一轮缓冲，避免 stop→start 新旧数据混合
+      this.emit({ type: 'status', status: 'running' });
       this.startStream();
       return { ok: true, status: this.status };
     }

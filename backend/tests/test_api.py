@@ -3,6 +3,7 @@
 import os
 import queue
 import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -162,7 +163,13 @@ def test_frames_persist_and_export(client):
         client.post("/api/experiment/stop")
     client.post("/api/experiment/reset")
 
-    detail = client.get(f"/api/experiments/{exp_id}").json()
+    # 帧先入队后广播，由后台 drain 攒批落库：轮询等待，避免 stop 后立即读取的竞态
+    detail = None
+    for _ in range(50):  # 最多约 1s
+        detail = client.get(f"/api/experiments/{exp_id}").json()
+        if detail["frame_count"] >= 3:
+            break
+        time.sleep(0.02)
     assert detail["frame_count"] >= 3
 
     csv_resp = client.get(f"/api/experiments/{exp_id}/export.csv")
@@ -180,3 +187,57 @@ def test_frames_persist_and_export(client):
 def test_experiment_404(client):
     assert client.get("/api/experiments/999999").status_code == 404
     assert client.get("/api/experiments/999999/export.csv").status_code == 404
+
+
+# ---------------- Review B-3 / B-4 / B-5 回归 ----------------
+
+def test_stop_idempotent_does_not_refresh_ended_at(client):
+    """B-4：重复 stop 返回 ok=true，但不再刷新 ended_at_utc。"""
+    exp_id = client.post("/api/experiment/start").json()["experiment_id"]
+    assert client.post("/api/experiment/stop").json()["ok"] is True
+
+    first = client.get(f"/api/experiments/{exp_id}").json()
+    assert first["status"] == "stopped"
+    assert first["ended_at_utc"] is not None
+
+    r2 = client.post("/api/experiment/stop")
+    assert r2.json()["ok"] is True
+    assert r2.json()["message"] == "当前没有运行中的实验"
+
+    second = client.get(f"/api/experiments/{exp_id}").json()
+    assert second["status"] == "stopped"
+    assert second["ended_at_utc"] == first["ended_at_utc"]
+    client.post("/api/experiment/reset")
+
+
+def test_reset_running_marks_aborted(client):
+    """B-5：running 中 reset → 历史记录 status 为 aborted（而非 idle）。"""
+    exp_id = client.post("/api/experiment/start").json()["experiment_id"]
+    client.post("/api/experiment/reset")
+
+    detail = client.get(f"/api/experiments/{exp_id}").json()
+    assert detail["status"] == "aborted"
+    assert detail["ended_at_utc"] is not None
+
+    # 内存态回 idle，可再次 start
+    assert client.post("/api/experiment/start").json()["status"] == "running"
+    client.post("/api/experiment/reset")
+
+
+def test_burst_broadcasts_only_no_persist(client):
+    """B-3：/api/debug/burst 仅广播、不落库（注入帧不污染 raw_frames）。"""
+    with client.websocket_connect("/ws/stream") as ws:
+        exp_id = client.post("/api/experiment/start").json()["experiment_id"]
+        # 等到第一条真实采集帧，确认流已建立
+        for _ in range(10):
+            if "ec" in ws.receive_json():
+                break
+        r = client.post("/api/debug/burst?count=20")
+        assert r.json()["ok"] is True
+        assert r.json()["sent"] == 20
+        client.post("/api/experiment/stop")
+    client.post("/api/experiment/reset")
+
+    detail = client.get(f"/api/experiments/{exp_id}").json()
+    # 注入的 20 帧不得落库：frame_count 远小于注入量，仅含采集循环真实帧
+    assert detail["frame_count"] < 20

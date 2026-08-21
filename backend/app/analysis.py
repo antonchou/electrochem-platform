@@ -11,8 +11,8 @@
                 Arrhenius κ = a·e^(−Ea/(R·T))（T = x + 273.15，x 为 °C），
                 输出活化能 Ea(kJ/mol)，用于温度校正分析。
 - concentration EC-浓度：线性标定 / 二次 / Kohlrausch
-                Kohlrausch 强电解质稀溶液定律 Λ = Λ∞ − K·√c，换算成
-                EC-c 形式 y = c·(a − b·√c)，a=Λ∞、b=K。
+                Kohlrausch（SRS 7.1）κ = κblank + Λ0·c − K·c^1.5，
+                a=κblank（背景电导）、b=Λ0、K，保留截距。
 
 实现为纯 Python（高斯消元解正规方程），不引入 numpy，保持树莓派轻量。
 非线性模型（一阶指数饱和）通过"k 对数网格搜索 + 每点线性最小二乘"求解。
@@ -41,7 +41,7 @@ MODELS: Dict[str, Dict[str, str]] = {
     "concentration": {
         "linear": "线性标定 y = a + b·c",
         "quadratic": "二次多项式 y = a + b·c + c·c²",
-        "kohlrausch": "Kohlrausch y = c·(a − b·√c)",
+        "kohlrausch": "Kohlrausch y = a + b·c − K·c^1.5",
     },
 }
 
@@ -274,27 +274,39 @@ def fit_arrhenius(x: List[float], y: List[float], axis: str = "temperature") -> 
 
 
 def fit_kohlrausch(x: List[float], y: List[float], axis: str = "concentration") -> Optional[Dict[str, Any]]:
-    """Kohlrausch：y = c·(a − b·√c) = a·c − b·c^1.5（x 为浓度 c）。
+    """Kohlrausch（含背景电导截距）：y = a + b·x − K·x^1.5（x 为浓度 c）。
 
-    强电解质稀溶液摩尔电导率 Λ = Λ∞ − K·√c，乘回浓度 c 即得 EC-c 关系，
-    其中 a=Λ∞、b=K。对 a、b 是线性最小二乘（自变量 c 与 −c^1.5）。要求 c>0。
+    对应 SRS 7.1：κ = κblank + Λ0·c − K·c^1.5，
+    a=κblank（背景电导）、b=Λ0（极限摩尔电导率）、K（经验常数）。
+    保留截距是本模型的关键：强制过原点（旧实现 y=c·(a−b·√c)）会系统性
+    高估 Λ0 与 K（评审 B-1）。对 [a, b, K] 是线性最小二乘
+    （自变量列 [1, c, −c^1.5]）。要求 c>0。
     """
     if len(x) < 3 or any(xi <= 0 for xi in x):
         return None
     try:
-        a, b = _linfit_cols([[xi, -xi**1.5] for xi in x], y)
+        # 特征 [1, c, −c^1.5] 中 c 与 c^1.5 高度共线，正规方程病态。
+        # 用 Gram-Schmidt 一步正交化：c^1.5 对 [1, c] 回归取残差列 r（与 1、c 正交），
+        # 再对 [1, c, r] 拟合，最后把系数还原回 y = a + b·c − K·c^1.5。
+        x15 = [xi**1.5 for xi in x]
+        c0, c1 = _polyfit(x, x15, 1)  # c^1.5 ≈ c0 + c1·c
+        resid = [v - (c0 + c1 * xi) for xi, v in zip(x, x15)]
+        alpha, beta, gamma = _linfit_cols([[1.0, xi, r] for xi, r in zip(x, resid)], y)
     except ValueError:
         return None
-    y_hat = [a * xi - b * xi**1.5 for xi in x]
+    a = alpha - gamma * c0
+    b = beta - gamma * c1
+    k = -gamma
+    y_hat = [a + b * xi - k * xi**1.5 for xi in x]
     r2, rmse = _metrics(y, y_hat)
     return {
         "model": "kohlrausch",
         "label": _label("kohlrausch", axis),
-        "params": {"a": a, "b": b},
+        "params": {"a": a, "b": b, "K": k},
         "r2": r2,
         "rmse": rmse,
         "n": len(x),
-        "fitted": _sample_curve(x, lambda xi: a * xi - b * xi**1.5),
+        "fitted": _sample_curve(x, lambda xi: a + b * xi - k * xi**1.5),
     }
 
 
