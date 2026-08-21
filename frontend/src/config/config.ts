@@ -29,11 +29,25 @@ function envStr(key: string, fallback: string): string {
   return v && v.length > 0 ? v : fallback;
 }
 
+function defaultServerUrls(): { wsUrl: string; apiBase: string } {
+  if (typeof window === 'undefined') {
+    return { wsUrl: 'ws://localhost:8000/ws/stream', apiBase: 'http://localhost:8000' };
+  }
+  const secure = window.location.protocol === 'https:';
+  const host = window.location.hostname || 'localhost';
+  return {
+    wsUrl: `${secure ? 'wss' : 'ws'}://${host}:8000/ws/stream`,
+    apiBase: `${secure ? 'https' : 'http'}://${host}:8000`,
+  };
+}
+
+const defaultServer = defaultServerUrls();
+
 export const config: AppConfig = {
   dataSource: envStr('VITE_DATA_SOURCE', 'server') === 'browser' ? 'browser' : 'server',
   server: {
-    wsUrl: envStr('VITE_WS_URL', 'ws://localhost:8000/ws/stream'),
-    apiBase: envStr('VITE_API_BASE', 'http://localhost:8000'),
+    wsUrl: envStr('VITE_WS_URL', defaultServer.wsUrl),
+    apiBase: envStr('VITE_API_BASE', defaultServer.apiBase),
   },
   chart: {
     maxPoints: 20000,

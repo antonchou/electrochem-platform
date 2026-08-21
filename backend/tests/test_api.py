@@ -15,9 +15,11 @@ from app.main import app
 def client(tmp_path):
     """带 lifespan 的 TestClient：启动/关闭持久化服务；DB 指向临时文件。"""
     os.environ["EC_DB_PATH"] = str(tmp_path / "api_test.db")
+    os.environ["EC_ENABLE_DEBUG_ENDPOINTS"] = "1"
     with TestClient(app) as c:
         yield c
     os.environ.pop("EC_DB_PATH", None)
+    os.environ.pop("EC_ENABLE_DEBUG_ENDPOINTS", None)
 
 
 def _receive_json_with_timeout(ws, timeout: float):
@@ -187,6 +189,24 @@ def test_frames_persist_and_export(client):
 def test_experiment_404(client):
     assert client.get("/api/experiments/999999").status_code == 404
     assert client.get("/api/experiments/999999/export.csv").status_code == 404
+
+
+def test_frames_pagination_is_validated(client):
+    assert client.get("/api/experiments/1/frames?limit=0").status_code == 422
+    assert client.get("/api/experiments/1/frames?limit=100001").status_code == 422
+    assert client.get("/api/experiments/1/frames?offset=-1").status_code == 422
+
+
+def test_debug_endpoints_are_disabled_without_opt_in(client, monkeypatch):
+    monkeypatch.delenv("EC_ENABLE_DEBUG_ENDPOINTS", raising=False)
+    assert client.post("/api/debug/bad-frame").status_code == 404
+    assert client.post("/api/debug/close-connections").status_code == 404
+    assert client.post("/api/debug/burst?count=1").status_code == 404
+
+
+def test_debug_burst_count_is_bounded(client):
+    assert client.post("/api/debug/burst?count=0").status_code == 422
+    assert client.post("/api/debug/burst?count=10001").status_code == 422
 
 
 # ---------------- Review B-3 / B-4 / B-5 回归 ----------------

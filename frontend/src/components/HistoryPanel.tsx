@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ApiClient } from '../services/apiClient';
 import type { DataPoint, ExperimentDetail, ExperimentSummary, RawFrame } from '../types/protocol';
 import { FitPanel } from './FitPanel';
@@ -8,6 +8,19 @@ import styles from './HistoryPanel.module.css';
 interface Props {
   api: ApiClient | null;
   onClose: () => void;
+}
+
+const MAX_CHART_POINTS = 2000;
+const STATUS_LABELS: Record<string, string> = {
+  running: '进行中',
+  stopped: '已停止',
+  aborted: '已中止',
+  error: '错误',
+  idle: '未开始（旧记录）',
+};
+
+function fmtStatus(status: string): string {
+  return STATUS_LABELS[status] ?? `未知状态（${status}）`;
 }
 
 function fmtTime(utc?: string | null): string {
@@ -81,26 +94,32 @@ export function HistoryPanel({ api, onClose }: Props) {
     );
   }
 
-  const chartData: [number, number][] = frames.map((f) => [
-    f.t_seconds ?? 0,
-    f.ec_raw,
-  ]);
+  const chartData: [number, number][] = useMemo(
+    () => frames.map((f) => [f.t_seconds ?? 0, f.ec_raw]),
+    [frames],
+  );
 
   // P2-7：曲线最多降采样到 2000 点显示（保趋势、防卡顿）；拟合仍用全量帧
-  const MAX_CHART_POINTS = 2000;
-  const displayData: [number, number][] =
-    chartData.length > MAX_CHART_POINTS
-      ? Array.from({ length: MAX_CHART_POINTS }, (_, i) =>
-          chartData[Math.floor((i * chartData.length) / MAX_CHART_POINTS)],
-        )
-      : chartData;
+  const displayData: [number, number][] = useMemo(
+    () =>
+      chartData.length > MAX_CHART_POINTS
+        ? Array.from({ length: MAX_CHART_POINTS }, (_, i) =>
+            chartData[Math.floor((i * chartData.length) / MAX_CHART_POINTS)],
+          )
+        : chartData,
+    [chartData],
+  );
 
   // 历史详情拟合用的数据点（复用 FitPanel 化学公式拟合，X 轴可切时间/温度）
-  const historyPoints: DataPoint[] = frames.map((f) => ({
-    t: f.t_seconds ?? 0,
-    tc: f.temperature_raw,
-    ec: f.ec_raw,
-  }));
+  const historyPoints: DataPoint[] = useMemo(
+    () =>
+      frames.map((f) => ({
+        t: f.t_seconds ?? 0,
+        tc: f.temperature_raw,
+        ec: f.ec_raw,
+      })),
+    [frames],
+  );
 
   return (
     <div className={styles.overlay} data-testid="history-panel">
@@ -124,7 +143,7 @@ export function HistoryPanel({ api, onClose }: Props) {
                   {selected.sensor_path_id ?? '--'} · {fmtTime(selected.started_at_utc)}
                 </div>
                 <div className={styles.meta}>
-                  状态 {selected.status} · 原始帧 {selected.frame_count} · 结束{' '}
+                  状态 {fmtStatus(selected.status)} · 原始帧 {selected.frame_count} · 结束{' '}
                   {fmtTime(selected.ended_at_utc)}
                 </div>
               </div>
@@ -203,7 +222,11 @@ export function HistoryPanel({ api, onClose }: Props) {
           </div>
         ) : (
           <div className={styles.list} data-testid="history-list">
-            {list === null ? (
+            {loadingDetail ? (
+              <div className={styles.hint} data-testid="history-detail-loading">
+                正在加载实验详情…
+              </div>
+            ) : list === null ? (
               <div className={styles.hint}>加载中…</div>
             ) : list.length === 0 ? (
               <div className={styles.hint}>暂无历史实验，先运行一轮实验吧。</div>
@@ -218,7 +241,7 @@ export function HistoryPanel({ api, onClose }: Props) {
                   <span className={styles.rowMain}>
                     <span className={styles.title}>{item.title}</span>
                     <span className={styles.meta}>
-                      {item.experiment_id} · 样品 {item.sample_id ?? '--'} · {item.status}
+                      {item.experiment_id} · 样品 {item.sample_id ?? '--'} · {fmtStatus(item.status)}
                     </span>
                   </span>
                   <span className={styles.meta}>

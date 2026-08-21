@@ -9,7 +9,9 @@ echo "==> 项目目录: $PROJECT_DIR"
 # ---------- 1. 前端依赖与构建 ----------
 echo "[1/4] 构建前端"
 cd "$PROJECT_DIR/frontend"
-if [ ! -f package-lock.json ]; then
+if [ -f package-lock.json ]; then
+  npm ci
+else
   npm install
 fi
 npm run build

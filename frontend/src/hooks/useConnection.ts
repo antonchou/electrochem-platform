@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ConnectionStatus } from '../types/protocol';
 import type { ExperimentBridge } from '../services';
 
@@ -10,12 +10,12 @@ import type { ExperimentBridge } from '../services';
 export function useConnection(bridge: ExperimentBridge) {
   const [connStatus, setConnStatus] = useState<ConnectionStatus>('idle');
   const [error, setError] = useState<string | null>(null);
-  const bridgeRef = useRef(bridge);
-  bridgeRef.current = bridge;
-
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
-      if (ev.type === 'connection') setConnStatus(ev.status);
+      if (ev.type === 'connection') {
+        setConnStatus(ev.status);
+        if (ev.status === 'connected') setError(null);
+      }
       if (ev.type === 'error') {
         setError(ev.message);
       }
@@ -25,13 +25,12 @@ export function useConnection(bridge: ExperimentBridge) {
       unsub();
       bridge.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [bridge]);
 
   const manualReconnect = useCallback(() => {
     setError(null);
-    bridgeRef.current.connect();
-  }, []);
+    bridge.connect();
+  }, [bridge]);
 
   return { connStatus, error, setError, manualReconnect };
 }

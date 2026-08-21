@@ -50,6 +50,7 @@ const AXIS_CHART_LABEL: Record<FitAxis, string> = {
 };
 
 const CURVE_COLORS = ['#16a34a', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#db2777'];
+const ARRHENIUS_MIN_TEMPERATURE_SPAN_C = 1.0;
 
 function fmtParams(params: Record<string, number>): string {
   return Object.entries(params)
@@ -82,6 +83,14 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
       }),
     [points, xAxis],
   );
+  const arrheniusUnavailable = useMemo(() => {
+    if (xAxis !== 'temperature' || !selectedModels.includes('arrhenius')) return false;
+    const temperatures = fitPoints.map(([temperature]) => temperature);
+    return (
+      new Set(temperatures).size < 3 ||
+      Math.max(...temperatures) - Math.min(...temperatures) < ARRHENIUS_MIN_TEMPERATURE_SPAN_C
+    );
+  }, [fitPoints, selectedModels, xAxis]);
 
   const runFit = async () => {
     if (!api || fitPoints.length < 3 || selectedModels.length === 0) return;
@@ -148,6 +157,13 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
       {xAxis === 'concentration' && (
         <div className={styles.axisNote} data-testid={`${testIdPrefix}-concentration-note`}>
           浓度轴需真实浓度数据：当前数据帧无浓度字段，x 暂用序号 1..N 占位
+        </div>
+      )}
+
+      {arrheniusUnavailable && (
+        <div className={styles.axisNote} data-testid={`${testIdPrefix}-arrhenius-note`}>
+          当前温度跨度不足 {ARRHENIUS_MIN_TEMPERATURE_SPAN_C.toFixed(1)} °C，Arrhenius
+          活化能结果将跳过；线性温补与二次模型仍可计算。
         </div>
       )}
 

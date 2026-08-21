@@ -116,6 +116,9 @@ class BroadcastHub:
             raise
         except Exception:
             logger.debug("WebSocket sender stopped", exc_info=True)
+            # 主动完成 ASGI WebSocket 关闭握手，避免仅从订阅表移除后遗留半开连接。
+            with suppress(Exception):
+                await subscriber.websocket.close(code=1011, reason="broadcast send failed")
         finally:
             current = self._subscribers.get(subscriber.websocket)
             if current is subscriber:

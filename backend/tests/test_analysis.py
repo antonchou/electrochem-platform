@@ -137,6 +137,13 @@ def test_arrhenius_activation_energy():
     assert abs(res["params"]["Ea_kJ_mol"] - 3.0) < 0.05
 
 
+def test_arrhenius_rejects_constant_or_too_narrow_temperature_span():
+    from app import analysis
+
+    assert analysis.fit_arrhenius([25.0, 25.0, 25.0], [1.0, 1.1, 1.2]) is None
+    assert analysis.fit_arrhenius([25.0, 25.2, 25.4], [1.0, 1.1, 1.2]) is None
+
+
 def test_x_axis_filters_model_pool():
     """temperature 轴模型池应含 Arrhenius 但不含 Kohlrausch；跨轴模型被跳过。"""
     from app import analysis
@@ -152,6 +159,12 @@ def test_x_axis_filters_model_pool():
     # 显式请求跨轴模型（concentration 的 kohlrausch）应被跳过
     results2 = analysis.fit_all(x, y, models=["arrhenius", "kohlrausch"], x_axis="temperature")
     assert [r["model"] for r in results2] == ["arrhenius"]
+
+
+def test_explicit_empty_model_list_runs_nothing():
+    from app import analysis
+
+    assert analysis.fit_all([1.0, 2.0, 3.0], [2.0, 4.0, 6.0], models=[]) == []
 
 
 def test_fit_endpoint_ok(client):
