@@ -81,7 +81,14 @@ export function HistoryPanel({ api, onClose }: Props) {
   // 注意：所有 Hook 必须位于任何 early return 之前，否则 api 变化时 React 会因
   // Hook 数量不一致直接崩溃（"Rendered more hooks than during the previous render"）。
   const chartData: [number, number][] = useMemo(
-    () => frames.map((f) => [f.t_seconds ?? 0, f.ec_raw]),
+    // 主显示量 κ25 优先，回退 κ(T)，再回退 V1 legacy（旧库帧）；无效点剔除
+    () =>
+      frames
+        .map((f) => [
+          f.t_seconds ?? 0,
+          f.kappa_25_us_cm ?? f.kappa_t_us_cm ?? f.legacy_ec_us_cm ?? null,
+        ])
+        .filter((v): v is [number, number] => v[1] !== null),
     [frames],
   );
 
@@ -101,8 +108,18 @@ export function HistoryPanel({ api, onClose }: Props) {
     () =>
       frames.map((f) => ({
         t: f.t_seconds ?? 0,
-        tc: f.temperature_raw,
-        ec: f.ec_raw,
+        tc: f.temperature_raw_c ?? 0,
+        kt: f.kappa_t_us_cm ?? f.legacy_ec_us_cm ?? 0,
+        k25: f.kappa_25_us_cm ?? null,
+        u: f.voltage_raw_v ?? null,
+        i: f.current_raw_a !== null && f.current_raw_a !== undefined ? f.current_raw_a * 1000 : null,
+        g: f.conductance_s ?? null,
+        freq: f.excitation_frequency_hz ?? undefined,
+        amp: f.excitation_amplitude_v ?? undefined,
+        rangeId: f.range_id ?? undefined,
+        sensorPathId: f.sensor_path_id,
+        calibrationId: f.calibration_id ?? undefined,
+        qualityFlags: f.quality_flags ? f.quality_flags.split('|') : undefined,
       })),
     [frames],
   );

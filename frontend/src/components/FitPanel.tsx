@@ -72,16 +72,21 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
   const [fitError, setFitError] = useState<string | null>(null);
   const fitRequestIdRef = useRef(0);
 
-  // 按 X 轴语义构造 (x, y)：时间轴取 t，温度轴取帧内温度 tc；
-  // 浓度轴取 p.concentration，缺省用序号 1..N 占位（当前帧无浓度字段）
+  // 按 X 轴语义构造 (x, y)。y 明确使用电导率层级：κ25 优先（Derived），
+  // 未校准时回退 κ(T)（Calibrated）；绝不使用原始 U/I/T 做电导率拟合。
+  // 时间轴取 t，温度轴取帧内温度 tc；浓度轴取 p.concentration，缺省用序号 1..N 占位
   const fitPoints: [number, number][] = useMemo(
     () =>
-      points.map((p, i) => {
-        if (xAxis === 'temperature') return [p.tc, p.ec] as [number, number];
-        if (xAxis === 'concentration')
-          return [p.concentration ?? i + 1, p.ec] as [number, number];
-        return [p.t, p.ec] as [number, number];
-      }),
+      points
+        .map((p, i) => {
+          const y = p.k25 ?? p.kt;
+          if (!Number.isFinite(y)) return null;
+          if (xAxis === 'temperature') return [p.tc, y] as [number, number];
+          if (xAxis === 'concentration')
+            return [p.concentration ?? i + 1, y] as [number, number];
+          return [p.t, y] as [number, number];
+        })
+        .filter((v): v is [number, number] => v !== null),
     [points, xAxis],
   );
   const arrheniusUnavailable = useMemo(() => {
