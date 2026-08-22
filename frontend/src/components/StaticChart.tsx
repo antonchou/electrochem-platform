@@ -57,7 +57,9 @@ export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)
       tooltip: { trigger: 'axis' },
       // type:'scroll' 防止长公式名称（含 R²）单行溢出被裁；图标放大到 18×8 提升辨识度。
       legend: { top: 0, left: 12, type: 'scroll', icon: 'roundRect', itemWidth: 18, itemHeight: 8 },
-      grid: { left: 12, right: 20, top: 34, bottom: 40, containLabel: true },
+      // top 需大于「图例条高度 + Y 轴名称高度」：Y 轴名称默认绘制在轴线顶端，
+      // grid.top 太小会与顶部图例条重叠。
+      grid: { left: 12, right: 20, top: 52, bottom: 40, containLabel: true },
       xAxis: {
         type: 'value',
         name: xLabel,
