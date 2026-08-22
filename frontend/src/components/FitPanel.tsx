@@ -269,7 +269,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
           <StaticChart
             data={fitPoints}
             overlays={overlays}
-            height={220}
+            height={240}
             xLabel={AXIS_CHART_LABEL[xAxis]}
           />
         </div>
