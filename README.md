@@ -2,10 +2,10 @@
 
 「树莓派在电化学设备的应用开发」项目 · 溶液导电性相对比较实验。
 仓库结构遵循《仓库与工程约定》11.1；当前覆盖 **Phase 3（Web 前端）+ Phase 7（数据存储与导出）**，
-后端为模拟数据源，真实设备驱动（BA121S/CM2/DS18B20）按约定在 backend 内逐步替换。
+后端为模拟数据源；真实电导率链路改为**电极电压/电流采集 → 电导计算 → 电池常数校准 → 温度补偿**，DS18B20 负责溶液温度。
 
 > **进度声明**：本仓库的 `README.md` 与 `docs/` 为当前进度的唯一真相（Phase 3 + Phase 7 + 备选公式拟合已交付，见「里程碑」）。
-> 桌面版《树莓派电化学项目_交接文档_v1.0.docx》（2026-08-19）为历史快照，其「Phase 0 进行中、Phase 1/2 待开始」表述已过时，仅作参考。
+> 桌面版《树莓派电化学项目_交接文档_v1.0.docx》（2026-08-19）及旧《架构图》《全流程开发路线图》为历史快照；其 Phase 进度和 BA121S/CM2 模块路线均已过时。当前硬件路线见 `docs/电导率I-V测量链路与开发路线.md`。
 
 ## 目录结构
 
@@ -81,13 +81,13 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 
 | 规则 | 落实 |
 |---|---|
-| 34 统一 Driver Base Class | `backend/app/drivers/base.py` 定义异步接口；Mock 已实现，后续 BA121S/CM2/DS18B20 同接口替换 |
+| 34 统一 Driver Base Class | `backend/app/drivers/base.py` 定义异步接口；Mock 已实现，后续电压/电流/温度采集驱动按同一边界接入 |
 | 35 配置/schema 版本化 | `configs/` 带 schema_version；DB 由 `init_db()` 幂等建表（迁移走脚本，不手工改表） |
 | 36 配置地址集中 | 前端 `src/config/config.ts` 唯一入口；后端 DB 路径可用 `EC_DB_PATH` 覆盖 |
 | 37 机密不入 Git | 根 `.gitignore` 已排除 `.env*`/私钥/令牌 |
 | 38 帧溯源 | 原始帧带 `seq_no/timestamp_utc/monotonic_ms/sensor_path_id`；前端 timestamp 仅显示 |
 | 39 里程碑文档 | 每阶段交付 README/启动/测试/已知问题/验收证据（见 `docs/`） |
-| 40 垂直切片 | Mock 采集→实时曲线→落盘→校准→真实 EC，逐片可独立演示 |
+| 40 垂直切片 | Mock → I/V 电气台架 → 导电池标准液校准 → 温补 → 实时曲线与落盘，逐片可独立演示 |
 
 ## 里程碑
 
@@ -105,7 +105,7 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 - **Phase 2 集成加固**：统一驱动接口、可配置 Mock 场景、慢客户端隔离、SQLite 长跑验收 ✅
 - **Phase 7（M3–M4 前置）**：SQLite 存储 + 历史查询 + 导出 ✅（append-only 已验证）
 - **备选公式拟合**：化学公式（一阶饱和 / Arrhenius / Kohlrausch）按 X 轴语义拟合 ✅
-- 后续：校准/温补、拟合报告、真实 EC 采集（垂直切片推进）
+- 后续：电压/电流与温度真实采集、`Kcell` 校准、温补、判稳与拟合报告（垂直切片推进）
 
 ## 已知缺口与交付阶段（冻结 SRS 未实现项）
 
@@ -114,7 +114,7 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 
 | 需求编号 | 需求内容 | 现状 | 交付阶段 |
 |---|---|---|---|
-| REQ-M-001 | 帧需同时保存 κ(T)、T、κ25（k25 温补） | k25 恒为 NULL，温补/α 未实现 | 后续阶段（校准/温补） |
+| REQ-M-001 | 帧需保存 U、I、T，并可追溯计算 G、κ(T)、κ25 | 当前 Mock 只给 ec/T，k25 恒为 NULL | 后续阶段（I/V 采集、校准/温补） |
 | REQ-F-001 / REQ-F-002 | 拟合需输出 CI/残差/RMSE/MAE/AICc/留一交叉验证，声明有效浓度区间、禁止外推 | 仅 R²/RMSE/params/fitted | 后续阶段（拟合报告） |
 | REQ-D-003 | 自动判稳（窗口/统计量/阈值/失败原因）与 QC PASS/WARN/FAIL | 未实现，samples.k25_* 恒 NULL | 后续阶段（判稳与 QC） |
 | REQ-C-001 | 每次结果关联 calibration_id 与标准液批次 | calibration_records 表已建但未写入 | 后续阶段（校准 SOP） |
