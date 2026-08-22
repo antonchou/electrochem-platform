@@ -131,6 +131,24 @@ def test_insert_frames_falls_back_when_new_legacy_keys_are_none(store):
     assert frame["temperature_raw_c"] == 24.5
 
 
+def test_history_frames_expose_structured_quality_flags(store):
+    eid = store.create_experiment("EXP-FLAGS", "t", sample_id="S", sensor_path_id="WIDE")
+    store.insert_frames(
+        [
+            {
+                "experiment_id": eid,
+                "sample_id": "S",
+                "sensor_path_id": "WIDE",
+                "quality_flags": "SIMULATED|DROPOUT",
+            }
+        ]
+    )
+
+    frame = store.get_frames(eid)[0]
+    assert frame["quality_flags"] == "SIMULATED|DROPOUT"
+    assert frame["quality_flags_list"] == ["SIMULATED", "DROPOUT"]
+
+
 def test_export_csv(store):
     eid = store.create_experiment("EXP-004", "t", sample_id="NACL_006", sensor_path_id="CM2_WIDE")
     store.insert_frames(

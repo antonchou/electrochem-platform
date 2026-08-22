@@ -341,6 +341,7 @@ def test_debug_frame_has_v2_trace_fields():
 
     frame = generate_frame(0.1)
     assert frame["message_type"] == "measurement"
+    assert frame["experiment_uid"] == "DEBUG-BURST"
     assert frame["seq_no"] == 2
     assert frame["timestamp_utc"].endswith("Z")
     assert isinstance(frame["monotonic_ms"], int)
@@ -353,6 +354,7 @@ def test_debug_frame_has_v2_trace_fields():
     assert frame["kappa_25_us_cm"] is not None
     assert frame["calibration_id"] is not None
     assert isinstance(frame["quality_flags"], list)
+    assert "DEBUG_BURST" in frame["quality_flags"]
     assert "ec" not in frame
     assert "temperature" not in frame
     assert "timestamp" not in frame
@@ -394,16 +396,33 @@ def test_reset_running_marks_aborted(client):
 
 
 def test_burst_broadcasts_only_no_persist(client):
-    """B-3：/api/debug/burst 仅广播、不落库（注入帧不污染 raw_frames）。"""
+    """B-3/N1/N4：burst 独立溯源、不清真实 run 语义且不污染 raw_frames。"""
     with client.websocket_connect("/ws/stream") as ws:
         exp_id = client.post("/api/experiment/start").json()["experiment_id"]
         # 等到第一条真实采集帧，确认流已建立
+        real_uid = None
         for _ in range(10):
-            if _has_measure_data(ws.receive_json()):
+            message = ws.receive_json()
+            if _has_measure_data(message):
+                real_uid = message["experiment_uid"]
                 break
         r = client.post("/api/debug/burst?count=20")
-        assert r.json()["ok"] is True
-        assert r.json()["sent"] == 20
+        response = r.json()
+        assert response["ok"] is True
+        assert response["sent"] == 20
+        burst_uid = response["experiment_uid"]
+        assert burst_uid.startswith("DEBUG-BURST-")
+        assert burst_uid != real_uid
+
+        burst_frames = []
+        for _ in range(60):
+            message = ws.receive_json()
+            if message.get("experiment_uid") == burst_uid:
+                burst_frames.append(message)
+                if len(burst_frames) == 20:
+                    break
+        assert [frame["seq_no"] for frame in burst_frames] == list(range(1, 21))
+        assert all("DEBUG_BURST" in frame["quality_flags"] for frame in burst_frames)
         client.post("/api/experiment/stop")
     client.post("/api/experiment/reset")
 

@@ -36,7 +36,8 @@ python3 -m venv .venv
 
 ## Mock 驱动配置
 
-默认使用固定随机种子的 `stable` 场景，以 10 Hz 生成可复现的 EC/温度数据。
+默认使用固定随机种子的 `stable` 场景，以 10 Hz 生成可复现的原始 U/I/T；
+目标 κ25 只用于模拟器反推阻抗，输出仍经统一计算链得到 G/κ(T)/κ25。
 完整配置样例见 `configs/devices/mock.example.json`：
 
 ```bash
@@ -77,7 +78,7 @@ Mock 驱动模拟电极 I–V 测量链路（SRS v0.2）：由目标 κ25 反推
 | GET | `/api/experiments/{id}/export.json` | 完整实验 JSON 导出 |
 | POST | `/api/debug/bad-frame` | 注入非法帧，验证前端容错 |
 | POST | `/api/debug/close-connections` | 强制断开 WS，验证断线/重连 |
-| POST | `/api/debug/burst?count=10000` | 快速推 N 帧，验证大点数负载 |
+| POST | `/api/debug/burst?count=10000` | 快速推 N 帧，验证大点数负载；每次使用独立 `DEBUG-BURST-*` 溯源且不落库 |
 
 ## WS 消息格式（协议基准，V2）
 
@@ -111,7 +112,7 @@ Mock 驱动模拟电极 I–V 测量链路（SRS v0.2）：由目标 κ25 反推
 .venv/Scripts/python -m pytest tests -q
 ```
 
-覆盖：健康检查、控制状态机（含重复 start 拒绝）、WS 协议格式、停止后停流、坏帧注入、
+当前共 **87 项**。覆盖：健康检查、控制状态机（含重复 start 拒绝）、WS 协议格式、停止后停流、坏帧注入、
 SQLite append-only 约束（UPDATE/DELETE 被拒）、实验生命周期、历史/详情/CSV 导出、
 Mock 场景可复现性、质量标志落库，以及慢 WebSocket 客户端隔离。
 
