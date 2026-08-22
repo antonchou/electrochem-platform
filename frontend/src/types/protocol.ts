@@ -55,6 +55,14 @@ export interface ExperimentFrame {
   quality_flags: string[];
 }
 
+/** 调试负载帧有独立溯源，只用于压测视图，不代表真实实验状态切换。 */
+export function isDebugBurstFrame(frame: ExperimentFrame): boolean {
+  return (
+    frame.experiment_uid.startsWith('DEBUG-BURST-') &&
+    frame.quality_flags.includes('DEBUG_BURST')
+  );
+}
+
 /** 纯状态帧（后端在某些时刻只下发状态，如 stopped） */
 export interface StatusFrame {
   message_type: 'status';
@@ -142,6 +150,8 @@ export interface RawFrame {
   cell_constant_cm_inv?: number | null;
   calibration_valid_until_utc?: string | null;
   quality_flags: string | null;
+  /** 历史 API 提供的结构化质量标志；quality_flags 文本列仅为存储/CSV 兼容。 */
+  quality_flags_list?: string[];
   status: string | null;
 }
 

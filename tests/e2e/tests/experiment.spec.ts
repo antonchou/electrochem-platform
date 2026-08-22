@@ -203,7 +203,34 @@ test('P04 数据规模：承载 10000 点不卡死', async ({ page }) => {
   // 快速注入 1 万帧（backend debug 接口）
   await page.request.post(`${API}/api/debug/burst?count=10000`);
   await waitForPoints(page, 10000, 20_000);
+  const chart = page.getByTestId('realtime-chart');
+  await expect
+    .poll(async () => Number(await chart.getAttribute('data-chart-x-max')), { timeout: 5000 })
+    .toBeGreaterThanOrEqual(1000);
+  await page.waitForTimeout(500); // 允许真实采集帧在 burst 后继续到达
+  expect(Number(await chart.getAttribute('data-chart-x-max'))).toBeGreaterThanOrEqual(1000);
   // 页面仍可交互：可停止，且无阻断
   await page.getByTestId('btn-stop').click();
+  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
+});
+
+test('P04c 调试 burst：独立溯源不得清空真实实验缓冲', async ({ page }) => {
+  await page.getByTestId('btn-start').click();
+  await waitForPoints(page, 5);
+  await page.getByTestId('btn-stop').click();
+  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
+
+  const before = Number(await page.getByTestId('stat-count').innerText());
+  const response = await page.request.post(`${API}/api/debug/burst?count=100`);
+  expect(response.ok()).toBeTruthy();
+  const body = (await response.json()) as { experiment_uid?: string };
+  expect(body.experiment_uid).toMatch(/^DEBUG-BURST-/);
+
+  await expect
+    .poll(async () => Number(await page.getByTestId('stat-count').innerText()), {
+      timeout: 5000,
+      message: 'burst 应追加到当前视图，不能把已有真实实验点清空',
+    })
+    .toBeGreaterThanOrEqual(before + 100);
   await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
 });

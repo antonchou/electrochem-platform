@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ExperimentStartOptions, ExperimentStatus } from '../types/protocol';
+import {
+  isDebugBurstFrame,
+  type ExperimentStartOptions,
+  type ExperimentStatus,
+} from '../types/protocol';
 import type { ExperimentBridge } from '../services';
 
 /**
@@ -29,7 +33,7 @@ export function useExperiment(bridge: ExperimentBridge) {
           setActionError(null);
         }
       }
-      if (ev.type === 'message') {
+      if (ev.type === 'message' && !isDebugBurstFrame(ev.frame)) {
         setStatus(ev.frame.status);
       }
     });

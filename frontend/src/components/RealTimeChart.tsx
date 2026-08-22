@@ -23,6 +23,32 @@ const COLORS = {
   tc: '#0891b2',
 };
 
+function mainYAxes(bounds: { min?: number; max?: number } = {}) {
+  return [
+    {
+      type: 'value' as const,
+      name: 'κ(T) / κ25 (μS/cm)',
+      scale: true,
+      splitLine: { lineStyle: { type: 'dashed' as const } },
+      ...bounds,
+    },
+    {
+      type: 'value' as const,
+      name: 'U (V) / I (mA)',
+      scale: true,
+      splitLine: { show: false },
+    },
+  ];
+}
+
+function xAxisMax(points: DataPoint[]): number {
+  const maxObservedTime = points.reduce(
+    (max, point) => (Number.isFinite(point.t) ? Math.max(max, point.t) : max),
+    0,
+  );
+  return Math.max(1, Math.ceil(maxObservedTime / 10) * 10);
+}
+
 /**
  * 实时曲线（分层显示，SRS v0.2）：
  * - 主图：主 Y 轴 κ(T)（实线）、κ25（虚线）；副 Y 轴 U（V）、I（mA）。
@@ -49,10 +75,7 @@ export function RealTimeChart({ pointsRef }: Props) {
       grid: { left: 68, right: 72, top: 44, bottom: 46 },
       legend: { top: 4, data: ['κ(T)', 'κ25', 'U', 'I'] },
       xAxis: { type: 'value', min: 0, max: 1, minInterval: 1, name: '时间 (s)', nameLocation: 'middle', nameGap: 30, splitLine: { lineStyle: { type: 'dashed' } } },
-      yAxis: [
-        { type: 'value', name: 'κ(T) / κ25 (μS/cm)', scale: true, splitLine: { lineStyle: { type: 'dashed' } } },
-        { type: 'value', name: 'U (V) / I (mA)', scale: true, splitLine: { show: false } },
-      ],
+      yAxis: mainYAxes(),
       series: [
         { name: 'κ(T)', type: 'line', yAxisIndex: 0, data: [], symbol: 'none', lineStyle: { width: 1.5, color: COLORS.kt }, sampling: 'lttb' },
         { name: 'κ25', type: 'line', yAxisIndex: 0, data: [], symbol: 'none', lineStyle: { width: 1.5, color: COLORS.k25, type: 'dashed' }, sampling: 'lttb' },
@@ -74,7 +97,9 @@ export function RealTimeChart({ pointsRef }: Props) {
         [p.t, p.u ?? null],
         [p.t, p.i ?? null],
       ] as const);
-      const maxTime = Math.max(1, Math.ceil((pts[pts.length - 1]?.t ?? 0) / 10) * 10);
+      // burst 与真实采集属于不同 trace，帧到达顺序不保证 t_seconds 全局递增；
+      // 取缓冲内最大时间，避免后到的真实帧把调试后的 X 轴缩回去。
+      const maxTime = xAxisMax(pts);
       const conductivityValues = pts.flatMap((p) =>
         [p.kt, p.k25].filter((value): value is number => value !== null && Number.isFinite(value)),
       );
@@ -96,16 +121,20 @@ export function RealTimeChart({ pointsRef }: Props) {
         el.dataset.chartYMax = String(yAxisBounds.max);
       }
       el.dataset.chartXMax = String(maxTime);
-      chart.setOption({
-        xAxis: { min: 0, max: maxTime },
-        yAxis: [yAxisBounds, {}],
-        series: [
-          { data: data.map((d) => d[0]) },
-          { data: data.map((d) => d[1]) },
-          { data: data.map((d) => d[2]) },
-          { data: data.map((d) => d[3]) },
-        ],
-      });
+      chart.setOption(
+        {
+          xAxis: { min: 0, max: maxTime },
+          // replaceMerge 会真正移除上一轮的显式 min/max；普通 `{}` merge 会保留旧范围。
+          yAxis: mainYAxes(yAxisBounds),
+          series: [
+            { data: data.map((d) => d[0]) },
+            { data: data.map((d) => d[1]) },
+            { data: data.map((d) => d[2]) },
+            { data: data.map((d) => d[3]) },
+          ],
+        },
+        { replaceMerge: ['yAxis'] },
+      );
     }, config.chart.updateIntervalMs);
 
     const onResize = () => chart.resize();
@@ -138,7 +167,7 @@ export function RealTimeChart({ pointsRef }: Props) {
 
     const timer = window.setInterval(() => {
       const pts = pointsRef.current;
-      const maxTime = Math.max(1, Math.ceil((pts[pts.length - 1]?.t ?? 0) / 10) * 10);
+      const maxTime = xAxisMax(pts);
       chart.setOption({
         xAxis: { min: 0, max: maxTime },
         series: [
