@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "driver": "mock",
   "scenario": "stable",
   "seed": 2026,
@@ -11,5 +11,8 @@
   "temperature_noise": 0.15,
   "ph_noise": 0.01,
   "drift_ec_per_second": 0.2,
-  "dropout_every_n": 10
+  "dropout_every_n": 10,
+  "excitation_voltage_v": 0.4,
+  "cell_constant_per_cm": 1.0,
+  "alpha_per_c": 0.02
 }
