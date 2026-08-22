@@ -44,24 +44,45 @@ class MockDeviceConfig:
     dropout_every_n: int = 10
     # ---- 电极 I–V 链路参数（仅用于反推等效阻抗/电流，计算链由上层完成） ----
     excitation_voltage_v: float = 0.4  # 激励电压有效值，V
+    excitation_frequency_hz: float = 1000.0
     cell_constant_per_cm: float = 1.0  # Kcell，cm⁻¹（与校准层一致才能还原目标 κ25）
     alpha_per_c: float = 0.02  # 线性温补系数（仅配置透传，计算在 calibration 层）
+    calibration_id: str = "CAL_MOCK_CONFIG"
+    range_id: str = "R_100R_10K"
+    sensor_path_id: str = "EC_IV_CELL_MOCK"
 
     def __post_init__(self) -> None:
-        if self.sample_rate_hz <= 0:
+        if not math.isfinite(self.sample_rate_hz) or self.sample_rate_hz <= 0:
             raise ValueError("sample_rate_hz must be positive")
-        if self.base_ec < 0:
+        if not math.isfinite(self.base_ec) or self.base_ec < 0:
             raise ValueError("base_ec must be non-negative")
+        if not math.isfinite(self.base_temperature):
+            raise ValueError("base_temperature must be finite")
         if not 0 <= self.base_ph <= 14:
             raise ValueError("base_ph must be between 0 and 14")
-        if min(self.ec_noise, self.temperature_noise, self.ph_noise) < 0:
+        if not all(
+            math.isfinite(value)
+            for value in (self.ec_noise, self.temperature_noise, self.ph_noise)
+        ) or min(self.ec_noise, self.temperature_noise, self.ph_noise) < 0:
             raise ValueError("noise values must be non-negative")
-        if self.dropout_every_n < 0:
+        if not math.isfinite(self.drift_ec_per_second):
+            raise ValueError("drift_ec_per_second must be finite")
+        if not isinstance(self.dropout_every_n, int) or self.dropout_every_n < 0:
             raise ValueError("dropout_every_n must be non-negative")
-        if self.excitation_voltage_v <= 0:
+        if not math.isfinite(self.excitation_voltage_v) or self.excitation_voltage_v <= 0:
             raise ValueError("excitation_voltage_v must be positive")
-        if self.cell_constant_per_cm < 0:
-            raise ValueError("cell_constant_per_cm must be non-negative")
+        if not math.isfinite(self.excitation_frequency_hz) or self.excitation_frequency_hz <= 0:
+            raise ValueError("excitation_frequency_hz must be positive")
+        if not math.isfinite(self.cell_constant_per_cm) or self.cell_constant_per_cm <= 0:
+            raise ValueError("cell_constant_per_cm must be positive")
+        if not math.isfinite(self.alpha_per_c) or not 0 <= self.alpha_per_c < 1.0 / 15.0:
+            raise ValueError("alpha_per_c must be in [0, 1/15)")
+        if not isinstance(self.calibration_id, str) or not self.calibration_id.strip():
+            raise ValueError("calibration_id must be non-empty")
+        if not isinstance(self.range_id, str) or not self.range_id.strip():
+            raise ValueError("range_id must be non-empty")
+        if not isinstance(self.sensor_path_id, str) or not self.sensor_path_id.strip():
+            raise ValueError("sensor_path_id must be non-empty")
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any]) -> "MockDeviceConfig":
@@ -78,8 +99,12 @@ class MockDeviceConfig:
             "drift_ec_per_second",
             "dropout_every_n",
             "excitation_voltage_v",
+            "excitation_frequency_hz",
             "cell_constant_per_cm",
             "alpha_per_c",
+            "calibration_id",
+            "range_id",
+            "sensor_path_id",
         }
         unknown = set(raw) - allowed - {"schema_version", "driver"}
         if unknown:
@@ -210,15 +235,28 @@ class MockDevice(DeviceDriver):
             * noise_scale
         )
 
-        # 由目标 κ25 反推等效阻抗与电流（激励电压固定）：
-        #   G = κ / Kcell  →  R = 1/G = Kcell / κ   →  I = U / R
+        flags = ["SIMULATED"]
+        if not 0 <= ph <= 14:
+            flags.append("OUT_OF_RANGE")
+        if not 10.0 <= temperature <= 40.0:
+            flags.append("TEMPERATURE_INVALID")
+
+        # 由目标 κ25 先还原实测温度下的 κ(T)，再反推等效阻抗与电流：
+        #   κ(T)=κ25·[1+α(T−25)]，G=κ(T)/Kcell，R=1/G，I=U/R。
         voltage = round(self.config.excitation_voltage_v, 4)
-        resistance = self.config.cell_constant_per_cm / (target_k25 * 1e-6)
+        denominator = 1.0 + self.config.alpha_per_c * (temperature - 25.0)
+        target_kappa_t = target_k25 * denominator
+        if target_k25 <= 0 or target_kappa_t <= 0 or not math.isfinite(target_kappa_t):
+            flags.append("OUT_OF_RANGE")
+            return DriverReading(
+                voltage_raw_v=voltage,
+                current_raw_a=None,
+                temperature_raw_c=temperature,
+                quality_flags=tuple(dict.fromkeys(flags)),
+            )
+        resistance = self.config.cell_constant_per_cm / (target_kappa_t * 1e-6)
         current = round(voltage / resistance, 9)
 
-        flags = ["SIMULATED"]
-        if target_k25 < 0 or not 0 <= ph <= 14:
-            flags.append("OUT_OF_RANGE")
         return DriverReading(
             voltage_raw_v=voltage,
             current_raw_a=current,

@@ -29,7 +29,7 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
     for (const p of pts) {
       // 统计对象：κ25 优先，未校准时用 κ(T)；绝不使用原始 U/I/T 冒充电导率
       const value = p.k25 ?? p.kt;
-      if (!Number.isFinite(value)) continue;
+      if (value === null || !Number.isFinite(value)) continue;
       sum += value;
       if (value < min) min = value;
       if (value > max) max = value;

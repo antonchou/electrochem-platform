@@ -71,6 +71,49 @@ def test_mock_device_emits_raw_u_i_t():
     asyncio.run(scenario())
 
 
+def test_mock_reconstructs_target_k25_away_from_25c():
+    """反推原始电流时必须先把目标 κ25 换算为 κ(T)。"""
+    from app import calibration
+
+    async def scenario() -> None:
+        config = MockDeviceConfig(
+            base_ec=1413.0,
+            base_temperature=35.0,
+            ec_noise=0.0,
+            temperature_noise=0.0,
+        )
+        device = MockDevice(config)
+        await device.connect()
+        reading = await device.read(0.0)
+        result = calibration.compute_iv(
+            voltage_raw_v=reading.voltage_raw_v,
+            current_raw_a=reading.current_raw_a,
+            temperature_raw_c=reading.temperature_raw_c,
+            cell_constant_cm_inv=config.cell_constant_per_cm,
+            alpha_per_c=config.alpha_per_c,
+        )
+        assert result["kappa_25_us_cm"] == pytest.approx(1413.0, abs=0.01)
+
+    asyncio.run(scenario())
+
+
+def test_mock_zero_target_is_quality_reading_not_division_error():
+    async def scenario() -> None:
+        device = MockDevice(MockDeviceConfig(base_ec=0.0, ec_noise=0.0))
+        await device.connect()
+        reading = await device.read(0.0)
+        assert reading.complete_for_iv is False
+        assert reading.current_raw_a is None
+        assert "OUT_OF_RANGE" in reading.quality_flags
+
+    asyncio.run(scenario())
+
+
+def test_mock_rejects_zero_cell_constant():
+    with pytest.raises(ValueError, match="cell_constant_per_cm must be positive"):
+        MockDeviceConfig(cell_constant_per_cm=0.0)
+
+
 def test_mock_dropout_has_no_iv_data():
     async def scenario() -> None:
         device = MockDevice(

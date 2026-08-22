@@ -13,7 +13,12 @@ interface Props {
 
 /** 实时数值卡：单位必须明确显示（任务书 §2 / §4.3） */
 export function ValueDisplay({ label, value, unit, precision = 1, format, testId }: Props) {
-  const text = value === null ? '--' : format ? format(value) : value.toFixed(precision);
+  const text =
+    value === null || !Number.isFinite(value)
+      ? '--'
+      : format
+        ? format(value)
+        : value.toFixed(precision);
   return (
     <div className={styles.box} data-testid={testId}>
       <span className={styles.label}>{label}</span>

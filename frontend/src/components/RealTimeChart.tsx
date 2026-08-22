@@ -40,6 +40,9 @@ export function RealTimeChart({ pointsRef }: Props) {
     const el = mainRef.current;
     if (!el) return;
     const chart = echarts.init(el);
+    let observedYMin: number | null = null;
+    let observedYMax: number | null = null;
+    let activeBuffer = pointsRef.current;
     chart.setOption({
       animation: false,
       tooltip: { trigger: 'axis' },
@@ -60,15 +63,42 @@ export function RealTimeChart({ pointsRef }: Props) {
 
     const timer = window.setInterval(() => {
       const pts = pointsRef.current;
+      if (pts !== activeBuffer) {
+        activeBuffer = pts;
+        observedYMin = null;
+        observedYMax = null;
+      }
       const data = pts.map((p) => [
-        [p.t, Number.isFinite(p.kt) ? p.kt : null],
+        [p.t, p.kt !== null && Number.isFinite(p.kt) ? p.kt : null],
         [p.t, p.k25 !== null && Number.isFinite(p.k25) ? p.k25 : null],
         [p.t, p.u ?? null],
         [p.t, p.i ?? null],
       ] as const);
       const maxTime = Math.max(1, Math.ceil((pts[pts.length - 1]?.t ?? 0) / 10) * 10);
+      const conductivityValues = pts.flatMap((p) =>
+        [p.kt, p.k25].filter((value): value is number => value !== null && Number.isFinite(value)),
+      );
+      let yAxisBounds: { min?: number; max?: number } = {};
+      if (conductivityValues.length === 0) {
+        observedYMin = null;
+        observedYMax = null;
+        delete el.dataset.chartYMin;
+        delete el.dataset.chartYMax;
+      } else {
+        const currentMin = Math.min(...conductivityValues);
+        const currentMax = Math.max(...conductivityValues);
+        observedYMin = observedYMin === null ? currentMin : Math.min(observedYMin, currentMin);
+        observedYMax = observedYMax === null ? currentMax : Math.max(observedYMax, currentMax);
+        const span = observedYMax - observedYMin;
+        const padding = Math.max(span * 0.05, Math.abs(observedYMax) * 0.002, 0.1);
+        yAxisBounds = { min: observedYMin - padding, max: observedYMax + padding };
+        el.dataset.chartYMin = String(yAxisBounds.min);
+        el.dataset.chartYMax = String(yAxisBounds.max);
+      }
+      el.dataset.chartXMax = String(maxTime);
       chart.setOption({
         xAxis: { min: 0, max: maxTime },
+        yAxis: [yAxisBounds, {}],
         series: [
           { data: data.map((d) => d[0]) },
           { data: data.map((d) => d[1]) },
@@ -113,7 +143,13 @@ export function RealTimeChart({ pointsRef }: Props) {
         xAxis: { min: 0, max: maxTime },
         series: [
           {
-            data: pts.map((p) => [p.t, Number.isFinite(p.tc) ? p.tc : null] as [number, number | null]),
+            data: pts.map(
+              (p) =>
+                [p.t, p.tc !== null && Number.isFinite(p.tc) ? p.tc : null] as [
+                  number,
+                  number | null,
+                ],
+            ),
           },
         ],
       });

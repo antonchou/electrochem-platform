@@ -53,7 +53,7 @@
 | Configuration | `excitation_frequency_hz`, `excitation_amplitude_v`, `range_id`, `compensation_model`, `alpha_per_c` | 必须随实验版本化 |
 | Quality | `quality_flags` | 饱和、欠量程、开路、短路、温度无效、未校准、校准过期、波形不稳等 |
 
-当前已发布 Mock/API 仍输出简化 `ec` 字段，并保留 `CM2_WIDE` 旧缺省标识以兼容既有测试；它们只表示模拟兼容层，不代表正式硬件仍采用 CM2。迁移时应新增目标字段并保持旧前端可用，完成数据库迁移和 E2E 后再废止旧标识。
+当前 Mock/API 在线通道已经完成 V2 切换：只接受显式 `message_type=measurement`、`schema_version=2.0` 的完整分层帧，默认链路为 `EC_IV_CELL_MOCK`。V1 `ec` 只保留在数据库 `legacy_ec_us_cm` 历史读取层，不得进入实时 WebSocket、浏览器模拟源或在线验收。
 
 ## 5. 校准与验收
 

@@ -2,7 +2,7 @@
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 ExperimentStatus = Literal["idle", "running", "stopped", "error"]
 
@@ -18,43 +18,42 @@ class Frame(BaseModel):
                    compensation_model / alpha_per_c（随实验版本化）
     Quality：quality_flags
 
-    迁移期废弃兼容别名（不代表正式原始数据）：
-        ec          = kappa_t_us_cm 的别名
-        temperature = temperature_raw_c 的别名
-        timestamp   = 实验经过秒（前端曲线 X 轴）
+    在线 V2 不包含 V1 `ec`/`temperature`/`timestamp` 别名；旧记录兼容由存储层负责。
     """
 
-    schema_version: str = "2.0"
-    seq_no: Optional[int] = None
-    timestamp_utc: Optional[str] = None
-    monotonic_ms: Optional[int] = None
-    status: ExperimentStatus
+    message_type: Literal["measurement"]
+    schema_version: Literal["2.0"]
+    experiment_uid: str
+    concentration_mmol_l: Optional[float] = None
+    seq_no: int = Field(ge=1)
+    timestamp_utc: str
+    monotonic_ms: int = Field(ge=0)
+    t_seconds: float = Field(ge=0.0)
+    status: Literal["running"]
     # ---- Raw（不可变原始量） ----
-    voltage_raw_v: Optional[float] = None  # 电极电压 U，V
-    current_raw_a: Optional[float] = None  # 回路电流 I，A
-    temperature_raw_c: Optional[float] = None  # 温度 T，°C
+    voltage_raw_v: Optional[float]  # 电极电压 U，V；缺测质量帧为 null
+    current_raw_a: Optional[float]  # 回路电流 I，A；缺测质量帧为 null
+    temperature_raw_c: Optional[float]  # 温度 T，°C；缺测质量帧为 null
     # ---- Calibrated ----
-    voltage_cal_v: Optional[float] = None  # 电压通道校准后，V
-    current_cal_a: Optional[float] = None  # 电流通道校准后，A
-    conductance_s: Optional[float] = None  # G(T)=I/U，S
-    kappa_t_us_cm: Optional[float] = None  # κ(T)=Kcell·G，μS/cm
+    voltage_cal_v: Optional[float]  # 电压通道校准后，V
+    current_cal_a: Optional[float]  # 电流通道校准后，A
+    conductance_s: Optional[float]  # G(T)=I/U，S
+    kappa_t_us_cm: Optional[float]  # κ(T)=Kcell·G，μS/cm
     # ---- Derived ----
-    kappa_25_us_cm: Optional[float] = None  # 温补后 κ25，μS/cm
+    kappa_25_us_cm: Optional[float]  # 温补后 κ25，μS/cm
     # ---- Configuration（随实验版本化） ----
-    excitation_frequency_hz: Optional[float] = None
-    excitation_amplitude_v: Optional[float] = None
-    range_id: Optional[str] = None
-    sensor_path_id: Optional[str] = None
-    compensation_model: Optional[str] = None
-    alpha_per_c: Optional[float] = None
+    excitation_frequency_hz: Optional[float]
+    excitation_amplitude_v: Optional[float]
+    range_id: Optional[str]
+    sensor_path_id: Optional[str]
+    compensation_model: Optional[str]
+    alpha_per_c: Optional[float]
     # ---- Trace ----
-    calibration_id: Optional[str] = None
+    calibration_id: Optional[str]
+    cell_constant_cm_inv: Optional[float]
+    calibration_valid_until_utc: Optional[str]
     # ---- Quality ----
-    quality_flags: Optional[list[str]] = None
-    # ---- V1 废弃兼容别名（迁移期保留） ----
-    ec: Optional[float] = None  # = kappa_t_us_cm 的别名
-    temperature: Optional[float] = None  # = temperature_raw_c 的别名
-    timestamp: Optional[float] = None  # 实验经过秒，前端曲线 X 轴
+    quality_flags: list[str]
 
 
 class ControlResponse(BaseModel):
@@ -75,15 +74,16 @@ class ExperimentStartRequest(BaseModel):
     title: Optional[str] = None
     operator: Optional[str] = None
     objective: Optional[str] = None
-    concentration_mmol_l: Optional[float] = None
+    concentration_mmol_l: Optional[float] = Field(default=None, ge=0.0)
     # ---- 电极 I–V 链路校准/激励（可选，缺省用设备/配置默认） ----
     calibration_id: Optional[str] = None
-    cell_constant_cm_inv: Optional[float] = None  # Kcell，cm⁻¹
-    alpha_per_c: Optional[float] = None  # 线性温补系数 α，1/°C
-    compensation_model: Optional[str] = None  # linear / none
+    cell_constant_cm_inv: Optional[float] = Field(default=None, gt=0.0)  # Kcell，cm⁻¹
+    # 保证 10–40°C 有效温区内线性补偿分母始终为正；典型水溶液约 0.02/°C。
+    alpha_per_c: Optional[float] = Field(default=None, ge=0.0, lt=1.0 / 15.0)
+    compensation_model: Optional[Literal["linear", "none"]] = None
     calibration_valid_until_utc: Optional[str] = None  # 校准有效期
-    excitation_frequency_hz: Optional[float] = None  # 激励频率，Hz
-    excitation_amplitude_v: Optional[float] = None  # 激励幅值，V
+    excitation_frequency_hz: Optional[float] = Field(default=None, gt=0.0)  # 激励频率，Hz
+    excitation_amplitude_v: Optional[float] = Field(default=None, gt=0.0)  # 激励幅值，V
     range_id: Optional[str] = None  # 电流量程标识，如 R_100R_10K
 
 

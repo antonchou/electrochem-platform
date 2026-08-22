@@ -22,14 +22,20 @@ function computeIV(
   currentRawA: number,
   temperatureRawC: number,
 ): { g: number | null; kt: number | null; k25: number | null; flags: string[] } {
+  if (![voltageRawV, currentRawA, temperatureRawC].every(Number.isFinite)) {
+    return { g: null, kt: null, k25: null, flags: ['OUT_OF_RANGE'] };
+  }
   const g = voltageRawV === 0 ? null : currentRawA / voltageRawV;
   if (g === null) return { g, kt: null, k25: null, flags: ['OPEN_CIRCUIT'] };
   const kt = g * KCELL_CM_INV * 1e6;
+  if (temperatureRawC < 10 || temperatureRawC > 40) {
+    return { g, kt, k25: null, flags: ['TEMPERATURE_INVALID'] };
+  }
   const denom = 1 + ALPHA_PER_C * (temperatureRawC - 25);
-  const k25 = kt / denom;
-  const flags: string[] = [];
-  if (!Number.isFinite(denom)) flags.push('COMPENSATION_UNAVAILABLE');
-  return { g, kt, k25, flags };
+  if (!Number.isFinite(denom) || denom <= 1e-12) {
+    return { g, kt, k25: null, flags: ['COMPENSATION_UNAVAILABLE'] };
+  }
+  return { g, kt, k25: kt / denom, flags: [] };
 }
 
 /**
@@ -43,6 +49,8 @@ export class BrowserMockSource implements DataClient {
   private status: ExperimentStatus = 'idle';
   private t0 = 0;
   private connectDelay: ReturnType<typeof setTimeout> | null = null;
+  private runUid: string | null = null;
+  private seqNo = 0;
 
   private emit(ev: ClientEvent): void {
     this.listeners.forEach((l) => {
@@ -55,9 +63,11 @@ export class BrowserMockSource implements DataClient {
   }
 
   connect(): void {
+    if (this.connectDelay) clearTimeout(this.connectDelay);
     this.emit({ type: 'connection', status: 'connecting' });
     // 模拟连接耗时，并演示断线→重连状态变化
     this.connectDelay = setTimeout(() => {
+      this.connectDelay = null;
       this.emit({ type: 'connection', status: 'connected' });
       if (this.status === 'running') this.startStream();
     }, 600);
@@ -65,6 +75,7 @@ export class BrowserMockSource implements DataClient {
 
   disconnect(): void {
     if (this.connectDelay) clearTimeout(this.connectDelay);
+    this.connectDelay = null;
     this.stopStream();
     this.emit({ type: 'connection', status: 'idle' });
   }
@@ -81,21 +92,24 @@ export class BrowserMockSource implements DataClient {
       }
       this.status = 'running';
       this.t0 = Date.now() / 1000;
+      this.runUid = `BROWSER-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+      this.seqNo = 0;
       // 与 server 模式一致：start 时先广播 running 状态帧，
       // 触发 useRealtimeData 清空上一轮缓冲，避免 stop→start 新旧数据混合
-      this.emit({ type: 'status', status: 'running' });
+      this.emit({ type: 'status', status: 'running', experimentUid: this.runUid });
       this.startStream();
       return { ok: true, status: this.status };
     }
     if (action === 'stop') {
       this.stopStream();
       this.status = 'stopped';
-      this.emit({ type: 'status', status: 'stopped' });
+      this.emit({ type: 'status', status: 'stopped', experimentUid: this.runUid ?? undefined });
       return { ok: true, status: this.status };
     }
     // reset
     this.stopStream();
     this.status = 'idle';
+    this.runUid = null;
     this.emit({ type: 'status', status: 'idle' });
     return { ok: true, status: this.status };
   }
@@ -109,39 +123,47 @@ export class BrowserMockSource implements DataClient {
       const noise = (Math.random() - 0.5) * 3;
       const targetK25 = BASE_K25 + drift + noise;
       const temperature = +(BASE_TEMP + (Math.random() - 0.5) * 0.3).toFixed(2);
-      // 由目标 κ25 反推原始 U/I（与后端 MockDevice.read 一致：R=Kcell/κ，I=U/R）
+      // 由目标 κ25 先还原 κ(T)，再反推原始 U/I。
       const voltage = +EXCITATION_AMPLITUDE_V.toFixed(4);
-      const resistance = KCELL_CM_INV / (targetK25 * 1e-6);
+      const targetKappaT = targetK25 * (1 + ALPHA_PER_C * (temperature - 25));
+      const resistance = KCELL_CM_INV / (targetKappaT * 1e-6);
       const current = +(voltage / resistance).toFixed(9);
 
       const { g, kt, k25, flags } = computeIV(voltage, current, temperature);
+      this.seqNo += 1;
       this.emit({
         type: 'message',
         frame: {
+          message_type: 'measurement',
           schema_version: '2.0',
-          timestamp: +t.toFixed(2),
+          experiment_uid: this.runUid ?? 'BROWSER-INVALID',
+          seq_no: this.seqNo,
+          timestamp_utc: new Date().toISOString(),
+          monotonic_ms: Math.round(performance.now()),
+          t_seconds: +t.toFixed(2),
           status: 'running',
           // Raw（不可变原始量）
           voltage_raw_v: voltage,
           current_raw_a: current,
           temperature_raw_c: temperature,
           // Calibrated / Derived
-          conductance_s: g ?? undefined,
-          kappa_t_us_cm: kt ?? undefined,
-          kappa_25_us_cm: k25 ?? undefined,
+          voltage_cal_v: null,
+          current_cal_a: null,
+          conductance_s: g,
+          kappa_t_us_cm: kt,
+          kappa_25_us_cm: k25,
           // Configuration / Trace
           excitation_frequency_hz: 1000,
           excitation_amplitude_v: EXCITATION_AMPLITUDE_V,
           range_id: RANGE_ID,
           sensor_path_id: SENSOR_PATH_ID,
           calibration_id: CALIBRATION_ID,
+          cell_constant_cm_inv: KCELL_CM_INV,
+          calibration_valid_until_utc: null,
           compensation_model: COMPENSATION_MODEL,
           alpha_per_c: ALPHA_PER_C,
           // Quality
           quality_flags: ['SIMULATED', ...flags],
-          // V1 废弃兼容别名
-          ec: kt ?? undefined,
-          temperature,
         },
       });
     }, 100);

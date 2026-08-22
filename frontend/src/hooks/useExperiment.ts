@@ -43,7 +43,7 @@ export function useExperiment(bridge: ExperimentBridge) {
       try {
         const res = await bridge.control(action, options);
         setStatus(res.status);
-        if (action === 'start') {
+        if (action === 'start' && res.ok) {
           setStartedAt(new Date());
           if (res.experiment_id !== undefined) setExperimentId(res.experiment_id);
           if (res.sample_id !== undefined) setSampleId(res.sample_id);

@@ -67,10 +67,14 @@ def kappa_25(
         return kappa_t_us_cm
     if compensation_model != "linear":
         return None
-    if alpha_per_c is None or not _finite(alpha_per_c):
+    if (
+        alpha_per_c is None
+        or not _finite(alpha_per_c)
+        or not 0.0 <= alpha_per_c < 1.0 / 15.0
+    ):
         return None
     denominator = 1.0 + alpha_per_c * (temperature_raw_c - REFERENCE_TEMPERATURE_C)
-    if abs(denominator) < 1e-12:
+    if denominator <= 1e-12:
         return None
     return kappa_t_us_cm / denominator
 
@@ -132,7 +136,11 @@ def compute_iv(
     if compensation_model not in VALID_COMPENSATION_MODELS:
         flags.append(COMPENSATION_UNAVAILABLE)
         return {**result, "quality_flags": tuple(flags)}
-    if compensation_model == "linear" and (alpha_per_c is None or not _finite(alpha_per_c)):
+    if compensation_model == "linear" and (
+        alpha_per_c is None
+        or not _finite(alpha_per_c)
+        or not 0.0 <= alpha_per_c < 1.0 / 15.0
+    ):
         flags.append(COMPENSATION_UNAVAILABLE)
         return {**result, "quality_flags": tuple(flags)}
 

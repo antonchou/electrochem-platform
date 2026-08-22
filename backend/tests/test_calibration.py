@@ -94,6 +94,14 @@ def test_kappa_25_temperature_compensation():
     assert k25 == pytest.approx(1413.0 / 1.2)
 
 
+def test_nonpositive_compensation_denominator_is_rejected():
+    """线性温补分母为负时不得输出负电导率。"""
+    result = _compute(temperature_raw_c=10.0, alpha_per_c=0.1)
+    assert result["kappa_t_us_cm"] is not None
+    assert result["kappa_25_us_cm"] is None
+    assert calibration.COMPENSATION_UNAVAILABLE in result["quality_flags"]
+
+
 def test_open_circuit_marks_open_circuit():
     """U=0：G/κ/κ25 全空，标记 OPEN_CIRCUIT。"""
     result = _compute(voltage_raw_v=0.0, current_raw_a=0.0)

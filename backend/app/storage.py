@@ -13,8 +13,9 @@ import io
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 # 仓库约定：原始数据不可变，统一存 data/raw/（backend/app/storage.py → 仓库根/data/raw/ec.db）
 DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "ec.db"
@@ -88,6 +89,8 @@ CREATE TABLE IF NOT EXISTS raw_frames (
     alpha_per_c    REAL,
     -- Trace
     calibration_id TEXT,
+    cell_constant_cm_inv REAL,
+    calibration_valid_until_utc TEXT,
     -- 兼容（历史遗留；V1 ec 废弃别名迁移至此，不再是主字段）
     legacy_ec_us_cm REAL,
     quality_flags  TEXT,
@@ -131,7 +134,7 @@ END;
 # schema_migrations 表记录已应用版本，应用启动时自动推进到最新。
 # ==========================================================================
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -196,10 +199,21 @@ def _migrate_v3_extra_columns(conn: sqlite3.Connection) -> None:
         _add_column_if_missing(conn, name, decl, existing)
 
 
+def _migrate_v4_calibration_trace(conn: sqlite3.Connection) -> None:
+    """v4：每帧保存 Kcell 与校准有效期，使 κ(T)/κ25 可独立追溯回算。"""
+    existing = _column_names(conn, "raw_frames")
+    for name, decl in {
+        "cell_constant_cm_inv": "REAL",
+        "calibration_valid_until_utc": "TEXT",
+    }.items():
+        _add_column_if_missing(conn, name, decl, existing)
+
+
 MIGRATIONS: Dict[int, Any] = {
     1: _migrate_v1_iv_columns,
     2: _migrate_v2_rename_legacy,
     3: _migrate_v3_extra_columns,
+    4: _migrate_v4_calibration_trace,
 }
 
 
@@ -235,9 +249,20 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
+def _managed_conn() -> Iterator[sqlite3.Connection]:
+    """保留 sqlite3 事务提交/回滚语义，并在退出时确定性关闭连接。"""
+    conn = _conn()
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
 def init_db() -> None:
     """建表（幂等）+ 版本化迁移。应用启动时调用；旧库自动升级，不手工改库。"""
-    with _conn() as conn:
+    with _managed_conn() as conn:
         conn.executescript(SCHEMA)
         _apply_migrations(conn)
 
@@ -260,7 +285,7 @@ def create_experiment(
     started = started_at_utc or datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%S.%fZ"
     )
-    with _conn() as conn:
+    with _managed_conn() as conn:
         cur = conn.execute(
             """
             INSERT INTO experiments
@@ -301,7 +326,7 @@ def create_experiment_with_sample(
         "%Y-%m-%dT%H:%M:%S.%fZ"
     )
     measured = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    with _conn() as conn:
+    with _managed_conn() as conn:
         cur = conn.execute(
             """
             INSERT INTO experiments
@@ -340,7 +365,7 @@ def finish_experiment(experiment_id: int, status: str = "stopped") -> None:
         allowed = ", ".join(sorted(FINAL_EXPERIMENT_STATUSES))
         raise ValueError(f"invalid terminal experiment status {status!r}; expected one of: {allowed}")
     ended = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    with _conn() as conn:
+    with _managed_conn() as conn:
         conn.execute(
             "UPDATE experiments SET status = ?, ended_at_utc = ? WHERE id = ?",
             (status, ended, experiment_id),
@@ -364,7 +389,7 @@ def upsert_sample(
 ) -> None:
     import datetime
 
-    with _conn() as conn:
+    with _managed_conn() as conn:
         conn.execute(
             """
             INSERT INTO samples
@@ -374,6 +399,10 @@ def upsert_sample(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(experiment_id, sample_id, sensor_path_id) DO UPDATE SET
                 frame_count = frame_count + excluded.frame_count,
+                concentration_mmol_l = COALESCE(excluded.concentration_mmol_l, samples.concentration_mmol_l),
+                composition = COALESCE(excluded.composition, samples.composition),
+                preparation_record_id = COALESCE(excluded.preparation_record_id, samples.preparation_record_id),
+                measured_at_utc = excluded.measured_at_utc,
                 k25_median  = COALESCE(excluded.k25_median, samples.k25_median),
                 k25_mean    = COALESCE(excluded.k25_mean, samples.k25_mean),
                 k25_sd      = COALESCE(excluded.k25_sd, samples.k25_sd)
@@ -403,7 +432,7 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
     """
     if not frames:
         return
-    with _conn() as conn:
+    with _managed_conn() as conn:
         rows = []
         for f in frames:
             rows.append(
@@ -417,9 +446,17 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
                     "t_seconds": f.get("t_seconds"),
                     "schema_version": f.get("schema_version"),
                     # legacy = V1 ec 废弃别名迁移列；兼容旧调用方字段 ec_raw
-                    "legacy_ec_us_cm": f.get("legacy_ec_us_cm", f.get("ec_raw")),
+                    "legacy_ec_us_cm": (
+                        f.get("legacy_ec_us_cm")
+                        if f.get("legacy_ec_us_cm") is not None
+                        else f.get("ec_raw")
+                    ),
                     # temperature_raw_c 优先，兼容旧调用方字段 temperature_raw
-                    "temperature_raw_c": f.get("temperature_raw_c", f.get("temperature_raw")),
+                    "temperature_raw_c": (
+                        f.get("temperature_raw_c")
+                        if f.get("temperature_raw_c") is not None
+                        else f.get("temperature_raw")
+                    ),
                     "voltage_raw_v": f.get("voltage_raw_v"),
                     "current_raw_a": f.get("current_raw_a"),
                     "voltage_cal_v": f.get("voltage_cal_v"),
@@ -434,6 +471,8 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
                     "compensation_model": f.get("compensation_model"),
                     "alpha_per_c": f.get("alpha_per_c"),
                     "calibration_id": f.get("calibration_id"),
+                    "cell_constant_cm_inv": f.get("cell_constant_cm_inv"),
+                    "calibration_valid_until_utc": f.get("calibration_valid_until_utc"),
                     "quality_flags": f.get("quality_flags"),
                     "status": f.get("status"),
                 }
@@ -448,6 +487,7 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
                  conductance_s, kappa_t_us_cm, kappa_25_us_cm, k25,
                  excitation_frequency_hz, excitation_amplitude_v, range_id,
                  compensation_model, alpha_per_c, calibration_id,
+                 cell_constant_cm_inv, calibration_valid_until_utc,
                  quality_flags, status)
             VALUES (:experiment_id, :sample_id, :sensor_path_id, :seq_no, :timestamp_utc,
                     :monotonic_ms, :t_seconds, :schema_version,
@@ -456,6 +496,7 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
                     :conductance_s, :kappa_t_us_cm, :kappa_25_us_cm, :k25,
                     :excitation_frequency_hz, :excitation_amplitude_v, :range_id,
                     :compensation_model, :alpha_per_c, :calibration_id,
+                    :cell_constant_cm_inv, :calibration_valid_until_utc,
                     :quality_flags, :status)
             """,
             rows,
@@ -480,7 +521,7 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
 # ---------------- 查询 ----------------
 
 def list_experiments() -> List[Dict[str, Any]]:
-    with _conn() as conn:
+    with _managed_conn() as conn:
         rows = conn.execute(
             """
             SELECT e.*, COUNT(f.id) AS frame_count
@@ -494,7 +535,7 @@ def list_experiments() -> List[Dict[str, Any]]:
 
 
 def get_experiment(experiment_id: int) -> Optional[Dict[str, Any]]:
-    with _conn() as conn:
+    with _managed_conn() as conn:
         row = conn.execute(
             "SELECT * FROM experiments WHERE id = ?", (experiment_id,)
         ).fetchone()
@@ -502,7 +543,7 @@ def get_experiment(experiment_id: int) -> Optional[Dict[str, Any]]:
 
 
 def get_samples(experiment_id: int) -> List[Dict[str, Any]]:
-    with _conn() as conn:
+    with _managed_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM samples WHERE experiment_id = ? ORDER BY id", (experiment_id,)
         ).fetchall()
@@ -519,7 +560,7 @@ def get_frames(
         raise ValueError("limit must be between 1 and 1000000")
     if offset < 0:
         raise ValueError("offset must be non-negative")
-    with _conn() as conn:
+    with _managed_conn() as conn:
         rows = conn.execute(
             """
             SELECT id, sample_id, sensor_path_id, seq_no, timestamp_utc,
@@ -529,6 +570,7 @@ def get_frames(
                    conductance_s, kappa_t_us_cm, kappa_25_us_cm, k25,
                    excitation_frequency_hz, excitation_amplitude_v, range_id,
                    compensation_model, alpha_per_c, calibration_id,
+                   cell_constant_cm_inv, calibration_valid_until_utc,
                    quality_flags, status
             FROM raw_frames
             WHERE experiment_id = ?
@@ -541,7 +583,7 @@ def get_frames(
 
 
 def count_frames(experiment_id: int) -> int:
-    with _conn() as conn:
+    with _managed_conn() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM raw_frames WHERE experiment_id = ?", (experiment_id,)
         ).fetchone()
@@ -553,16 +595,17 @@ def export_csv(experiment_id: int) -> str:
 
     同时包含 Raw / Calibrated / Derived / Configuration / Trace / Quality 各层字段。
     """
-    with _conn() as conn:
+    with _managed_conn() as conn:
         rows = conn.execute(
             """
             SELECT seq_no, timestamp_utc, monotonic_ms, t_seconds, schema_version,
                    sensor_path_id, sample_id,
                    legacy_ec_us_cm, temperature_raw_c,
                    voltage_raw_v, current_raw_a, voltage_cal_v, current_cal_a,
-                   conductance_s, kappa_t_us_cm, kappa_25_us_cm, k25,
+                   conductance_s, kappa_t_us_cm, kappa_25_us_cm,
                    excitation_frequency_hz, excitation_amplitude_v, range_id,
                    compensation_model, alpha_per_c, calibration_id,
+                   cell_constant_cm_inv, calibration_valid_until_utc,
                    quality_flags, status
             FROM raw_frames
             WHERE experiment_id = ?
@@ -591,13 +634,14 @@ def export_csv(experiment_id: int) -> str:
             "conductance_s",
             "kappa_t_us_cm",
             "kappa_25_us_cm",
-            "k25_us_cm",
             "excitation_frequency_hz",
             "excitation_amplitude_v",
             "range_id",
             "compensation_model",
             "alpha_per_c",
             "calibration_id",
+            "cell_constant_cm_inv",
+            "calibration_valid_until_utc",
             "quality_flags",
             "status",
         ]
@@ -621,13 +665,14 @@ def export_csv(experiment_id: int) -> str:
                 r["conductance_s"],
                 r["kappa_t_us_cm"],
                 r["kappa_25_us_cm"],
-                r["k25"],
                 r["excitation_frequency_hz"],
                 r["excitation_amplitude_v"],
                 r["range_id"],
                 r["compensation_model"],
                 r["alpha_per_c"],
                 r["calibration_id"],
+                r["cell_constant_cm_inv"],
+                r["calibration_valid_until_utc"],
                 r["quality_flags"],
                 r["status"],
             ]
