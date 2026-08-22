@@ -55,8 +55,6 @@ test('Phase7 历史实验全流程：样品溯源 + 导出 CSV', async ({ page }
   const res = await page.request.get(href!);
   expect(res.ok()).toBeTruthy();
   const csv = await res.text();
-  expect(csv).toContain('legacy_ec_us_cm');
-  expect(csv).toContain('voltage_raw_v');
-  expect(csv).toContain('kappa_t_us_cm');
+  expect(csv).toContain('ec_raw_us_cm');
   expect(csv).toContain('NACL_004');
 });

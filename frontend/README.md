@@ -11,7 +11,7 @@ React 18 + TypeScript + Vite + Apache ECharts + CSS Modules + 原生 WebSocket�
 | 层 | 技术 |
 |---|---|
 | UI | React 18, CSS Modules |
-| 构建 | Vite 8 |
+| 构建 | Vite 5 |
 | 图表 | Apache ECharts（按需引入，lttb 采样） |
 | 实时通信 | 原生 WebSocket |
 | 控制通道 | REST API（fetch） |
@@ -73,8 +73,6 @@ npm run preview    # 预览构建产物
 - **10Hz 稳定输入**：10 帧/秒的 setState 驱动增量 UI；图表更新独立于 React 渲染。
 - **10000 点不卡**：曲线开启 `sampling: 'lttb'` + `animation: false`；
   数据缓冲上限 `config.chart.maxPoints`（默认 20000），超出丢最旧点。
-- **调试流隔离**：`DEBUG-BURST-*` 帧可注入当前视图做负载测试，但不会被当作新实验边界，
-  也不会替换真实实验的 `experiment_uid`。
 - **30 分钟长跑**：缓冲有上限、定时器全部清理、监听器可退订。
 
 ## 断线检测（F08/F09）

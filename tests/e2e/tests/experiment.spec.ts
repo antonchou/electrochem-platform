@@ -42,52 +42,23 @@ test('F02 开始实验：进入 Running 并接收数据', async ({ page }) => {
   await expect(page.getByTestId('btn-start')).toBeDisabled();
 });
 
-test('F03 V2 电极链路：U/I/T、G/κ(T)/κ25、校准与质量字段同时可见', async ({ page }) => {
+test('F03 实时数值：EC/温度持续更新且单位正确', async ({ page }) => {
   await page.getByTestId('btn-start').click();
-  const numericCards = [
-    ['value-voltage', 'V'],
-    ['value-current', 'mA'],
-    ['value-temperature', '°C'],
-    ['value-conductance', 'S'],
-    ['value-kappa-t', 'μS/cm'],
-    ['value-kappa25', 'μS/cm'],
-  ] as const;
-  for (const [testId, unit] of numericCards) {
-    const card = page.getByTestId(testId);
-    await expect(card).not.toContainText('--', { timeout: 8000 });
-    await expect(card).toContainText(unit);
-    const text = await card.innerText();
-    expect(Number.isFinite(Number(text.match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/i)?.[0]))).toBe(true);
-  }
-  await expect(page.getByTestId('calib-status')).toContainText('CAL_MOCK_CONFIG');
-  await expect(page.getByTestId('quality-status')).toContainText('SIMULATED');
-  await expect(page.getByTestId('trace-range')).toContainText('R_100R_10K');
-  await expect(page.getByTestId('trace-sensor-path')).toContainText('EC_IV_CELL_MOCK');
-  await expect(page.getByTestId('trace-cell-constant')).toContainText('1 cm⁻¹');
-  await expect(page.getByTestId('trace-compensation')).toContainText('linear');
-  await expect(page.getByTestId('trace-compensation')).toContainText('0.02');
+  await expect(page.getByTestId('value-ec')).not.toContainText('--', { timeout: 8000 });
+  const ec = page.getByTestId('value-ec');
+  await expect(ec).toContainText('μS/cm');
+  await expect(page.getByTestId('value-temperature')).toContainText('°C');
+
+  const ecText = await ec.innerText();
+  const temperatureText = await page.getByTestId('value-temperature').innerText();
+  expect(Number.isFinite(Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]))).toBe(true);
+  expect(Number.isFinite(Number(temperatureText.match(/-?\d+(?:\.\d+)?/)?.[0]))).toBe(true);
 
   // 稳定传感器连续两帧可能恰好显示同一舍入值；以采样点数增长证明数据仍在更新。
   const countBefore = Number(await page.getByTestId('stat-count').innerText());
   await expect
     .poll(async () => Number(await page.getByTestId('stat-count').innerText()), { timeout: 3000 })
     .toBeGreaterThan(countBefore);
-});
-
-test('F03b 未校准帧：保留 Raw 数据与质量状态，不被误判为状态帧', async ({ page, request }) => {
-  const response = await request.post(`${API}/api/experiment/start`, {
-    data: { cell_constant_cm_inv: null, alpha_per_c: null },
-  });
-  expect(response.ok()).toBeTruthy();
-  await waitForPoints(page, 1);
-  await expect(page.getByTestId('value-kappa-t')).toContainText('--');
-  await expect(page.getByTestId('value-kappa25')).toContainText('--');
-  await expect(page.getByTestId('value-voltage')).not.toContainText('--');
-  await expect(page.getByTestId('value-current')).not.toContainText('--');
-  await expect(page.getByTestId('value-temperature')).not.toContainText('--');
-  await expect(page.getByTestId('value-conductance')).not.toContainText('--');
-  await expect(page.getByTestId('calib-status')).toContainText('未校准');
-  await expect(page.getByTestId('quality-status')).toContainText('UNCALIBRATED');
 });
 
 test('F04 实时曲线：数据自动追加，无需刷新页面', async ({ page }) => {
@@ -115,11 +86,11 @@ test('F04b 实时曲线坐标：时间轴延伸且纵轴稳定覆盖读数', asy
 
   const yMin1 = Number(await chart.getAttribute('data-chart-y-min'));
   const yMax1 = Number(await chart.getAttribute('data-chart-y-max'));
-  const ecText = await page.getByTestId('value-kappa-t').innerText();
-  const kappaT = Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]);
-  expect(Number.isFinite(kappaT), '实时 κ(T) 卡片应包含可解析的数值').toBe(true);
-  expect(kappaT).toBeGreaterThanOrEqual(yMin1);
-  expect(kappaT).toBeLessThanOrEqual(yMax1);
+  const ecText = await page.getByTestId('value-ec').innerText();
+  const ec = Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]);
+  expect(Number.isFinite(ec), '实时 EC 卡片应包含可解析的数值').toBe(true);
+  expect(ec).toBeGreaterThanOrEqual(yMin1);
+  expect(ec).toBeLessThanOrEqual(yMax1);
 
   await page.waitForTimeout(1200);
   const yMin2 = Number(await chart.getAttribute('data-chart-y-min'));
@@ -174,7 +145,7 @@ test('F09 恢复连接：后端恢复后自动重连', async ({ page }) => {
   await expect(page.getByTestId('connection-status')).toHaveText('已连接', { timeout: 15_000 });
 });
 
-test('F10 在线协议拒绝 V1 帧且页面保持可用', async ({ page }) => {
+test('F10 异常数据：坏帧不导致页面崩溃', async ({ page }) => {
   await page.getByTestId('btn-start').click();
   await waitForPoints(page, 1);
   await page.request.post(`${API}/api/debug/bad-frame`);
@@ -203,34 +174,7 @@ test('P04 数据规模：承载 10000 点不卡死', async ({ page }) => {
   // 快速注入 1 万帧（backend debug 接口）
   await page.request.post(`${API}/api/debug/burst?count=10000`);
   await waitForPoints(page, 10000, 20_000);
-  const chart = page.getByTestId('realtime-chart');
-  await expect
-    .poll(async () => Number(await chart.getAttribute('data-chart-x-max')), { timeout: 5000 })
-    .toBeGreaterThanOrEqual(1000);
-  await page.waitForTimeout(500); // 允许真实采集帧在 burst 后继续到达
-  expect(Number(await chart.getAttribute('data-chart-x-max'))).toBeGreaterThanOrEqual(1000);
   // 页面仍可交互：可停止，且无阻断
   await page.getByTestId('btn-stop').click();
-  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
-});
-
-test('P04c 调试 burst：独立溯源不得清空真实实验缓冲', async ({ page }) => {
-  await page.getByTestId('btn-start').click();
-  await waitForPoints(page, 5);
-  await page.getByTestId('btn-stop').click();
-  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
-
-  const before = Number(await page.getByTestId('stat-count').innerText());
-  const response = await page.request.post(`${API}/api/debug/burst?count=100`);
-  expect(response.ok()).toBeTruthy();
-  const body = (await response.json()) as { experiment_uid?: string };
-  expect(body.experiment_uid).toMatch(/^DEBUG-BURST-/);
-
-  await expect
-    .poll(async () => Number(await page.getByTestId('stat-count').innerText()), {
-      timeout: 5000,
-      message: 'burst 应追加到当前视图，不能把已有真实实验点清空',
-    })
-    .toBeGreaterThanOrEqual(before + 100);
   await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
 });

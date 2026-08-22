@@ -18,36 +18,17 @@ class ExperimentState:
         self.experiment_db_id: Optional[int] = None
         self.experiment_uid: Optional[str] = None
         self.sample_id: str = "SAMPLE"
-        self.sensor_path_id: str = "EC_IV_CELL_MOCK"
-        self.concentration_mmol_l: Optional[float] = None
+        self.sensor_path_id: str = "CM2_WIDE"
         self.seq_no: int = 0
-        # 电极 I–V 链路校准/激励上下文（SRS v0.2 §3 / §5，随实验版本化）
-        self.calibration_id: Optional[str] = None
-        self.cell_constant_cm_inv: Optional[float] = None  # Kcell
-        self.calibration_valid_until_utc: Optional[str] = None
-        self.alpha_per_c: Optional[float] = None
-        self.compensation_model: Optional[str] = None
-        self.excitation_frequency_hz: Optional[float] = None
-        self.excitation_amplitude_v: Optional[float] = None
-        self.range_id: Optional[str] = None
 
     async def start(
         self,
         *,
         sample_id: str = "SAMPLE",
-        sensor_path_id: str = "EC_IV_CELL_MOCK",
-        concentration_mmol_l: Optional[float] = None,
+        sensor_path_id: str = "CM2_WIDE",
         title: str = "不同溶液导电性相对比较",
         experiment_db_id: Optional[int] = None,
         experiment_uid: Optional[str] = None,
-        calibration_id: Optional[str] = None,
-        cell_constant_cm_inv: Optional[float] = None,
-        calibration_valid_until_utc: Optional[str] = None,
-        alpha_per_c: Optional[float] = None,
-        compensation_model: Optional[str] = None,
-        excitation_frequency_hz: Optional[float] = None,
-        excitation_amplitude_v: Optional[float] = None,
-        range_id: Optional[str] = None,
     ) -> bool:
         """成功进入 running 返回 True；已在运行返回 False。
 
@@ -62,17 +43,8 @@ class ExperimentState:
             self.seq_no = 0
             self.sample_id = sample_id
             self.sensor_path_id = sensor_path_id
-            self.concentration_mmol_l = concentration_mmol_l
             self.experiment_db_id = experiment_db_id
             self.experiment_uid = experiment_uid
-            self.calibration_id = calibration_id
-            self.cell_constant_cm_inv = cell_constant_cm_inv
-            self.calibration_valid_until_utc = calibration_valid_until_utc
-            self.alpha_per_c = alpha_per_c
-            self.compensation_model = compensation_model
-            self.excitation_frequency_hz = excitation_frequency_hz
-            self.excitation_amplitude_v = excitation_amplitude_v
-            self.range_id = range_id
             return True
 
     async def stop(self) -> bool:
@@ -82,29 +54,12 @@ class ExperimentState:
                 self.status = "stopped"
             return changed
 
-    async def fail(self) -> bool:
-        """把当前运行实验原子切换为 error，并保留上下文供导出/重置。"""
-        async with self.lock:
-            changed = self.status in {"running", "stopped"}
-            if changed:
-                self.status = "error"
-            return changed
-
     async def reset(self) -> None:
         async with self.lock:
             self.status = "idle"
             self.t0 = None
             self.experiment_db_id = None
             self.experiment_uid = None
-            self.concentration_mmol_l = None
-            self.calibration_id = None
-            self.cell_constant_cm_inv = None
-            self.calibration_valid_until_utc = None
-            self.alpha_per_c = None
-            self.compensation_model = None
-            self.excitation_frequency_hz = None
-            self.excitation_amplitude_v = None
-            self.range_id = None
 
     def next_seq(self) -> int:
         self.seq_no += 1

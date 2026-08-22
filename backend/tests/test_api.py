@@ -43,25 +43,6 @@ def _receive_json_with_timeout(ws, timeout: float):
     return res
 
 
-# 带完整校准/激励上下文的 start 请求。
-CALIBRATED_START = {
-    "sample_id": "NACL_004",
-    "sensor_path_id": "EC_IV_CELL_01",
-    "calibration_id": "CAL_TEST_001",
-    "cell_constant_cm_inv": 1.0,
-    "alpha_per_c": 0.02,
-    "compensation_model": "linear",
-    "excitation_frequency_hz": 1000,
-    "excitation_amplitude_v": 0.4,
-    "range_id": "R_100R_10K",
-}
-
-
-def _has_measure_data(msg: dict) -> bool:
-    """在线链路只承认显式 V2 measurement，禁止用 V1 字段猜测类型。"""
-    return msg.get("message_type") == "measurement" and msg.get("schema_version") == "2.0"
-
-
 def test_health(client):
     r = client.get("/health")
     assert r.status_code == 200
@@ -91,137 +72,51 @@ def test_control_state_machine(client):
 
 
 def test_ws_stream_protocol(client):
-    """WS 连接后，start 推送符合 V2 协议的实时帧（可能先收到状态广播，需跳过）。"""
+    """WS 连接后，start 会推送符合协议的实时帧（可能先收到状态广播，需跳过）。"""
     with client.websocket_connect("/ws/stream") as ws:
-        assert client.post("/api/experiment/start", json=CALIBRATED_START).json()["status"] == "running"
+        assert client.post("/api/experiment/start").json()["status"] == "running"
         data = None
         for _ in range(10):
             msg = ws.receive_json()
-            if _has_measure_data(msg):
+            if "ec" in msg:
                 data = msg
                 break
         assert data is not None, "未收到数据帧"
-        # V2 溯源/状态字段
-        assert data["schema_version"] == "2.0"
-        assert data["message_type"] == "measurement"
-        assert data["experiment_uid"].startswith("EXP-")
-        assert data["seq_no"] is not None
-        assert data["timestamp_utc"] is not None
-        assert data["monotonic_ms"] is not None
-        assert data["t_seconds"] is not None
+        assert set(data) == {"timestamp", "ec", "temperature", "status"}
         assert data["status"] == "running"
-        # Raw 层（不可变原始量）
-        assert data["voltage_raw_v"] is not None
-        assert data["current_raw_a"] is not None
-        assert data["temperature_raw_c"] is not None
-        # Calibrated / Derived 层
-        assert data["conductance_s"] is not None
-        assert data["kappa_t_us_cm"] is not None
-        assert data["kappa_25_us_cm"] is not None
-        # Configuration / Trace / Quality
-        assert data["excitation_frequency_hz"] == 1000
-        assert data["excitation_amplitude_v"] == 0.4
-        assert data["range_id"] == "R_100R_10K"
-        assert data["sensor_path_id"] == "EC_IV_CELL_01"
-        assert data["calibration_id"] == "CAL_TEST_001"
-        assert data["cell_constant_cm_inv"] == 1.0
-        assert "SIMULATED" in data["quality_flags"]
-        # 在线 V2 禁止携带 V1 别名；旧数据兼容仅存在于历史读取层。
-        assert "ec" not in data
-        assert "temperature" not in data
-        assert "timestamp" not in data
         client.post("/api/experiment/stop")
     client.post("/api/experiment/reset")
-
-
-def test_ws_uncalibrated_frame_remains_a_measurement(client):
-    """显式 null 强制未校准；帧仍带 Raw 数据和测量类型，前端不得当成状态帧。"""
-    with client.websocket_connect("/ws/stream") as ws:
-        response = client.post(
-            "/api/experiment/start",
-            json={"cell_constant_cm_inv": None, "alpha_per_c": None},
-        )
-        assert response.status_code == 200
-        frame = None
-        for _ in range(10):
-            message = ws.receive_json()
-            if message.get("message_type") == "measurement":
-                frame = message
-                break
-        assert frame is not None
-        assert frame["voltage_raw_v"] is not None
-        assert frame["current_raw_a"] is not None
-        assert frame["conductance_s"] is not None
-        assert frame["kappa_t_us_cm"] is None
-        assert frame["kappa_25_us_cm"] is None
-        assert "ec" not in frame
-        assert "temperature" not in frame
-        assert "UNCALIBRATED" in frame["quality_flags"]
-        client.post("/api/experiment/stop")
-    client.post("/api/experiment/reset")
-
-
-def test_default_mock_calibration_is_traceable(client):
-    with client.websocket_connect("/ws/stream") as ws:
-        client.post("/api/experiment/start")
-        frame = None
-        for _ in range(10):
-            message = ws.receive_json()
-            if message.get("message_type") == "measurement":
-                frame = message
-                break
-        assert frame is not None
-        assert frame["calibration_id"] == "CAL_MOCK_CONFIG"
-        assert frame["experiment_uid"].startswith("EXP-")
-        client.post("/api/experiment/stop")
-    client.post("/api/experiment/reset")
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"cell_constant_cm_inv": 0},
-        {"cell_constant_cm_inv": -1},
-        {"cell_constant_cm_inv": 1.0},
-        {"calibration_id": None},
-        {"alpha_per_c": 0.1},
-        {"excitation_frequency_hz": 0},
-        {"excitation_amplitude_v": 0},
-    ],
-)
-def test_start_rejects_invalid_calibration_ranges(client, payload):
-    assert client.post("/api/experiment/start", json=payload).status_code == 422
 
 
 def test_ws_stop_stops_stream(client):
     """停止后：收到 stopped 状态广播，且 300ms 内不再有数据帧。"""
     with client.websocket_connect("/ws/stream") as ws:
-        client.post("/api/experiment/start", json=CALIBRATED_START)
+        client.post("/api/experiment/start")
         for _ in range(10):
-            if _has_measure_data(ws.receive_json()):
+            if "ec" in ws.receive_json():
                 break
         client.post("/api/experiment/stop")
         status_frame = _receive_json_with_timeout(ws, 0.5)
         assert status_frame is not None
-        assert not _has_measure_data(status_frame)
+        assert "ec" not in status_frame
         assert status_frame["status"] == "stopped"
         assert _receive_json_with_timeout(ws, 0.3) is None
     client.post("/api/experiment/reset")
 
 
 def test_debug_bad_frame(client):
-    """bad-frame 注入一条看似完整的 V1 帧；前端必须拒绝在线降级。"""
+    """bad-frame 调试接口可被调用；前端容错由 E2E 验证。"""
     with client.websocket_connect("/ws/stream") as ws:
-        client.post("/api/experiment/start", json=CALIBRATED_START)
+        client.post("/api/experiment/start")
         for _ in range(10):
-            if _has_measure_data(ws.receive_json()):
+            if "ec" in ws.receive_json():
                 break
         r = client.post("/api/debug/bad-frame")
         assert r.json()["ok"] is True
         bad = None
         for _ in range(10):
             msg = ws.receive_json()
-            if msg.get("ec") == 1413.0 and "message_type" not in msg:
+            if msg.get("ec") == "abc":
                 bad = msg
                 break
         assert bad is not None, "未收到坏帧"
@@ -255,16 +150,15 @@ def test_start_creates_experiment_record(client):
 
 
 def test_frames_persist_and_export(client):
-    """运行期间帧落库；export.csv 与 export.json 可取回，CSV 含 Raw/Calibrated/Derived。"""
+    """运行期间帧落库；export.csv 与 export.json 可取回。"""
     with client.websocket_connect("/ws/stream") as ws:
         exp_id = client.post(
-            "/api/experiment/start",
-            json={**CALIBRATED_START, "sample_id": "BLANK", "sensor_path_id": "EC_IV_CELL_02"},
+            "/api/experiment/start", json={"sample_id": "BLANK", "sensor_path_id": "BA121S_LOW"}
         ).json()["experiment_id"]
         got = 0
         for _ in range(15):
             msg = ws.receive_json()
-            if _has_measure_data(msg):
+            if "ec" in msg:
                 got += 1
             if got >= 3:
                 break
@@ -284,33 +178,12 @@ def test_frames_persist_and_export(client):
     assert csv_resp.status_code == 200
     assert "text/csv" in csv_resp.headers["content-type"]
     csv_text = csv_resp.text
-    # Raw / Calibrated / Derived / Configuration / Trace / Quality 各层字段
-    assert "voltage_raw_v" in csv_text
-    assert "current_raw_a" in csv_text
-    assert "temperature_raw_c" in csv_text
-    assert "conductance_s" in csv_text
-    assert "kappa_t_us_cm" in csv_text
-    assert "kappa_25_us_cm" in csv_text
-    assert "legacy_ec_us_cm" in csv_text
-    assert "excitation_frequency_hz" in csv_text
-    assert "range_id" in csv_text
-    assert "calibration_id" in csv_text
-    assert "cell_constant_cm_inv" in csv_text
-    assert "calibration_valid_until_utc" in csv_text
-    assert "EC_IV_CELL_02" in csv_text
+    assert "ec_raw_us_cm" in csv_text
+    assert "BA121S_LOW" in csv_text
 
     json_resp = client.get(f"/api/experiments/{exp_id}/export.json").json()
     assert len(json_resp["frames"]) >= 3
-    assert json_resp["frames"][0]["sensor_path_id"] == "EC_IV_CELL_02"
-    # JSON 帧携带原始 U/I/T 与派生量（可追溯回算，原始数据不覆盖）
-    frame0 = json_resp["frames"][0]
-    assert frame0["voltage_raw_v"] is not None
-    assert frame0["current_raw_a"] is not None
-    assert frame0["temperature_raw_c"] is not None
-    assert frame0["kappa_t_us_cm"] is not None
-    assert frame0["kappa_25_us_cm"] is not None
-    assert frame0["calibration_id"] == "CAL_TEST_001"
-    assert frame0["cell_constant_cm_inv"] == 1.0
+    assert json_resp["frames"][0]["sensor_path_id"] == "BA121S_LOW"
 
 
 def test_experiment_404(client):
@@ -334,30 +207,6 @@ def test_debug_endpoints_are_disabled_without_opt_in(client, monkeypatch):
 def test_debug_burst_count_is_bounded(client):
     assert client.post("/api/debug/burst?count=0").status_code == 422
     assert client.post("/api/debug/burst?count=10001").status_code == 422
-
-
-def test_debug_frame_has_v2_trace_fields():
-    from app.stream import generate_frame
-
-    frame = generate_frame(0.1)
-    assert frame["message_type"] == "measurement"
-    assert frame["experiment_uid"] == "DEBUG-BURST"
-    assert frame["seq_no"] == 2
-    assert frame["timestamp_utc"].endswith("Z")
-    assert isinstance(frame["monotonic_ms"], int)
-    assert frame["t_seconds"] == 0.1
-    assert frame["voltage_raw_v"] is not None
-    assert frame["current_raw_a"] is not None
-    assert frame["temperature_raw_c"] is not None
-    assert frame["conductance_s"] is not None
-    assert frame["kappa_t_us_cm"] is not None
-    assert frame["kappa_25_us_cm"] is not None
-    assert frame["calibration_id"] is not None
-    assert isinstance(frame["quality_flags"], list)
-    assert "DEBUG_BURST" in frame["quality_flags"]
-    assert "ec" not in frame
-    assert "temperature" not in frame
-    assert "timestamp" not in frame
 
 
 # ---------------- Review B-3 / B-4 / B-5 回归 ----------------
@@ -396,33 +245,16 @@ def test_reset_running_marks_aborted(client):
 
 
 def test_burst_broadcasts_only_no_persist(client):
-    """B-3/N1/N4：burst 独立溯源、不清真实 run 语义且不污染 raw_frames。"""
+    """B-3：/api/debug/burst 仅广播、不落库（注入帧不污染 raw_frames）。"""
     with client.websocket_connect("/ws/stream") as ws:
         exp_id = client.post("/api/experiment/start").json()["experiment_id"]
         # 等到第一条真实采集帧，确认流已建立
-        real_uid = None
         for _ in range(10):
-            message = ws.receive_json()
-            if _has_measure_data(message):
-                real_uid = message["experiment_uid"]
+            if "ec" in ws.receive_json():
                 break
         r = client.post("/api/debug/burst?count=20")
-        response = r.json()
-        assert response["ok"] is True
-        assert response["sent"] == 20
-        burst_uid = response["experiment_uid"]
-        assert burst_uid.startswith("DEBUG-BURST-")
-        assert burst_uid != real_uid
-
-        burst_frames = []
-        for _ in range(60):
-            message = ws.receive_json()
-            if message.get("experiment_uid") == burst_uid:
-                burst_frames.append(message)
-                if len(burst_frames) == 20:
-                    break
-        assert [frame["seq_no"] for frame in burst_frames] == list(range(1, 21))
-        assert all("DEBUG_BURST" in frame["quality_flags"] for frame in burst_frames)
+        assert r.json()["ok"] is True
+        assert r.json()["sent"] == 20
         client.post("/api/experiment/stop")
     client.post("/api/experiment/reset")
 

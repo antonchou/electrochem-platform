@@ -36,8 +36,7 @@ python3 -m venv .venv
 
 ## Mock 驱动配置
 
-默认使用固定随机种子的 `stable` 场景，以 10 Hz 生成可复现的原始 U/I/T；
-目标 κ25 只用于模拟器反推阻抗，输出仍经统一计算链得到 G/κ(T)/κ25。
+默认使用固定随机种子的 `stable` 场景，以 10 Hz 生成可复现的 EC/温度数据。
 完整配置样例见 `configs/devices/mock.example.json`：
 
 ```bash
@@ -54,13 +53,8 @@ EC_MOCK_SEED=2026
 跨域来源默认只允许 localhost、私有网段和 `.local` 主机；如需额外来源，可用逗号分隔的
 `EC_CORS_ORIGINS` 或正则 `EC_CORS_ORIGIN_REGEX` 配置。
 
-Mock 驱动模拟电极 I–V 测量链路（SRS v0.2）：由目标 κ25 反推原始电压/电流，
-经 `app.measurement` / `app.calibration` 还原 G / κ(T) / κ25，与真实硬件的数据形态一致。
-实时帧严格使用 V2 字段，不再输出或接受 `ec`/`temperature`/`timestamp` V1 别名；
-旧记录只通过 `legacy_ec_us_cm` 历史列读取。
-设备配置使用 `cell_constant_per_cm` / `excitation_voltage_v`；start API 对应参数为
-`cell_constant_cm_inv` / `excitation_amplitude_v`。缺省使用带 `calibration_id` 的 Mock 配置，
-显式传 `null` 可强制未校准并保留 Raw 帧。
+Mock 驱动内部同时预留 pH 原始读数，但当前电导率实验的 WS/SQLite 协议仍只发布
+EC 与温度，避免破坏已交付前端。真实设备后续实现同一个 `DeviceDriver` 接口。
 
 ## 接口一览
 
@@ -78,33 +72,19 @@ Mock 驱动模拟电极 I–V 测量链路（SRS v0.2）：由目标 κ25 反推
 | GET | `/api/experiments/{id}/export.json` | 完整实验 JSON 导出 |
 | POST | `/api/debug/bad-frame` | 注入非法帧，验证前端容错 |
 | POST | `/api/debug/close-connections` | 强制断开 WS，验证断线/重连 |
-| POST | `/api/debug/burst?count=10000` | 快速推 N 帧，验证大点数负载；每次使用独立 `DEBUG-BURST-*` 溯源且不落库 |
+| POST | `/api/debug/burst?count=10000` | 快速推 N 帧，验证大点数负载 |
 
-## WS 消息格式（协议基准，V2）
+## WS 消息格式（协议基准）
 
 ```json
-{ "message_type": "measurement", "schema_version": "2.0", "experiment_uid": "EXP-...",
-  "seq_no": 123, "timestamp_utc": "2026-08-22T12:00:00.000Z",
-  "monotonic_ms": 12300, "t_seconds": 12.35, "status": "running",
-  "voltage_raw_v": 0.4, "current_raw_a": 0.0005652, "temperature_raw_c": 25.1,
-  "conductance_s": 0.001413, "kappa_t_us_cm": 1414.7, "kappa_25_us_cm": 1413.0,
-  "excitation_frequency_hz": 1000, "excitation_amplitude_v": 0.4,
-  "range_id": "R_100R_10K", "sensor_path_id": "EC_IV_CELL_01",
-  "calibration_id": "CAL_20260822_001", "cell_constant_cm_inv": 1.0,
-  "calibration_valid_until_utc": null, "compensation_model": "linear",
-  "alpha_per_c": 0.02, "quality_flags": ["SIMULATED"] }
+{ "timestamp": 12.35, "ec": 1412.8, "temperature": 25.3, "status": "running" }
 ```
 
-- 数据分层：`voltage_raw_v`/`current_raw_a`/`temperature_raw_c`（Raw，不可变原始量）、
-  `voltage_cal_v`/`current_cal_a`/`conductance_s`/`kappa_t_us_cm`（Calibrated）、
-  `kappa_25_us_cm`（Derived，未校准时为空）、`seq_no`/`timestamp_utc`/`monotonic_ms`/
-  `sensor_path_id`/`calibration_id`/`cell_constant_cm_inv`/`calibration_valid_until_utc`（Trace）、`excitation_*`/`range_id`/`compensation_model`/
-  `alpha_per_c`（Configuration）、`quality_flags`（Quality）。
-- `t_seconds`：实验开始后的秒数（float）——**仅作前端显示，审计唯一时间以 `timestamp_utc`/`monotonic_ms` 为准（rule 38）**
-- 未校准时（无 Kcell）不伪造电导率：`kappa_t_us_cm`/`kappa_25_us_cm` 显式为 `null`，`quality_flags` 含 `UNCALIBRATED`
-- `message_type` 明确区分 `measurement` / `status`；状态帧含 `status`，运行态附带 `experiment_uid`
+- `timestamp`：实验开始后的秒数（float）——**仅作前端显示，审计唯一时间以 `timestamp_utc`/`monotonic_ms` 为准（rule 38）**
+- `ec`：电导率，μS/cm；`temperature`：温度，°C
 - `status`：`idle` / `running` / `stopped` / `error`
-- V2 measurement 的各层键必须完整存在；缺测值用 `null`，不能通过 V1 字段猜测或降级。
+
+状态广播帧（如停止/重置后）可能只含 `status` 字段。
 
 ## 测试
 
@@ -112,7 +92,7 @@ Mock 驱动模拟电极 I–V 测量链路（SRS v0.2）：由目标 κ25 反推
 .venv/Scripts/python -m pytest tests -q
 ```
 
-当前共 **87 项**。覆盖：健康检查、控制状态机（含重复 start 拒绝）、WS 协议格式、停止后停流、坏帧注入、
+覆盖：健康检查、控制状态机（含重复 start 拒绝）、WS 协议格式、停止后停流、坏帧注入、
 SQLite append-only 约束（UPDATE/DELETE 被拒）、实验生命周期、历史/详情/CSV 导出、
 Mock 场景可复现性、质量标志落库，以及慢 WebSocket 客户端隔离。
 

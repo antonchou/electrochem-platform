@@ -48,13 +48,6 @@ export function ExperimentPage() {
     latest && runStartTRef.current !== null ? Math.max(0, latest.t - runStartTRef.current) : 0;
 
   const shownError = actionError ?? error;
-  const calibrationStatus = latest?.qualityFlags?.includes('UNCALIBRATED')
-    ? '未校准'
-    : latest?.calibrationId
-      ? `已校准 (${latest.calibrationId})`
-      : latest?.kt !== null && latest?.kt !== undefined
-        ? '已计算（缺少校准 ID）'
-        : '未校准';
 
   return (
     <div className={styles.page}>
@@ -107,99 +100,22 @@ export function ExperimentPage() {
         <ConnectionPanel status={connStatus} mode={bridge.mode} onReconnect={manualReconnect} />
       </section>
 
-      {/* 在线主界面直接呈现完整 V2 链路，不把 U/I/G 隐藏为可选诊断项。 */}
-      <section className={styles.diag} data-testid="v2-measurement-chain">
-        <h2 className={styles.chainTitle}>V2 电极 I–V 测量链路</h2>
-        <div className={styles.values}>
-          <ValueDisplay
-            label="电极电压 U"
-            value={latest?.u ?? null}
-            unit="V"
-            precision={4}
-            testId="value-voltage"
-          />
-          <ValueDisplay
-            label="回路电流 I"
-            value={latest?.i ?? null}
-            unit="mA"
-            precision={3}
-            testId="value-current"
-          />
-          <ValueDisplay
-            label="温度 T"
-            value={latest?.tc ?? null}
-            unit="°C"
-            precision={2}
-            testId="value-temperature"
-          />
-          <ValueDisplay
-            label="电导 G"
-            value={latest?.g ?? null}
-            unit="S"
-            precision={0}
-            format={(v) => v.toExponential(3)}
-            testId="value-conductance"
-          />
-          <ValueDisplay
-            label="电导率 κ(T)"
-            value={latest?.kt ?? null}
-            unit="μS/cm"
-            precision={1}
-            testId="value-kappa-t"
-          />
-          <ValueDisplay
-            label="κ25 (25°C)"
-            value={latest?.k25 ?? null}
-            unit="μS/cm"
-            precision={1}
-            testId="value-kappa25"
-          />
-          <ValueDisplay
-            label="激励频率"
-            value={latest?.freq ?? null}
-            unit="Hz"
-            precision={0}
-            testId="value-frequency"
-          />
-          <ValueDisplay
-            label="激励幅值"
-            value={latest?.amp ?? null}
-            unit="V"
-            precision={3}
-            testId="value-amplitude"
-          />
-        </div>
-        <div className={styles.statusRow}>
-          <span className={styles.statusTag} data-testid="calib-status">
-            校准：{calibrationStatus}
-          </span>
-          <span className={styles.statusTag} data-testid="quality-status">
-            质量：
-            {latest?.qualityFlags && latest.qualityFlags.length > 0
-              ? latest.qualityFlags.join(', ')
-              : '正常'}
-          </span>
-        </div>
-        <div className={styles.diagText}>
-          <span data-testid="trace-range">量程：{latest?.rangeId ?? '--'}</span>
-          <span data-testid="trace-sensor-path">链路：{latest?.sensorPathId ?? '--'}</span>
-          <span data-testid="trace-calibration">校准 ID：{latest?.calibrationId ?? '--'}</span>
-          <span data-testid="trace-cell-constant">
-            Kcell：{latest?.cellConstant != null ? `${latest.cellConstant} cm⁻¹` : '--'}
-          </span>
-          <span data-testid="trace-compensation">
-            温补：{latest?.compensationModel ?? '--'} / α={latest?.alphaPerC ?? '--'} °C⁻¹
-          </span>
-          <span data-testid="trace-calibration-validity">
-            校准有效期：{latest?.calibrationValidUntil ?? '未设置'}
-          </span>
-          <span>质量标志：{latest?.qualityFlags?.length ? latest.qualityFlags.join(', ') : '--'}</span>
-        </div>
+      <section className={styles.values}>
+        <ValueDisplay label="电导率 EC" value={latest?.ec ?? null} unit="μS/cm" precision={1} testId="value-ec" />
+        <ValueDisplay
+          label="电极温度"
+          value={latest?.tc ?? null}
+          unit="°C"
+          precision={2}
+          testId="value-temperature"
+        />
+        {/* 传感器扩展位：后续接入 pH / ORP 等 */}
+        <ValueDisplay label="pH（扩展）" value={null} unit="—" testId="value-ph" />
       </section>
 
       <section className={styles.chartCard}>
         <div className={styles.chartHead}>
-          <h2 className={styles.chartTitle}>实时曲线 · κ(T)/κ25 与 U/I · 温度</h2>
+          <h2 className={styles.chartTitle}>实时曲线 · EC-时间</h2>
           <DataStats pointCount={count} durationSec={duration} />
         </div>
         <div className={styles.chartBody}>

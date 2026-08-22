@@ -44,24 +44,11 @@ export class ApiClient {
   }
 
   /** 原始帧（limit 限制条数，用于静态曲线） */
-  async getFrames(id: number, limit = 3000, offset = 0): Promise<RawFrame[]> {
-    const res = await fetch(
-      `${this.baseUrl}/api/experiments/${id}/frames?limit=${limit}&offset=${offset}`,
-    );
+  async getFrames(id: number, limit = 3000): Promise<RawFrame[]> {
+    const res = await fetch(`${this.baseUrl}/api/experiments/${id}/frames?limit=${limit}`);
     if (!res.ok) throw new Error(`帧数据获取失败：HTTP ${res.status}`);
     const body = (await res.json()) as { frames: RawFrame[] };
     return body.frames;
-  }
-
-  /** 分页拉取全部帧，避免后端单请求 100000 条上限造成静默截断。 */
-  async getAllFrames(id: number): Promise<RawFrame[]> {
-    const pageSize = 100_000;
-    let frames: RawFrame[] = [];
-    while (true) {
-      const page = await this.getFrames(id, pageSize, frames.length);
-      frames = frames.concat(page);
-      if (page.length < pageSize) return frames;
-    }
   }
 
   /** 备选公式拟合：传入数据点、模型与 X 轴语义，返回按 R² 排序的结果与拟合曲线 */
