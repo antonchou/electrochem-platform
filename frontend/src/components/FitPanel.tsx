@@ -6,7 +6,7 @@ import styles from './FitPanel.module.css';
 
 interface Props {
   api: ApiClient | null;
-  /** V2 数据点（t 秒 / tc °C / κ(T)/κ25 μS·cm⁻¹），按 X 轴语义自动取 x */
+  /** 数据点（t 秒 / tc °C / ec μS·cm⁻¹），按 X 轴语义自动取 x */
   points: DataPoint[];
   /** data-testid 前缀，供多处使用互不冲突 */
   testIdPrefix?: string;
@@ -72,25 +72,16 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
   const [fitError, setFitError] = useState<string | null>(null);
   const fitRequestIdRef = useRef(0);
 
-  // 按 X 轴语义构造 (x, y)。y 明确使用电导率层级：κ25 优先（Derived），
-  // 未校准时回退 κ(T)（Calibrated）；绝不使用原始 U/I/T 做电导率拟合。
-  // 时间轴取 t，温度轴取帧内温度 tc；浓度轴只接受真实 p.concentration。
+  // 按 X 轴语义构造 (x, y)：时间轴取 t，温度轴取帧内温度 tc；
+  // 浓度轴取 p.concentration，缺省用序号 1..N 占位（当前帧无浓度字段）
   const fitPoints: [number, number][] = useMemo(
     () =>
-      points
-        .map((p) => {
-          const y = p.k25 ?? p.kt;
-          if (y === null || !Number.isFinite(y)) return null;
-          const x =
-            xAxis === 'temperature'
-              ? p.tc
-              : xAxis === 'concentration'
-                ? p.concentration
-                : p.t;
-          if (x === null || x === undefined || !Number.isFinite(x)) return null;
-          return [x, y] as [number, number];
-        })
-        .filter((v): v is [number, number] => v !== null),
+      points.map((p, i) => {
+        if (xAxis === 'temperature') return [p.tc, p.ec] as [number, number];
+        if (xAxis === 'concentration')
+          return [p.concentration ?? i + 1, p.ec] as [number, number];
+        return [p.t, p.ec] as [number, number];
+      }),
     [points, xAxis],
   );
   const arrheniusUnavailable = useMemo(() => {
@@ -101,12 +92,9 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
       Math.max(...temperatures) - Math.min(...temperatures) < ARRHENIUS_MIN_TEMPERATURE_SPAN_C
     );
   }, [fitPoints, selectedModels, xAxis]);
-  const concentrationUnavailable =
-    xAxis === 'concentration' && new Set(fitPoints.map(([concentration]) => concentration)).size < 3;
 
   const runFit = async () => {
-    if (!api || fitPoints.length < 3 || selectedModels.length === 0 || concentrationUnavailable)
-      return;
+    if (!api || fitPoints.length < 3 || selectedModels.length === 0) return;
     const requestId = ++fitRequestIdRef.current;
     setFitLoading(true);
     setFitError(null);
@@ -144,12 +132,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
     invalidateFit();
   };
 
-  const canFit =
-    api !== null &&
-    fitPoints.length >= 3 &&
-    selectedModels.length > 0 &&
-    !concentrationUnavailable &&
-    !fitLoading;
+  const canFit = api !== null && fitPoints.length >= 3 && selectedModels.length > 0 && !fitLoading;
 
   // 叠加到曲线图上的拟合曲线（按 R² 从高到低，最多展示前 4 条）
   const overlays: ChartOverlay[] = useMemo(() => {
@@ -185,9 +168,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
 
       {xAxis === 'concentration' && (
         <div className={styles.axisNote} data-testid={`${testIdPrefix}-concentration-note`}>
-          {concentrationUnavailable
-            ? '浓度拟合至少需要 3 个不同的真实浓度；当前数据不足，已禁用拟合。'
-            : '浓度轴仅使用实验记录中的真实浓度，不使用样本序号替代。'}
+          浓度轴需真实浓度数据：当前数据帧无浓度字段，x 暂用序号 1..N 占位
         </div>
       )}
 
