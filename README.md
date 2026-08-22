@@ -114,9 +114,8 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 
 | 需求编号 | 需求内容 | 现状 | 交付阶段 |
 |---|---|---|---|
-| REQ-M-001 | 帧需保存 U、I、T，并可追溯计算 G、κ(T)、κ25 | 当前 Mock 只给 ec/T，k25 恒为 NULL | 后续阶段（I/V 采集、校准/温补） |
 | REQ-F-001 / REQ-F-002 | 拟合需输出 CI/残差/RMSE/MAE/AICc/留一交叉验证，声明有效浓度区间、禁止外推 | 仅 R²/RMSE/params/fitted | 后续阶段（拟合报告） |
 | REQ-D-003 | 自动判稳（窗口/统计量/阈值/失败原因）与 QC PASS/WARN/FAIL | 未实现，samples.k25_* 恒 NULL | 后续阶段（判稳与 QC） |
 | REQ-C-001 | 每次结果关联 calibration_id 与标准液批次 | calibration_records 表已建但未写入 | 后续阶段（校准 SOP） |
-| REQ-U-001 | UI 区分原始值/温补值/滤波值/最终代表值 | 仅显示 EC 与温度 | 后续阶段（分层显示） |
-| SRS 3.3 | 协议需含 schema_version/device_id/firmware_version/range_id/quality_flags | 实时帧为简化 4 字段 | 后续阶段（真实设备接入） |
+| REQ-U-001 | UI 区分原始值/温补值/滤波值/最终代表值 | 已区分 U/I/T、G、κ(T)、κ25；尚缺滤波值与最终代表值 | 后续阶段（判稳与 QC） |
+| SRS 3.3 | 协议需含 schema_version/device_id/firmware_version/range_id/quality_flags | 已含 schema/range/quality；尚缺真实 device_id/firmware_version | 后续阶段（真实设备接入） |

@@ -16,27 +16,47 @@ export function useRealtimeData(bridge: ExperimentBridge) {
   const [count, setCount] = useState(0);
   const [latest, setLatest] = useState<DataPoint | null>(null);
   const runStartTRef = useRef<number | null>(null);
+  const runUidRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const clearBuffer = () => {
+      pointsRef.current = [];
+      runStartTRef.current = null;
+      setCount(0);
+      setLatest(null);
+    };
     const unsub = bridge.subscribe((ev) => {
       if (ev.type === 'message') {
         const { frame } = ev;
+        if (
+          frame.experiment_uid &&
+          runUidRef.current !== frame.experiment_uid &&
+          pointsRef.current.length > 0
+        ) {
+          clearBuffer();
+        }
+        if (frame.experiment_uid) runUidRef.current = frame.experiment_uid;
         const p: DataPoint = {
-          t: frame.timestamp ?? 0,
-          // 主显示量：κ(T)（V1 兼容：ec = κ(T) 别名）
-          kt: frame.kappa_t_us_cm ?? frame.ec ?? Number.NaN,
+          t: frame.t_seconds,
+          // 在线链路只使用 V2 κ(T)，不允许回退到 V1 ec。
+          kt: frame.kappa_t_us_cm,
           // κ25：未校准（缺失/null）时为 null，UI 显示 "--"
-          k25: frame.kappa_25_us_cm ?? null,
-          tc: frame.temperature_raw_c ?? frame.temperature ?? Number.NaN,
-          u: frame.voltage_raw_v ?? null,
-          i: frame.current_raw_a !== undefined && frame.current_raw_a !== null ? frame.current_raw_a * 1000 : null,
-          g: frame.conductance_s ?? null,
-          freq: frame.excitation_frequency_hz,
-          amp: frame.excitation_amplitude_v,
-          rangeId: frame.range_id,
-          sensorPathId: frame.sensor_path_id,
-          calibrationId: frame.calibration_id,
+          k25: frame.kappa_25_us_cm,
+          tc: frame.temperature_raw_c,
+          u: frame.voltage_raw_v,
+          i: frame.current_raw_a !== null ? frame.current_raw_a * 1000 : null,
+          g: frame.conductance_s,
+          freq: frame.excitation_frequency_hz ?? undefined,
+          amp: frame.excitation_amplitude_v ?? undefined,
+          rangeId: frame.range_id ?? undefined,
+          sensorPathId: frame.sensor_path_id ?? undefined,
+          calibrationId: frame.calibration_id ?? undefined,
+          cellConstant: frame.cell_constant_cm_inv,
+          calibrationValidUntil: frame.calibration_valid_until_utc,
+          compensationModel: frame.compensation_model ?? undefined,
+          alphaPerC: frame.alpha_per_c,
           qualityFlags: frame.quality_flags,
+          concentration: frame.concentration_mmol_l ?? null,
         };
         const arr = pointsRef.current;
         arr.push(p);
@@ -45,18 +65,20 @@ export function useRealtimeData(bridge: ExperimentBridge) {
           arr.splice(0, arr.length - config.chart.maxPoints);
         }
         if (runStartTRef.current === null) {
-          runStartTRef.current = frame.timestamp ?? 0;
+          runStartTRef.current = frame.t_seconds;
         }
         setLatest(p);
         setCount(arr.length);
       }
       // P1-2 修复：stopped/error 后直接开始，服务端会先广播 running 状态帧，
       // 此时清空上一轮缓冲，避免新旧两轮数据混合进曲线/统计/拟合。
-      if (ev.type === 'status' && (ev.status === 'idle' || ev.status === 'running')) {
-        pointsRef.current = [];
-        runStartTRef.current = null;
-        setCount(0);
-        setLatest(null);
+      if (ev.type === 'status' && ev.status === 'idle') {
+        clearBuffer();
+        runUidRef.current = null;
+      }
+      if (ev.type === 'status' && ev.status === 'running') {
+        if (!ev.experimentUid || ev.experimentUid !== runUidRef.current) clearBuffer();
+        runUidRef.current = ev.experimentUid ?? null;
       }
     });
     return unsub;

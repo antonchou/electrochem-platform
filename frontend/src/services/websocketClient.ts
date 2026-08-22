@@ -105,12 +105,16 @@ export class WebSocketClient implements DataClient {
         this.emit({ type: 'error', message: '收到非法数据帧，已忽略' });
         return;
       }
-      if ('ec' in parsed) {
+      if (parsed.message_type === 'measurement') {
         this.running = parsed.status === 'running';
         this.emit({ type: 'message', frame: parsed as ExperimentFrame });
       } else {
         this.running = parsed.status === 'running';
-        this.emit({ type: 'status', status: parsed.status });
+        this.emit({
+          type: 'status',
+          status: parsed.status,
+          experimentUid: parsed.experiment_uid,
+        });
       }
     };
 

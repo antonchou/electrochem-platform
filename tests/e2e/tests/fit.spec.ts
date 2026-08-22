@@ -125,6 +125,7 @@ test('浓度轴：切到浓度→线性标定/Kohlrausch 模型可用', async ({
 
   // 浓度轴占位提示可见（当前帧无浓度字段）
   await expect(page.getByTestId('fit-concentration-note')).toBeVisible();
+  await expect(page.getByTestId('btn-fit')).toBeDisabled();
 });
 
 test('历史详情页：复用化学公式拟合', async ({ page }) => {

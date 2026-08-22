@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "2.0.0",
   "driver": "mock",
   "scenario": "stable",
   "seed": 2026,
@@ -13,6 +13,10 @@
   "drift_ec_per_second": 0.2,
   "dropout_every_n": 10,
   "excitation_voltage_v": 0.4,
+  "excitation_frequency_hz": 1000.0,
   "cell_constant_per_cm": 1.0,
-  "alpha_per_c": 0.02
+  "alpha_per_c": 0.02,
+  "calibration_id": "CAL_MOCK_CONFIG",
+  "range_id": "R_100R_10K",
+  "sensor_path_id": "EC_IV_CELL_MOCK"
 }

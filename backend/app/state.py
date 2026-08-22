@@ -18,7 +18,8 @@ class ExperimentState:
         self.experiment_db_id: Optional[int] = None
         self.experiment_uid: Optional[str] = None
         self.sample_id: str = "SAMPLE"
-        self.sensor_path_id: str = "CM2_WIDE"
+        self.sensor_path_id: str = "EC_IV_CELL_MOCK"
+        self.concentration_mmol_l: Optional[float] = None
         self.seq_no: int = 0
         # 电极 I–V 链路校准/激励上下文（SRS v0.2 §3 / §5，随实验版本化）
         self.calibration_id: Optional[str] = None
@@ -34,7 +35,8 @@ class ExperimentState:
         self,
         *,
         sample_id: str = "SAMPLE",
-        sensor_path_id: str = "CM2_WIDE",
+        sensor_path_id: str = "EC_IV_CELL_MOCK",
+        concentration_mmol_l: Optional[float] = None,
         title: str = "不同溶液导电性相对比较",
         experiment_db_id: Optional[int] = None,
         experiment_uid: Optional[str] = None,
@@ -60,6 +62,7 @@ class ExperimentState:
             self.seq_no = 0
             self.sample_id = sample_id
             self.sensor_path_id = sensor_path_id
+            self.concentration_mmol_l = concentration_mmol_l
             self.experiment_db_id = experiment_db_id
             self.experiment_uid = experiment_uid
             self.calibration_id = calibration_id
@@ -79,12 +82,21 @@ class ExperimentState:
                 self.status = "stopped"
             return changed
 
+    async def fail(self) -> bool:
+        """把当前运行实验原子切换为 error，并保留上下文供导出/重置。"""
+        async with self.lock:
+            changed = self.status in {"running", "stopped"}
+            if changed:
+                self.status = "error"
+            return changed
+
     async def reset(self) -> None:
         async with self.lock:
             self.status = "idle"
             self.t0 = None
             self.experiment_db_id = None
             self.experiment_uid = None
+            self.concentration_mmol_l = None
             self.calibration_id = None
             self.cell_constant_cm_inv = None
             self.calibration_valid_until_utc = None

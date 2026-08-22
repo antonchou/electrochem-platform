@@ -107,15 +107,13 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
-  padding: 8px 16px;
+  padding: 16px;
 }
 
-.diag summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-sub);
-  padding: 4px 0;
+.chainTitle {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .diagText {
@@ -125,6 +123,10 @@
   font-size: 13px;
   color: var(--text-sub);
   padding: 8px 0 4px;
+}
+
+.diag .statusRow {
+  margin-top: 12px;
 }
 
 .chartCard {

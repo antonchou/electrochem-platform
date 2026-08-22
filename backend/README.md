@@ -54,10 +54,12 @@ EC_MOCK_SEED=2026
 `EC_CORS_ORIGINS` 或正则 `EC_CORS_ORIGIN_REGEX` 配置。
 
 Mock 驱动模拟电极 I–V 测量链路（SRS v0.2）：由目标 κ25 反推原始电压/电流，
-经软件计算链 `app.processing` 还原 G / κ(T) / κ25，与真实硬件的数据形态一致。
-帧内同时保留兼容字段 `ec`（=κ25），供旧前端/旧测试读取。
-校准/激励参数（`cell_constant_per_cm`、`alpha_per_c`、`excitation_voltage_v`）
-可通过 `/api/experiment/start` 传入并随帧与数据库落库，缺省用设备配置默认。
+经 `app.measurement` / `app.calibration` 还原 G / κ(T) / κ25，与真实硬件的数据形态一致。
+实时帧严格使用 V2 字段，不再输出或接受 `ec`/`temperature`/`timestamp` V1 别名；
+旧记录只通过 `legacy_ec_us_cm` 历史列读取。
+设备配置使用 `cell_constant_per_cm` / `excitation_voltage_v`；start API 对应参数为
+`cell_constant_cm_inv` / `excitation_amplitude_v`。缺省使用带 `calibration_id` 的 Mock 配置，
+显式传 `null` 可强制未校准并保留 Raw 帧。
 
 ## 接口一览
 
@@ -80,26 +82,28 @@ Mock 驱动模拟电极 I–V 测量链路（SRS v0.2）：由目标 κ25 反推
 ## WS 消息格式（协议基准，V2）
 
 ```json
-{ "schema_version": "2.0", "seq_no": 123, "timestamp_utc": "2026-08-22T12:00:00.000Z",
-  "monotonic_ms": 12300, "timestamp": 12.35, "status": "running",
+{ "message_type": "measurement", "schema_version": "2.0", "experiment_uid": "EXP-...",
+  "seq_no": 123, "timestamp_utc": "2026-08-22T12:00:00.000Z",
+  "monotonic_ms": 12300, "t_seconds": 12.35, "status": "running",
   "voltage_raw_v": 0.4, "current_raw_a": 0.0005652, "temperature_raw_c": 25.1,
   "conductance_s": 0.001413, "kappa_t_us_cm": 1414.7, "kappa_25_us_cm": 1413.0,
   "excitation_frequency_hz": 1000, "excitation_amplitude_v": 0.4,
   "range_id": "R_100R_10K", "sensor_path_id": "EC_IV_CELL_01",
-  "calibration_id": "CAL_20260822_001", "compensation_model": "linear",
+  "calibration_id": "CAL_20260822_001", "cell_constant_cm_inv": 1.0,
+  "calibration_valid_until_utc": null, "compensation_model": "linear",
   "alpha_per_c": 0.02, "quality_flags": ["SIMULATED"] }
 ```
 
 - 数据分层：`voltage_raw_v`/`current_raw_a`/`temperature_raw_c`（Raw，不可变原始量）、
   `voltage_cal_v`/`current_cal_a`/`conductance_s`/`kappa_t_us_cm`（Calibrated）、
   `kappa_25_us_cm`（Derived，未校准时为空）、`seq_no`/`timestamp_utc`/`monotonic_ms`/
-  `sensor_path_id`/`calibration_id`（Trace）、`excitation_*`/`range_id`/`compensation_model`/
+  `sensor_path_id`/`calibration_id`/`cell_constant_cm_inv`/`calibration_valid_until_utc`（Trace）、`excitation_*`/`range_id`/`compensation_model`/
   `alpha_per_c`（Configuration）、`quality_flags`（Quality）。
-- `timestamp`：实验开始后的秒数（float）——**仅作前端显示，审计唯一时间以 `timestamp_utc`/`monotonic_ms` 为准（rule 38）**
-- V1 废弃兼容别名（迁移期保留，不代表原始数据）：`ec` = `kappa_t_us_cm`；`temperature` = `temperature_raw_c`
-- 未校准时（无 Kcell）不伪造电导率：`kappa_t_us_cm`/`kappa_25_us_cm`/`ec` 为空，`quality_flags` 含 `UNCALIBRATED`
-- `status`：`idle` / `running` / `stopped` / `error`；状态广播帧可能只含 `status`
-- 新字段全可选：新旧前端/后端混跑兼容。
+- `t_seconds`：实验开始后的秒数（float）——**仅作前端显示，审计唯一时间以 `timestamp_utc`/`monotonic_ms` 为准（rule 38）**
+- 未校准时（无 Kcell）不伪造电导率：`kappa_t_us_cm`/`kappa_25_us_cm` 显式为 `null`，`quality_flags` 含 `UNCALIBRATED`
+- `message_type` 明确区分 `measurement` / `status`；状态帧含 `status`，运行态附带 `experiment_uid`
+- `status`：`idle` / `running` / `stopped` / `error`
+- V2 measurement 的各层键必须完整存在；缺测值用 `null`，不能通过 V1 字段猜测或降级。
 
 ## 测试
 
