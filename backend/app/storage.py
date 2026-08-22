@@ -134,7 +134,41 @@ END;
 # schema_migrations 表记录已应用版本，应用启动时自动推进到最新。
 # ==========================================================================
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+
+
+RAW_FRAME_COLUMNS = (
+    "id",
+    "experiment_id",
+    "sample_id",
+    "sensor_path_id",
+    "seq_no",
+    "timestamp_utc",
+    "monotonic_ms",
+    "t_seconds",
+    "schema_version",
+    "voltage_raw_v",
+    "current_raw_a",
+    "temperature_raw_c",
+    "voltage_cal_v",
+    "current_cal_a",
+    "conductance_s",
+    "kappa_t_us_cm",
+    "kappa_25_us_cm",
+    "k25",
+    "excitation_frequency_hz",
+    "excitation_amplitude_v",
+    "range_id",
+    "compensation_model",
+    "alpha_per_c",
+    "calibration_id",
+    "cell_constant_cm_inv",
+    "calibration_valid_until_utc",
+    "legacy_ec_us_cm",
+    "quality_flags",
+    "status",
+    "inserted_at_utc",
+)
 
 
 def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -209,11 +243,125 @@ def _migrate_v4_calibration_trace(conn: sqlite3.Connection) -> None:
         _add_column_if_missing(conn, name, decl, existing)
 
 
+def _migrate_v5_nullable_legacy_columns(conn: sqlite3.Connection) -> None:
+    """v5：解除旧 V1 必填列经重命名后遗留的 NOT NULL 约束。
+
+    旧库的 ``ec_raw`` / ``temperature_raw`` 均为 NOT NULL；v2 只重命名列，
+    SQLite 会保留原约束。严格 V2 帧不再伪造 legacy EC，质量帧也允许温度为空，
+    因此必须重建表（SQLite 不支持直接 DROP NOT NULL）。整个迁移在调用方事务中
+    完成，并保留原始行 id、插入时间、索引及 append-only 触发器。
+    """
+    info = {
+        row["name"]: row
+        for row in conn.execute("PRAGMA table_info(raw_frames)").fetchall()
+    }
+    required = set(RAW_FRAME_COLUMNS)
+    missing = sorted(required.difference(info))
+    if missing:
+        raise RuntimeError(
+            "raw_frames schema is incomplete before v5 migration: " + ", ".join(missing)
+        )
+
+    nullable_targets = ("legacy_ec_us_cm", "temperature_raw_c")
+    if all(int(info[name]["notnull"]) == 0 for name in nullable_targets):
+        return
+
+    old_count = int(conn.execute("SELECT COUNT(*) FROM raw_frames").fetchone()[0])
+    migration_table = "raw_frames_v5_migration"
+    conn.execute(f"DROP TABLE IF EXISTS {migration_table}")
+    conn.execute(
+        f"""
+        CREATE TABLE {migration_table} (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            experiment_id  INTEGER NOT NULL REFERENCES experiments(id),
+            sample_id      TEXT,
+            sensor_path_id TEXT NOT NULL,
+            seq_no         INTEGER,
+            timestamp_utc  TEXT,
+            monotonic_ms   INTEGER,
+            t_seconds      REAL,
+            schema_version TEXT,
+            voltage_raw_v  REAL,
+            current_raw_a  REAL,
+            temperature_raw_c REAL,
+            voltage_cal_v  REAL,
+            current_cal_a  REAL,
+            conductance_s  REAL,
+            kappa_t_us_cm  REAL,
+            kappa_25_us_cm REAL,
+            k25            REAL,
+            excitation_frequency_hz REAL,
+            excitation_amplitude_v  REAL,
+            range_id       TEXT,
+            compensation_model TEXT,
+            alpha_per_c    REAL,
+            calibration_id TEXT,
+            cell_constant_cm_inv REAL,
+            calibration_valid_until_utc TEXT,
+            legacy_ec_us_cm REAL,
+            quality_flags  TEXT,
+            status         TEXT,
+            inserted_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        )
+        """
+    )
+    columns_sql = ", ".join(f'"{name}"' for name in RAW_FRAME_COLUMNS)
+    conn.execute(
+        f"INSERT INTO {migration_table} ({columns_sql}) "
+        f"SELECT {columns_sql} FROM raw_frames"
+    )
+    copied_count = int(
+        conn.execute(f"SELECT COUNT(*) FROM {migration_table}").fetchone()[0]
+    )
+    if copied_count != old_count:
+        raise RuntimeError(
+            f"raw_frames v5 migration row-count mismatch: {old_count} != {copied_count}"
+        )
+
+    # 旧表的保护触发器和索引随表替换后需要显式重建。
+    conn.execute("DROP TRIGGER IF EXISTS block_raw_frames_update")
+    conn.execute("DROP TRIGGER IF EXISTS block_raw_frames_delete")
+    conn.execute("DROP TABLE raw_frames")
+    conn.execute(f"ALTER TABLE {migration_table} RENAME TO raw_frames")
+    conn.execute("CREATE INDEX idx_frames_exp ON raw_frames(experiment_id, id)")
+    conn.execute(
+        """
+        CREATE TRIGGER block_raw_frames_update
+        BEFORE UPDATE ON raw_frames
+        BEGIN
+            SELECT RAISE(ABORT, 'raw_frames is append-only: UPDATE is not allowed');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER block_raw_frames_delete
+        BEFORE DELETE ON raw_frames
+        BEGIN
+            SELECT RAISE(ABORT, 'raw_frames is append-only: DELETE is not allowed');
+        END
+        """
+    )
+
+    migrated_info = {
+        row["name"]: row
+        for row in conn.execute("PRAGMA table_info(raw_frames)").fetchall()
+    }
+    if any(int(migrated_info[name]["notnull"]) != 0 for name in nullable_targets):
+        raise RuntimeError("raw_frames v5 migration did not relax legacy nullability")
+    final_count = int(conn.execute("SELECT COUNT(*) FROM raw_frames").fetchone()[0])
+    if final_count != old_count:
+        raise RuntimeError(
+            f"raw_frames v5 final row-count mismatch: {old_count} != {final_count}"
+        )
+
+
 MIGRATIONS: Dict[int, Any] = {
     1: _migrate_v1_iv_columns,
     2: _migrate_v2_rename_legacy,
     3: _migrate_v3_extra_columns,
     4: _migrate_v4_calibration_trace,
+    5: _migrate_v5_nullable_legacy_columns,
 }
 
 
