@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DataPoint } from '../types/protocol';
+import { isDebugBurstFrame, type DataPoint } from '../types/protocol';
 import { config } from '../config/config';
 import type { ExperimentBridge } from '../services';
 
@@ -28,14 +28,17 @@ export function useRealtimeData(bridge: ExperimentBridge) {
     const unsub = bridge.subscribe((ev) => {
       if (ev.type === 'message') {
         const { frame } = ev;
+        const isDebugBurst = isDebugBurstFrame(frame);
+        // 调试 burst 有独立的 trace namespace，但只是向当前视图注入负载；
+        // 它不能成为真实 run 边界，也不能导致下一条真实帧再次清空缓冲。
         if (
-          frame.experiment_uid &&
+          !isDebugBurst &&
           runUidRef.current !== frame.experiment_uid &&
           pointsRef.current.length > 0
         ) {
           clearBuffer();
         }
-        if (frame.experiment_uid) runUidRef.current = frame.experiment_uid;
+        if (!isDebugBurst) runUidRef.current = frame.experiment_uid;
         const p: DataPoint = {
           t: frame.t_seconds,
           // 在线链路只使用 V2 κ(T)，不允许回退到 V1 ec。
@@ -44,7 +47,10 @@ export function useRealtimeData(bridge: ExperimentBridge) {
           k25: frame.kappa_25_us_cm,
           tc: frame.temperature_raw_c,
           u: frame.voltage_raw_v,
-          i: frame.current_raw_a !== null ? frame.current_raw_a * 1000 : null,
+          i:
+            typeof frame.current_raw_a === 'number' && Number.isFinite(frame.current_raw_a)
+              ? frame.current_raw_a * 1000
+              : null,
           g: frame.conductance_s,
           freq: frame.excitation_frequency_hz ?? undefined,
           amp: frame.excitation_amplitude_v ?? undefined,

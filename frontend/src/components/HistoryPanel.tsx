@@ -129,7 +129,8 @@ export function HistoryPanel({ api, onClose }: Props) {
         calibrationValidUntil: f.calibration_valid_until_utc ?? null,
         compensationModel: f.compensation_model ?? undefined,
         alphaPerC: f.alpha_per_c ?? null,
-        qualityFlags: f.quality_flags ? f.quality_flags.split('|') : undefined,
+        qualityFlags:
+          f.quality_flags_list ?? (f.quality_flags ? f.quality_flags.split('|') : undefined),
         concentration:
           concentrations.get(`${f.sample_id ?? ''}\u0000${f.sensor_path_id ?? ''}`) ?? null,
       }));

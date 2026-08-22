@@ -579,7 +579,16 @@ def get_frames(
             """,
             (experiment_id, limit, offset),
         ).fetchall()
-        return [dict(r) for r in rows]
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            frame = dict(row)
+            # SQLite 保留紧凑、向后兼容的 TEXT 列；API 同时给出结构化列表，
+            # 历史调用方无需自行猜分隔符即可识别 DROPOUT/OUT_OF_RANGE。
+            frame["quality_flags_list"] = [
+                flag for flag in (frame.get("quality_flags") or "").split("|") if flag
+            ]
+            result.append(frame)
+        return result
 
 
 def count_frames(experiment_id: int) -> int:

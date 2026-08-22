@@ -17,7 +17,7 @@ from .drivers import DeviceDriver, DriverReading, MockDevice, load_mock_config
 from .persistence import PersistenceUnavailableError, persist
 from .schemas import ControlResponse, ExperimentStartRequest, FitRequest
 from .state import state
-from .stream import generate_frame
+from .stream import DEBUG_BURST_UID_PREFIX, generate_frame
 
 router = APIRouter()
 
@@ -566,12 +566,15 @@ async def close_connections() -> dict:
 async def burst(count: Annotated[int, Query(ge=1, le=10_000)] = 10_000) -> dict:
     """快速推送 count 帧（默认 1 万），用于验证前端大点数负载与 30 分钟模拟（P03/P04）。
 
-    仅广播、不落库、不消耗 seq：注入帧不进入 raw_frames（B-3 修复，保证原始数据纯净）。
+    仅广播、不落库、不消耗真实采集 seq：注入帧不进入 raw_frames（B-3 修复，
+    保证原始数据纯净）。每次 burst 使用独立 experiment_uid，使调试序号与真实采集
+    序号处于不同 trace namespace。
     """
     sent = 0
+    burst_uid = f"{DEBUG_BURST_UID_PREFIX}-{uuid.uuid4().hex[:8]}"
     for i in range(count):
-        frame = generate_frame(i * 0.1, experiment_uid=state.experiment_uid or "DEBUG-BURST")
+        frame = generate_frame(i * 0.1, experiment_uid=burst_uid)
         sent += await broadcast(frame)
         if i % 200 == 199:
             await asyncio.sleep(0.002)
-    return {"ok": True, "sent": sent}
+    return {"ok": True, "sent": sent, "experiment_uid": burst_uid}

@@ -1,5 +1,5 @@
 import type { ClientEvent, ConnectionStatus, ExperimentFrame, ServerMessage } from '../types/protocol';
-import { parseServerMessage } from '../types/protocol';
+import { isDebugBurstFrame, parseServerMessage } from '../types/protocol';
 import { config } from '../config/config';
 
 export type { ClientEvent, ConnectionStatus };
@@ -106,7 +106,7 @@ export class WebSocketClient implements DataClient {
         return;
       }
       if (parsed.message_type === 'measurement') {
-        this.running = parsed.status === 'running';
+        if (!isDebugBurstFrame(parsed)) this.running = parsed.status === 'running';
         this.emit({ type: 'message', frame: parsed as ExperimentFrame });
       } else {
         this.running = parsed.status === 'running';

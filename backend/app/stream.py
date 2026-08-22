@@ -21,9 +21,10 @@ EXCITATION_FREQUENCY_HZ = 1000.0
 RANGE_ID = "R_100R_10K"
 SENSOR_PATH_ID = "EC_IV_CELL_DEBUG"
 CALIBRATION_ID = "CAL_DEBUG_GENERATOR"
+DEBUG_BURST_UID_PREFIX = "DEBUG-BURST"
 
 
-def generate_frame(t: float, *, experiment_uid: str = "DEBUG-BURST") -> dict:
+def generate_frame(t: float, *, experiment_uid: str = DEBUG_BURST_UID_PREFIX) -> dict:
     """生成严格 V2 帧：Raw U/I/T + Calibrated/Derived/Trace/Quality。"""
     drift = math.sin(t / 30.0) * 6.0
     noise = (random.random() - 0.5) * 3.0
@@ -73,6 +74,11 @@ def generate_frame(t: float, *, experiment_uid: str = "DEBUG-BURST") -> dict:
         "calibration_valid_until_utc": None,
         "compensation_model": COMPENSATION_MODEL,
         "alpha_per_c": ALPHA_PER_C,
-        "quality_flags": list(computed["quality_flags"]) or ["SIMULATED"],
+        # 调试帧使用独立 trace namespace；前端可据此避免把它误认为新实验边界。
+        "quality_flags": [
+            "SIMULATED",
+            "DEBUG_BURST",
+            *computed["quality_flags"],
+        ],
     }
     return frame
