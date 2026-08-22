@@ -23,11 +23,12 @@ configs/
 {
   "schema_version": 1,
   "device": {
-    "id": "mock-ec-01",
+    "id": "mock-ec-iv-01",
     "driver": "MockECDriver",
-    "sensor_path_id": "CM2_WIDE",
+    "sensor_path_id": "MOCK_EC_IV_01",
     "unit": "us_cm",
-    "sample_rate_hz": 10
+    "sample_rate_hz": 10,
+    "measurement_model": "electrode_iv_to_kappa25"
   },
   "experiment": {
     "template_id": "nacl-gradient",
