@@ -21,7 +21,7 @@ refactor/<名称> 代码重构
 chore/<名称>    依赖、配置和工程维护
 ```
 
-示例：`feat/mock-device`、`fix/websocket-reconnect`、`docs/cm2-calibration`、`test/health-endpoint`。
+示例：`feat/mock-device`、`fix/websocket-reconnect`、`docs/iv-cell-calibration`、`test/health-endpoint`。
 
 ## 3. 提交信息规范
 
@@ -30,7 +30,7 @@ chore/<名称>    依赖、配置和工程维护
 ```text
 feat: add mock EC device
 fix: handle websocket disconnect
-docs: document CM2 calibration procedure
+docs: document I-V cell calibration procedure
 test: add health endpoint test
 refactor: split analysis module
 chore: update dependencies
@@ -80,9 +80,10 @@ git switch main && git pull
 
 ## 7. 测量链路红线（与前端展示强相关）
 
-- `BA121S_LOW` 与 `CM2_WIDE` 是两条独立测量链路，**分别校准**。
-- 未经重叠区传递校准，不得合并拟合或计算精确跨链路倍数。
-- 不得将 BA121S 接入 CM2/ADS1256；不得用 1413 μS/cm 标准液校准 BA121S。
+- 正式电导率必须由同一实验可追溯的 U/I/T、`Kcell` 和温补模型计算；禁止把现成模块输出当作原始真值。
+- 原始 U/I/T 不得被校准、滤波或温补结果覆盖；每次结果必须关联电极/导电池、激励、量程和 calibration_id。
+- 禁止用未验证的直流长期激励；激励频率、幅值、采样算法及二/四电极方案必须有台架证据。
+- 三电极恒电位仪与电导率 I–V 链路分属不同里程碑，不得以器件共用为由合并验收。
 
 ## 8. 最低验证要求
 

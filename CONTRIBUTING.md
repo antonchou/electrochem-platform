@@ -25,7 +25,7 @@
 ```text
 feat/mock-device
 fix/websocket-reconnect
-docs/cm2-calibration
+docs/iv-cell-calibration
 test/health-endpoint
 ```
 
@@ -72,7 +72,7 @@ git push -u origin feat/example
 ```text
 feat: add mock EC device
 fix: handle websocket disconnect
-docs: document CM2 calibration procedure
+docs: document I-V cell calibration procedure
 test: add health endpoint test
 ```
 
@@ -109,11 +109,11 @@ test: add health endpoint test
 
 ## 7. 测量链路规则
 
-- `BA121S_LOW`与`CM2_WIDE`是两条独立测量链路。
-- 两条链路必须分别校准。
-- 未经重叠区传递校准，不得合并拟合或计算精确跨链路倍数。
-- 不得将BA121S接入CM2或ADS1256。
-- 不得使用1413 μS/cm标准液校准BA121S。
+- 正式电导率链采用电极 I–V 测量：保存原始 U/I/T，经通道校准计算 G，以 Kcell 得到 κ(T)，再按经验证的模型得到 κ25。
+- BA121S/CM2 等现成模块只保留为历史或对照资产，不得把其输出作为正式原始真值。
+- 原始 U/I/T 不得被校准、滤波或温补结果覆盖；结果必须关联导电池/电极、激励、量程和`calibration_id`。
+- 禁止使用未验证的直流长期激励；激励频率、幅值、同步/相位算法和二/四电极拓扑必须有台架证据。
+- 电导率 I–V 链路与三电极恒电位仪分属不同里程碑，不得混合验收。
 - 量程、精度、采样率或校准方案变化必须更新文档版本。
 - 硬件修改必须附接线说明、安全边界和台架验证结果。
 
