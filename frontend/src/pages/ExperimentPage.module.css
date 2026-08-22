@@ -88,6 +88,45 @@
   flex-wrap: wrap;
 }
 
+.statusRow {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.statusTag {
+  padding: 4px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text-sub);
+}
+
+.diag {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 8px 16px;
+}
+
+.diag summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-sub);
+  padding: 4px 0;
+}
+
+.diagText {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-sub);
+  padding: 8px 0 4px;
+}
+
 .chartCard {
   background: var(--panel);
   border: 1px solid var(--border);

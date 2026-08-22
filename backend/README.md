@@ -53,8 +53,11 @@ EC_MOCK_SEED=2026
 跨域来源默认只允许 localhost、私有网段和 `.local` 主机；如需额外来源，可用逗号分隔的
 `EC_CORS_ORIGINS` 或正则 `EC_CORS_ORIGIN_REGEX` 配置。
 
-Mock 驱动内部同时预留 pH 原始读数，但当前电导率实验的 WS/SQLite 协议仍只发布
-EC 与温度，避免破坏已交付前端。真实设备后续实现同一个 `DeviceDriver` 接口。
+Mock 驱动模拟电极 I–V 测量链路（SRS v0.2）：由目标 κ25 反推原始电压/电流，
+经软件计算链 `app.processing` 还原 G / κ(T) / κ25，与真实硬件的数据形态一致。
+帧内同时保留兼容字段 `ec`（=κ25），供旧前端/旧测试读取。
+校准/激励参数（`cell_constant_per_cm`、`alpha_per_c`、`excitation_voltage_v`）
+可通过 `/api/experiment/start` 传入并随帧与数据库落库，缺省用设备配置默认。
 
 ## 接口一览
 
@@ -74,17 +77,29 @@ EC 与温度，避免破坏已交付前端。真实设备后续实现同一个 `
 | POST | `/api/debug/close-connections` | 强制断开 WS，验证断线/重连 |
 | POST | `/api/debug/burst?count=10000` | 快速推 N 帧，验证大点数负载 |
 
-## WS 消息格式（协议基准）
+## WS 消息格式（协议基准，V2）
 
 ```json
-{ "timestamp": 12.35, "ec": 1412.8, "temperature": 25.3, "status": "running" }
+{ "schema_version": "2.0", "seq_no": 123, "timestamp_utc": "2026-08-22T12:00:00.000Z",
+  "monotonic_ms": 12300, "timestamp": 12.35, "status": "running",
+  "voltage_raw_v": 0.4, "current_raw_a": 0.0005652, "temperature_raw_c": 25.1,
+  "conductance_s": 0.001413, "kappa_t_us_cm": 1414.7, "kappa_25_us_cm": 1413.0,
+  "excitation_frequency_hz": 1000, "excitation_amplitude_v": 0.4,
+  "range_id": "R_100R_10K", "sensor_path_id": "EC_IV_CELL_01",
+  "calibration_id": "CAL_20260822_001", "compensation_model": "linear",
+  "alpha_per_c": 0.02, "quality_flags": ["SIMULATED"] }
 ```
 
+- 数据分层：`voltage_raw_v`/`current_raw_a`/`temperature_raw_c`（Raw，不可变原始量）、
+  `voltage_cal_v`/`current_cal_a`/`conductance_s`/`kappa_t_us_cm`（Calibrated）、
+  `kappa_25_us_cm`（Derived，未校准时为空）、`seq_no`/`timestamp_utc`/`monotonic_ms`/
+  `sensor_path_id`/`calibration_id`（Trace）、`excitation_*`/`range_id`/`compensation_model`/
+  `alpha_per_c`（Configuration）、`quality_flags`（Quality）。
 - `timestamp`：实验开始后的秒数（float）——**仅作前端显示，审计唯一时间以 `timestamp_utc`/`monotonic_ms` 为准（rule 38）**
-- `ec`：电导率，μS/cm；`temperature`：温度，°C
-- `status`：`idle` / `running` / `stopped` / `error`
-
-状态广播帧（如停止/重置后）可能只含 `status` 字段。
+- V1 废弃兼容别名（迁移期保留，不代表原始数据）：`ec` = `kappa_t_us_cm`；`temperature` = `temperature_raw_c`
+- 未校准时（无 Kcell）不伪造电导率：`kappa_t_us_cm`/`kappa_25_us_cm`/`ec` 为空，`quality_flags` 含 `UNCALIBRATED`
+- `status`：`idle` / `running` / `stopped` / `error`；状态广播帧可能只含 `status`
+- 新字段全可选：新旧前端/后端混跑兼容。
 
 ## 测试
 

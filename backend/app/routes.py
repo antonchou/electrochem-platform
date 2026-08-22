@@ -11,9 +11,9 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 
-from . import analysis, storage
+from . import analysis, calibration, storage
 from .broadcast import BroadcastHub
-from .drivers import DeviceDriver, MockDevice, load_mock_config
+from .drivers import DeviceDriver, DriverReading, MockDevice, load_mock_config
 from .persistence import persist
 from .schemas import ControlResponse, ExperimentStartRequest, FitRequest
 from .state import state
@@ -33,6 +33,12 @@ _driver: Optional[DeviceDriver] = None
 _sample_period_seconds = 0.1
 _start_lock = asyncio.Lock()
 
+# 校准/激励默认值（取自设备配置，模拟"已标定"语义；真实硬件由校准记录提供）。
+# start 未显式传参时使用默认，保证演示/测试链路有效；显式传 null 强制未校准。
+_default_cell_constant_cm_inv: Optional[float] = None
+_default_alpha_per_c: Optional[float] = None
+_default_excitation_amplitude_v: Optional[float] = None
+
 
 async def broadcast(payload: dict) -> int:
     """把消息放入每个客户端的独立队列，返回接受消息的客户端数。"""
@@ -42,11 +48,15 @@ async def broadcast(payload: dict) -> int:
 async def start_acquisition() -> None:
     """启动单一采集任务（幂等）。"""
     global _acquisition_task, _driver, _sample_period_seconds
+    global _default_cell_constant_cm_inv, _default_alpha_per_c, _default_excitation_amplitude_v
     if _acquisition_task is None or _acquisition_task.done():
         config = load_mock_config()
         _driver = MockDevice(config)
         await _driver.connect()
         _sample_period_seconds = 1.0 / config.sample_rate_hz
+        _default_cell_constant_cm_inv = config.cell_constant_per_cm
+        _default_alpha_per_c = config.alpha_per_c
+        _default_excitation_amplitude_v = config.excitation_voltage_v
         _acquisition_task = asyncio.create_task(_acquisition_loop())
 
 
@@ -89,26 +99,16 @@ async def _acquisition_loop() -> None:
                     or state.experiment_db_id != experiment_db_id
                 ):
                     continue
-                if not reading.complete_for_conductivity:
+                if not reading.complete_for_iv:
                     logger.warning(
                         "设备读数不完整，跳过本周期: flags=%s",
                         reading.quality_flags,
                     )
                     await asyncio.sleep(_sample_period_seconds)
                     continue
-                frame = {
-                    "timestamp": round(elapsed, 2),
-                    "ec": reading.ec,
-                    "temperature": reading.temperature,
-                    "status": "running",
-                }
+                frame = _reading_to_frame(reading, elapsed)
                 # 先落库再推送：客户端收到帧时，该帧必然已进入持久化队列（避免停止时丢帧）
-                _enqueue_frame(
-                    frame["timestamp"],
-                    frame["ec"],
-                    frame["temperature"],
-                    reading.quality_flags,
-                )
+                _enqueue_frame(frame)
                 await broadcast(frame)
             await asyncio.sleep(_sample_period_seconds)
         except asyncio.CancelledError:
@@ -119,44 +119,128 @@ async def _acquisition_loop() -> None:
             await asyncio.sleep(0.1)
 
 
+def _calibration_is_expired() -> bool:
+    """按 calibration_valid_until_utc 判断校准是否过期；无有效期视为未过期。"""
+    until = state.calibration_valid_until_utc
+    if not until:
+        return False
+    try:
+        expires = datetime.datetime.fromisoformat(until.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=datetime.timezone.utc)
+    return datetime.datetime.now(datetime.timezone.utc) > expires
+
+
+def _reading_to_frame(reading: DriverReading, elapsed: float) -> dict:
+    """把设备读数组装成协议 V2 帧。
+
+    原始 U/I/T 来自驱动（Raw）；G/κ(T)/κ25 由软件计算层
+    （app.measurement + app.calibration）得出，不依赖驱动。
+    ec/temperature 是 V1 废弃兼容别名（分别 = κ(T)、T），迁移期保留。
+    """
+    flags = list(reading.quality_flags)
+    computed: dict = {}
+    if reading.complete_for_iv:
+        computed = calibration.compute_iv(
+            voltage_raw_v=reading.voltage_raw_v,
+            current_raw_a=reading.current_raw_a,
+            temperature_raw_c=reading.temperature_raw_c,
+            cell_constant_cm_inv=state.cell_constant_cm_inv,
+            alpha_per_c=state.alpha_per_c,
+            compensation_model=state.compensation_model or calibration.DEFAULT_COMPENSATION_MODEL,
+            calibration_expired=_calibration_is_expired(),
+            extra_flags=tuple(flags),
+        )
+        flags = list(computed["quality_flags"])
+
+    frame: dict = {
+        "schema_version": "2.0",
+        "seq_no": state.next_seq(),
+        "timestamp_utc": _utc_now(),
+        "monotonic_ms": int(time.monotonic() * 1000),
+        "timestamp": round(elapsed, 2),
+        "status": "running",
+    }
+    # Trace / Configuration（随实验版本化）
+    if state.sensor_path_id:
+        frame["sensor_path_id"] = state.sensor_path_id
+    if state.calibration_id:
+        frame["calibration_id"] = state.calibration_id
+    if state.excitation_frequency_hz is not None:
+        frame["excitation_frequency_hz"] = state.excitation_frequency_hz
+    if state.excitation_amplitude_v is not None:
+        frame["excitation_amplitude_v"] = state.excitation_amplitude_v
+    if state.range_id:
+        frame["range_id"] = state.range_id
+    if state.compensation_model:
+        frame["compensation_model"] = state.compensation_model
+    if state.alpha_per_c is not None:
+        frame["alpha_per_c"] = state.alpha_per_c
+
+    # Raw 层（不可变原始量）
+    if reading.voltage_raw_v is not None:
+        frame["voltage_raw_v"] = reading.voltage_raw_v
+    if reading.current_raw_a is not None:
+        frame["current_raw_a"] = reading.current_raw_a
+    if reading.temperature_raw_c is not None:
+        frame["temperature_raw_c"] = reading.temperature_raw_c
+        frame["temperature"] = reading.temperature_raw_c  # V1 废弃别名
+    # Calibrated / Derived 层
+    if computed.get("conductance_s") is not None:
+        frame["conductance_s"] = computed["conductance_s"]
+    if computed.get("kappa_t_us_cm") is not None:
+        frame["kappa_t_us_cm"] = computed["kappa_t_us_cm"]
+        frame["ec"] = computed["kappa_t_us_cm"]  # V1 废弃别名（不再代表原始数据）
+    if computed.get("kappa_25_us_cm") is not None:
+        frame["kappa_25_us_cm"] = computed["kappa_25_us_cm"]
+    if flags:
+        frame["quality_flags"] = flags
+    return frame
+
+
 def _utc_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _frame_to_row(
-    t_seconds: float,
-    ec: float,
-    temperature: float,
-    quality_flags: tuple[str, ...] = (),
-) -> dict:
-    """把一帧实时数据转成 raw_frames 行（带溯源字段）。"""
+def _frame_to_row(frame: dict) -> dict:
+    """把一帧实时数据转成 raw_frames 行（含溯源、配置与 I–V 原始/派生量）。"""
     return {
         "experiment_id": state.experiment_db_id,
         "sample_id": state.sample_id,
-        "sensor_path_id": state.sensor_path_id,
-        "seq_no": state.next_seq(),
-        "timestamp_utc": _utc_now(),
-        "monotonic_ms": int(time.monotonic() * 1000),
-        "t_seconds": t_seconds,
-        "ec_raw": ec,
-        "temperature_raw": temperature,
-        "k25": None,
-        "quality_flags": "|".join(quality_flags) or None,
+        "sensor_path_id": frame.get("sensor_path_id") or state.sensor_path_id,
+        "seq_no": frame.get("seq_no"),
+        "timestamp_utc": frame.get("timestamp_utc"),
+        "monotonic_ms": frame.get("monotonic_ms"),
+        "t_seconds": frame.get("timestamp"),
+        "schema_version": frame.get("schema_version"),
+        # legacy_ec_us_cm = V1 ec 废弃别名（=κ(T)），仅作历史兼容，不再是主字段
+        "legacy_ec_us_cm": frame.get("ec"),
+        "temperature_raw_c": frame.get("temperature_raw_c") or frame.get("temperature"),
+        "voltage_raw_v": frame.get("voltage_raw_v"),
+        "current_raw_a": frame.get("current_raw_a"),
+        "voltage_cal_v": frame.get("voltage_cal_v"),
+        "current_cal_a": frame.get("current_cal_a"),
+        "conductance_s": frame.get("conductance_s"),
+        "kappa_t_us_cm": frame.get("kappa_t_us_cm"),
+        "kappa_25_us_cm": frame.get("kappa_25_us_cm"),
+        "k25": frame.get("kappa_25_us_cm"),
+        "excitation_frequency_hz": frame.get("excitation_frequency_hz"),
+        "excitation_amplitude_v": frame.get("excitation_amplitude_v"),
+        "range_id": frame.get("range_id"),
+        "compensation_model": frame.get("compensation_model"),
+        "alpha_per_c": frame.get("alpha_per_c"),
+        "calibration_id": frame.get("calibration_id") or state.calibration_id,
+        "quality_flags": "|".join(frame.get("quality_flags") or ()) or None,
         "status": state.status,
     }
 
 
-def _enqueue_frame(
-    t_seconds: float,
-    ec: float,
-    temperature: float,
-    quality_flags: tuple[str, ...] = (),
-) -> None:
+def _enqueue_frame(frame: dict) -> None:
     """后台异步落库（仅当前有实验上下文时）。"""
     if state.experiment_db_id is not None:
-        persist.enqueue_frame(
-            _frame_to_row(t_seconds, ec, temperature, quality_flags)
-        )
+        persist.enqueue_frame(_frame_to_row(frame))
 
 
 @router.websocket("/ws/stream")
@@ -189,6 +273,21 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
         title = body.title or "不同溶液导电性相对比较"
         uid = f"EXP-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:4]}"
 
+        # 校准/激励默认值：未显式传入时取设备配置（模拟"已标定"）；
+        # 显式传 null 则保持 None → 采集链标记 UNCALIBRATED，不伪造电导率。
+        cell_constant_cm_inv = (
+            body.cell_constant_cm_inv
+            if body.cell_constant_cm_inv is not None
+            else _default_cell_constant_cm_inv
+        )
+        alpha_per_c = body.alpha_per_c if body.alpha_per_c is not None else _default_alpha_per_c
+        compensation_model = body.compensation_model or calibration.DEFAULT_COMPENSATION_MODEL
+        excitation_amplitude_v = (
+            body.excitation_amplitude_v
+            if body.excitation_amplitude_v is not None
+            else _default_excitation_amplitude_v
+        )
+
         # 实验与样品在一个 SQLite 事务中创建。数据库失败时内存态不会进入 running，
         # 并发 start 也由本锁串行化，避免遗留空的 running/idle 历史记录。
         exp_id = await persist.create_experiment_with_sample(
@@ -203,6 +302,14 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
                 "sample_id": sample_id,
                 "sensor_path_id": sensor_path_id,
                 "concentration_mmol_l": body.concentration_mmol_l,
+                "calibration_id": body.calibration_id,
+                "cell_constant_cm_inv": cell_constant_cm_inv,
+                "calibration_valid_until_utc": body.calibration_valid_until_utc,
+                "alpha_per_c": alpha_per_c,
+                "compensation_model": compensation_model,
+                "excitation_frequency_hz": body.excitation_frequency_hz,
+                "excitation_amplitude_v": excitation_amplitude_v,
+                "range_id": body.range_id,
             },
         )
 
@@ -213,6 +320,14 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
                 title=title,
                 experiment_db_id=exp_id,
                 experiment_uid=uid,
+                calibration_id=body.calibration_id,
+                cell_constant_cm_inv=cell_constant_cm_inv,
+                calibration_valid_until_utc=body.calibration_valid_until_utc,
+                alpha_per_c=alpha_per_c,
+                compensation_model=compensation_model,
+                excitation_frequency_hz=body.excitation_frequency_hz,
+                excitation_amplitude_v=excitation_amplitude_v,
+                range_id=body.range_id,
             )
         except Exception:
             await persist.finish_experiment(exp_id, "error")
