@@ -11,53 +11,55 @@
  *   Trace      seq_no / timestamp_utc / monotonic_ms / sensor_path_id / calibration_id
  *   Quality    quality_flags
  *
- * V1 废弃兼容别名（迁移期保留，不再代表原始数据）：
- *   ec = kappa_t_us_cm 的别名；temperature = temperature_raw_c 的别名；timestamp = 实验经过秒
+ * 在线通道严格使用 V2；V1 字段只允许出现在历史数据库读取模型 RawFrame 中。
  */
 
 /** 实验状态 */
 export type ExperimentStatus = 'idle' | 'running' | 'stopped' | 'error';
 export type ExperimentHistoryStatus = 'running' | 'stopped' | 'aborted' | 'error';
 
-/** 实时数据帧：归一化后的完整一帧（V2 字段 + V1 兼容别名，全可选） */
+/** 实时数据帧：键集合固定；缺测或不可计算量显式为 null，并由质量标志解释。 */
 export interface ExperimentFrame {
-  schema_version?: string;
-  seq_no?: number;
-  timestamp_utc?: string;
-  monotonic_ms?: number;
-  status: ExperimentStatus;
+  message_type: 'measurement';
+  schema_version: '2.0';
+  experiment_uid: string;
+  concentration_mmol_l?: number;
+  seq_no: number;
+  timestamp_utc: string;
+  monotonic_ms: number;
+  t_seconds: number;
+  status: 'running';
   // ---- Raw（不可变原始量） ----
-  voltage_raw_v?: number;
-  current_raw_a?: number;
-  temperature_raw_c?: number;
+  voltage_raw_v: number | null;
+  current_raw_a: number | null;
+  temperature_raw_c: number | null;
   // ---- Calibrated ----
-  voltage_cal_v?: number;
-  current_cal_a?: number;
-  conductance_s?: number;
-  kappa_t_us_cm?: number;
+  voltage_cal_v: number | null;
+  current_cal_a: number | null;
+  conductance_s: number | null;
+  kappa_t_us_cm: number | null;
   // ---- Derived（未校准时为空） ----
-  kappa_25_us_cm?: number | null;
+  kappa_25_us_cm: number | null;
   // ---- Configuration ----
-  excitation_frequency_hz?: number;
-  excitation_amplitude_v?: number;
-  range_id?: string;
-  compensation_model?: string;
-  alpha_per_c?: number;
+  excitation_frequency_hz: number | null;
+  excitation_amplitude_v: number | null;
+  range_id: string | null;
+  compensation_model: string | null;
+  alpha_per_c: number | null;
   // ---- Trace ----
-  sensor_path_id?: string;
-  calibration_id?: string;
+  sensor_path_id: string | null;
+  calibration_id: string | null;
+  cell_constant_cm_inv: number | null;
+  calibration_valid_until_utc: string | null;
   // ---- Quality ----
-  quality_flags?: string[];
-  // ---- V1 废弃兼容别名（迁移期保留） ----
-  ec?: number; // = kappa_t_us_cm 别名
-  temperature?: number; // = temperature_raw_c 别名
-  timestamp?: number; // 实验经过秒，前端曲线 X 轴
+  quality_flags: string[];
 }
 
 /** 纯状态帧（后端在某些时刻只下发状态，如 stopped） */
 export interface StatusFrame {
+  message_type: 'status';
   status: ExperimentStatus;
-  timestamp?: number;
+  experiment_uid?: string;
 }
 
 /** 服务端可能下发的所有消息 */
@@ -137,6 +139,8 @@ export interface RawFrame {
   compensation_model?: string | null;
   alpha_per_c?: number | null;
   calibration_id?: string | null;
+  cell_constant_cm_inv?: number | null;
+  calibration_valid_until_utc?: string | null;
   quality_flags: string | null;
   status: string | null;
 }
@@ -150,12 +154,12 @@ export interface ExperimentStartOptions {
   objective?: string;
   concentration_mmol_l?: number;
   calibration_id?: string;
-  cell_constant_cm_inv?: number;
-  alpha_per_c?: number;
+  cell_constant_cm_inv?: number | null;
+  alpha_per_c?: number | null;
   compensation_model?: string;
   calibration_valid_until_utc?: string;
   excitation_frequency_hz?: number;
-  excitation_amplitude_v?: number;
+  excitation_amplitude_v?: number | null;
   range_id?: string;
 }
 
@@ -197,11 +201,11 @@ export interface DataPoint {
   /** 实验经过秒 */
   t: number;
   /** Calibrated：实测温度电导率 κ(T)，μS/cm */
-  kt: number;
+  kt: number | null;
   /** Derived：温补后 κ25，μS/cm；未校准时为 null */
   k25: number | null;
   /** Raw：温度 T，°C */
-  tc: number;
+  tc: number | null;
   /** Raw：电极电压 U，V（可空） */
   u: number | null;
   /** Raw：回路电流 I，mA（可空） */
@@ -215,16 +219,20 @@ export interface DataPoint {
   /** Trace：链路 / 校准标识 */
   sensorPathId?: string;
   calibrationId?: string;
+  cellConstant?: number | null;
+  calibrationValidUntil?: string | null;
+  compensationModel?: string;
+  alphaPerC?: number | null;
   /** Quality：质量标志 */
   qualityFlags?: string[];
-  /** 浓度 mmol/L（可选）。实时帧/历史帧暂无该字段；浓度轴拟合时缺省用序号 1..N 占位 */
-  concentration?: number;
+  /** 浓度 mmol/L（可选）；浓度拟合只接受真实值，不用样本序号占位。 */
+  concentration?: number | null;
 }
 
 /** 客户端事件总线（供 hooks 订阅） */
 export type ClientEvent =
   | { type: 'message'; frame: ExperimentFrame }
-  | { type: 'status'; status: ExperimentStatus }
+  | { type: 'status'; status: ExperimentStatus; experimentUid?: string }
   | { type: 'connection'; status: ConnectionStatus }
   | { type: 'error'; message: string };
 
@@ -241,11 +249,26 @@ function parseFiniteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function hasOwn(raw: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(raw, key);
+}
+
+function parseNullableNumber(raw: Record<string, unknown>, key: string): number | null | undefined {
+  if (!hasOwn(raw, key)) return undefined;
+  if (raw[key] === null) return null;
+  return parseFiniteNumber(raw[key]) ?? undefined;
+}
+
+function parseNullableString(raw: Record<string, unknown>, key: string): string | null | undefined {
+  if (!hasOwn(raw, key)) return undefined;
+  if (raw[key] === null) return null;
+  return typeof raw[key] === 'string' && raw[key].length > 0 ? raw[key] : undefined;
+}
+
 /**
  * 解析并校验一条服务端消息。
- * - V2 帧：含测量量（voltage_raw_v / kappa_t_us_cm 等）；只含 status → 状态帧。
- * - V1 帧：timestamp+ec+temperature → 归一化为 V2 字段（兼容迁移期）。
- * - 坏数据（非法数值 / 未知状态 / 缺测量字段）→ 返回 null，页面不崩溃（F10）。
+ * 在线协议不做版本猜测：只有显式 `message_type` 的严格 V2 帧才可进入实时缓冲。
+ * V1 `ec/temperature/timestamp` 即使数值合法也返回 null，防止静默降级。
  */
 export function parseServerMessage(raw: unknown): ServerMessage | null {
   if (typeof raw === 'string') {
@@ -261,69 +284,51 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
   if (typeof status !== 'string' || !VALID_STATUS.includes(status as ExperimentStatus)) {
     return null;
   }
-
-  // V2 测量标志：出现任一 Raw/Calibrated/Derived 字段即视为测量帧
-  const v2MeasureKeys = ['voltage_raw_v', 'current_raw_a', 'temperature_raw_c', 'kappa_t_us_cm'] as const;
-  const hasV2Measure = v2MeasureKeys.some((key) => raw[key] !== undefined);
-
-  if (hasV2Measure) {
+  if (raw.message_type === 'measurement') {
     return parseV2Frame(raw, status as ExperimentStatus);
   }
+  if (raw.message_type !== 'status') return null;
 
-  // V1 兼容：timestamp + ec + temperature 三字段必须齐全
-  if (raw.timestamp !== undefined || raw.ec !== undefined || raw.temperature !== undefined) {
-    const timestamp = parseFiniteNumber(raw.timestamp);
-    const ec = parseFiniteNumber(raw.ec);
-    const temperature = parseFiniteNumber(raw.temperature);
-    if (timestamp === null || ec === null || temperature === null) return null;
-    // 归一化为 V2 字段：ec = κ(T) 别名；temperature = T 别名
-    const frame: ExperimentFrame = {
-      timestamp,
-      status: status as ExperimentStatus,
-      ec,
-      temperature,
-      kappa_t_us_cm: ec,
-      temperature_raw_c: temperature,
-      schema_version: '1.0',
-    };
-    attachOptional(frame, raw);
-    return frame;
+  const statusFrame: StatusFrame = {
+    message_type: 'status',
+    status: status as ExperimentStatus,
+  };
+  if (typeof raw.experiment_uid === 'string' && raw.experiment_uid.length > 0) {
+    statusFrame.experiment_uid = raw.experiment_uid;
   }
-
-  // 纯状态帧
-  return { status: status as ExperimentStatus } as StatusFrame;
+  return statusFrame;
 }
 
 function parseV2Frame(raw: Record<string, unknown>, status: ExperimentStatus): ExperimentFrame | null {
-  // 原始量缺测时整帧视为不完整（bad frame），返回 null 由调用方提示
-  const timestamp = parseFiniteNumber(raw.timestamp);
-  const temperatureRawC = parseFiniteNumber(raw.temperature_raw_c);
-  const voltageRawV = parseFiniteNumber(raw.voltage_raw_v);
-  const currentRawA = parseFiniteNumber(raw.current_raw_a);
-
-  const frame: ExperimentFrame = { status };
-  if (timestamp !== null) frame.timestamp = timestamp;
-  if (temperatureRawC !== null) {
-    frame.temperature_raw_c = temperatureRawC;
-    frame.temperature = temperatureRawC; // V1 废弃别名
+  if (status !== 'running' || raw.schema_version !== '2.0') return null;
+  const experimentUid = raw.experiment_uid;
+  const timestampUtc = raw.timestamp_utc;
+  const seqNo = parseFiniteNumber(raw.seq_no);
+  const monotonicMs = parseFiniteNumber(raw.monotonic_ms);
+  const tSeconds = parseFiniteNumber(raw.t_seconds);
+  if (
+    typeof experimentUid !== 'string' ||
+    experimentUid.length === 0 ||
+    typeof timestampUtc !== 'string' ||
+    timestampUtc.length === 0 ||
+    seqNo === null ||
+    !Number.isInteger(seqNo) ||
+    seqNo < 1 ||
+    monotonicMs === null ||
+    !Number.isInteger(monotonicMs) ||
+    monotonicMs < 0 ||
+    tSeconds === null ||
+    tSeconds < 0 ||
+    !Array.isArray(raw.quality_flags) ||
+    !raw.quality_flags.every((flag) => typeof flag === 'string')
+  ) {
+    return null;
   }
-  if (voltageRawV !== null) frame.voltage_raw_v = voltageRawV;
-  if (currentRawA !== null) frame.current_raw_a = currentRawA;
 
-  if (typeof raw.schema_version === 'string') frame.schema_version = raw.schema_version;
-  if (typeof raw.seq_no === 'number' && Number.isFinite(raw.seq_no)) frame.seq_no = raw.seq_no;
-  if (typeof raw.timestamp_utc === 'string') frame.timestamp_utc = raw.timestamp_utc;
-  if (typeof raw.monotonic_ms === 'number' && Number.isFinite(raw.monotonic_ms)) {
-    frame.monotonic_ms = raw.monotonic_ms;
-  }
-
-  attachOptional(frame, raw);
-  return frame;
-}
-
-/** 透传可选数值/字符串/数组字段（存在且合法才写入；坏值忽略，不使整帧失效） */
-function attachOptional(frame: ExperimentFrame, raw: Record<string, unknown>): void {
-  const optionalNumberFields = [
+  const nullableNumberFields = [
+    'voltage_raw_v',
+    'current_raw_a',
+    'temperature_raw_c',
     'voltage_cal_v',
     'current_cal_a',
     'conductance_s',
@@ -332,30 +337,71 @@ function attachOptional(frame: ExperimentFrame, raw: Record<string, unknown>): v
     'excitation_frequency_hz',
     'excitation_amplitude_v',
     'alpha_per_c',
+    'cell_constant_cm_inv',
   ] as const;
-  for (const key of optionalNumberFields) {
-    if (raw[key] === undefined) continue;
-    const parsed = parseFiniteNumber(raw[key]);
-    if (parsed !== null) frame[key] = parsed;
+  const numbers = {} as Record<(typeof nullableNumberFields)[number], number | null>;
+  for (const key of nullableNumberFields) {
+    const value = parseNullableNumber(raw, key);
+    if (value === undefined) return null;
+    numbers[key] = value;
   }
-  const optionalStringFields = [
+  const nullableStringFields = [
     'range_id',
     'compensation_model',
     'sensor_path_id',
     'calibration_id',
+    'calibration_valid_until_utc',
   ] as const;
-  for (const key of optionalStringFields) {
-    if (typeof raw[key] === 'string' && (raw[key] as string).length > 0) frame[key] = raw[key];
+  const strings = {} as Record<(typeof nullableStringFields)[number], string | null>;
+  for (const key of nullableStringFields) {
+    const value = parseNullableString(raw, key);
+    if (value === undefined) return null;
+    strings[key] = value;
   }
-  if (Array.isArray(raw.quality_flags)) {
-    const flags = raw.quality_flags.filter((f): f is string => typeof f === 'string');
-    if (flags.length > 0) frame.quality_flags = flags;
+
+  const flags = raw.quality_flags as string[];
+  const incompleteRaw =
+    numbers.voltage_raw_v === null ||
+    numbers.current_raw_a === null ||
+    numbers.temperature_raw_c === null;
+  if (incompleteRaw && !flags.some((flag) => ['DROPOUT', 'OUT_OF_RANGE'].includes(flag))) {
+    return null;
   }
-  // V1 废弃别名补充（部分老实现仅发 ec/temperature）
-  if (frame.kappa_t_us_cm !== undefined && frame.ec === undefined) {
-    frame.ec = frame.kappa_t_us_cm;
+  if (
+    numbers.kappa_t_us_cm === null &&
+    numbers.conductance_s !== null &&
+    !flags.includes('UNCALIBRATED')
+  ) {
+    return null;
   }
-  if (frame.temperature_raw_c !== undefined && frame.temperature === undefined) {
-    frame.temperature = frame.temperature_raw_c;
+  if (
+    numbers.kappa_25_us_cm === null &&
+    numbers.kappa_t_us_cm !== null &&
+    !flags.some((flag) =>
+      ['CALIBRATION_EXPIRED', 'TEMPERATURE_INVALID', 'COMPENSATION_UNAVAILABLE'].includes(flag),
+    )
+  ) {
+    return null;
   }
+  if (numbers.kappa_t_us_cm !== null && strings.calibration_id === null) return null;
+
+  const frame: ExperimentFrame = {
+    message_type: 'measurement',
+    schema_version: '2.0',
+    experiment_uid: experimentUid,
+    seq_no: seqNo,
+    timestamp_utc: timestampUtc,
+    monotonic_ms: monotonicMs,
+    t_seconds: tSeconds,
+    status: 'running',
+    ...numbers,
+    ...strings,
+    quality_flags: flags,
+  };
+  if (raw.concentration_mmol_l !== undefined) {
+    const concentration = parseFiniteNumber(raw.concentration_mmol_l);
+    if (concentration === null || concentration < 0) return null;
+    frame.concentration_mmol_l = concentration;
+  }
+  return frame;
 }

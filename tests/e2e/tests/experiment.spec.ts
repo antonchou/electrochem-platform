@@ -42,23 +42,52 @@ test('F02 开始实验：进入 Running 并接收数据', async ({ page }) => {
   await expect(page.getByTestId('btn-start')).toBeDisabled();
 });
 
-test('F03 实时数值：EC/温度持续更新且单位正确', async ({ page }) => {
+test('F03 V2 电极链路：U/I/T、G/κ(T)/κ25、校准与质量字段同时可见', async ({ page }) => {
   await page.getByTestId('btn-start').click();
-  await expect(page.getByTestId('value-ec')).not.toContainText('--', { timeout: 8000 });
-  const ec = page.getByTestId('value-ec');
-  await expect(ec).toContainText('μS/cm');
-  await expect(page.getByTestId('value-temperature')).toContainText('°C');
-
-  const ecText = await ec.innerText();
-  const temperatureText = await page.getByTestId('value-temperature').innerText();
-  expect(Number.isFinite(Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]))).toBe(true);
-  expect(Number.isFinite(Number(temperatureText.match(/-?\d+(?:\.\d+)?/)?.[0]))).toBe(true);
+  const numericCards = [
+    ['value-voltage', 'V'],
+    ['value-current', 'mA'],
+    ['value-temperature', '°C'],
+    ['value-conductance', 'S'],
+    ['value-kappa-t', 'μS/cm'],
+    ['value-kappa25', 'μS/cm'],
+  ] as const;
+  for (const [testId, unit] of numericCards) {
+    const card = page.getByTestId(testId);
+    await expect(card).not.toContainText('--', { timeout: 8000 });
+    await expect(card).toContainText(unit);
+    const text = await card.innerText();
+    expect(Number.isFinite(Number(text.match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/i)?.[0]))).toBe(true);
+  }
+  await expect(page.getByTestId('calib-status')).toContainText('CAL_MOCK_CONFIG');
+  await expect(page.getByTestId('quality-status')).toContainText('SIMULATED');
+  await expect(page.getByTestId('trace-range')).toContainText('R_100R_10K');
+  await expect(page.getByTestId('trace-sensor-path')).toContainText('EC_IV_CELL_MOCK');
+  await expect(page.getByTestId('trace-cell-constant')).toContainText('1 cm⁻¹');
+  await expect(page.getByTestId('trace-compensation')).toContainText('linear');
+  await expect(page.getByTestId('trace-compensation')).toContainText('0.02');
 
   // 稳定传感器连续两帧可能恰好显示同一舍入值；以采样点数增长证明数据仍在更新。
   const countBefore = Number(await page.getByTestId('stat-count').innerText());
   await expect
     .poll(async () => Number(await page.getByTestId('stat-count').innerText()), { timeout: 3000 })
     .toBeGreaterThan(countBefore);
+});
+
+test('F03b 未校准帧：保留 Raw 数据与质量状态，不被误判为状态帧', async ({ page, request }) => {
+  const response = await request.post(`${API}/api/experiment/start`, {
+    data: { cell_constant_cm_inv: null, alpha_per_c: null },
+  });
+  expect(response.ok()).toBeTruthy();
+  await waitForPoints(page, 1);
+  await expect(page.getByTestId('value-kappa-t')).toContainText('--');
+  await expect(page.getByTestId('value-kappa25')).toContainText('--');
+  await expect(page.getByTestId('value-voltage')).not.toContainText('--');
+  await expect(page.getByTestId('value-current')).not.toContainText('--');
+  await expect(page.getByTestId('value-temperature')).not.toContainText('--');
+  await expect(page.getByTestId('value-conductance')).not.toContainText('--');
+  await expect(page.getByTestId('calib-status')).toContainText('未校准');
+  await expect(page.getByTestId('quality-status')).toContainText('UNCALIBRATED');
 });
 
 test('F04 实时曲线：数据自动追加，无需刷新页面', async ({ page }) => {
@@ -86,11 +115,11 @@ test('F04b 实时曲线坐标：时间轴延伸且纵轴稳定覆盖读数', asy
 
   const yMin1 = Number(await chart.getAttribute('data-chart-y-min'));
   const yMax1 = Number(await chart.getAttribute('data-chart-y-max'));
-  const ecText = await page.getByTestId('value-ec').innerText();
-  const ec = Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]);
-  expect(Number.isFinite(ec), '实时 EC 卡片应包含可解析的数值').toBe(true);
-  expect(ec).toBeGreaterThanOrEqual(yMin1);
-  expect(ec).toBeLessThanOrEqual(yMax1);
+  const ecText = await page.getByTestId('value-kappa-t').innerText();
+  const kappaT = Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]);
+  expect(Number.isFinite(kappaT), '实时 κ(T) 卡片应包含可解析的数值').toBe(true);
+  expect(kappaT).toBeGreaterThanOrEqual(yMin1);
+  expect(kappaT).toBeLessThanOrEqual(yMax1);
 
   await page.waitForTimeout(1200);
   const yMin2 = Number(await chart.getAttribute('data-chart-y-min'));
@@ -145,7 +174,7 @@ test('F09 恢复连接：后端恢复后自动重连', async ({ page }) => {
   await expect(page.getByTestId('connection-status')).toHaveText('已连接', { timeout: 15_000 });
 });
 
-test('F10 异常数据：坏帧不导致页面崩溃', async ({ page }) => {
+test('F10 在线协议拒绝 V1 帧且页面保持可用', async ({ page }) => {
   await page.getByTestId('btn-start').click();
   await waitForPoints(page, 1);
   await page.request.post(`${API}/api/debug/bad-frame`);

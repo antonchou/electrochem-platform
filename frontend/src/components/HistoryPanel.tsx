@@ -65,7 +65,7 @@ export function HistoryPanel({ api, onClose }: Props) {
         // P2-7 修复：拉取全部帧（而非前 3000 帧），曲线降采样显示、拟合用全量
         const [detail, rawFrames] = await Promise.all([
           api.getExperiment(id),
-          api.getFrames(id, 100_000),
+          api.getAllFrames(id),
         ]);
         setSelected(detail);
         setFrames(rawFrames);
@@ -105,11 +105,17 @@ export function HistoryPanel({ api, onClose }: Props) {
 
   // 历史详情拟合用的数据点（复用 FitPanel 化学公式拟合，X 轴可切时间/温度）
   const historyPoints: DataPoint[] = useMemo(
-    () =>
-      frames.map((f) => ({
+    () => {
+      const concentrations = new Map(
+        (selected?.samples ?? []).map((sample) => [
+          `${sample.sample_id}\u0000${sample.sensor_path_id ?? ''}`,
+          sample.concentration_mmol_l,
+        ]),
+      );
+      return frames.map((f) => ({
         t: f.t_seconds ?? 0,
-        tc: f.temperature_raw_c ?? 0,
-        kt: f.kappa_t_us_cm ?? f.legacy_ec_us_cm ?? 0,
+        tc: f.temperature_raw_c ?? null,
+        kt: f.kappa_t_us_cm ?? f.legacy_ec_us_cm ?? null,
         k25: f.kappa_25_us_cm ?? null,
         u: f.voltage_raw_v ?? null,
         i: f.current_raw_a !== null && f.current_raw_a !== undefined ? f.current_raw_a * 1000 : null,
@@ -119,9 +125,16 @@ export function HistoryPanel({ api, onClose }: Props) {
         rangeId: f.range_id ?? undefined,
         sensorPathId: f.sensor_path_id,
         calibrationId: f.calibration_id ?? undefined,
+        cellConstant: f.cell_constant_cm_inv ?? null,
+        calibrationValidUntil: f.calibration_valid_until_utc ?? null,
+        compensationModel: f.compensation_model ?? undefined,
+        alphaPerC: f.alpha_per_c ?? null,
         qualityFlags: f.quality_flags ? f.quality_flags.split('|') : undefined,
-      })),
-    [frames],
+        concentration:
+          concentrations.get(`${f.sample_id ?? ''}\u0000${f.sensor_path_id ?? ''}`) ?? null,
+      }));
+    },
+    [frames, selected],
   );
 
   if (!api) {

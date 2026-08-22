@@ -62,9 +62,14 @@ def test_raw_frames_append_only(store):
 
     # sqlite 对触发器 RAISE(ABORT) 的错误类型在不同版本可能是 OperationalError 或 IntegrityError
     with pytest.raises((sqlite3.OperationalError, sqlite3.IntegrityError)):
-        store._conn().execute("UPDATE raw_frames SET ec_raw = 999 WHERE experiment_id = ?", (eid,))
+        with store._managed_conn() as conn:
+            conn.execute(
+                "UPDATE raw_frames SET legacy_ec_us_cm = 999 WHERE experiment_id = ?",
+                (eid,),
+            )
     with pytest.raises((sqlite3.OperationalError, sqlite3.IntegrityError)):
-        store._conn().execute("DELETE FROM raw_frames WHERE experiment_id = ?", (eid,))
+        with store._managed_conn() as conn:
+            conn.execute("DELETE FROM raw_frames WHERE experiment_id = ?", (eid,))
 
     # 数据仍然完好
     assert store.count_frames(eid) == 1
@@ -78,6 +83,52 @@ def test_sample_upsert_accumulates(store):
     assert len(samples) == 1
     assert samples[0]["frame_count"] == 12
     assert samples[0]["concentration_mmol_l"] == 2.0
+
+
+def test_sample_upsert_refreshes_trace_fields(store):
+    eid = store.create_experiment("EXP-003B", "t", sample_id="S", sensor_path_id="WIDE")
+    store.upsert_sample(
+        eid,
+        "S",
+        "WIDE",
+        concentration_mmol_l=1.0,
+        composition="old",
+        preparation_record_id="PREP-1",
+    )
+    first = store.get_samples(eid)[0]
+    store.upsert_sample(
+        eid,
+        "S",
+        "WIDE",
+        concentration_mmol_l=2.0,
+        composition="new",
+        preparation_record_id="PREP-2",
+    )
+    current = store.get_samples(eid)[0]
+    assert current["concentration_mmol_l"] == 2.0
+    assert current["composition"] == "new"
+    assert current["preparation_record_id"] == "PREP-2"
+    assert current["measured_at_utc"] >= first["measured_at_utc"]
+
+
+def test_insert_frames_falls_back_when_new_legacy_keys_are_none(store):
+    eid = store.create_experiment("EXP-FALLBACK", "t", sample_id="S", sensor_path_id="WIDE")
+    store.insert_frames(
+        [
+            {
+                "experiment_id": eid,
+                "sample_id": "S",
+                "sensor_path_id": "WIDE",
+                "legacy_ec_us_cm": None,
+                "ec_raw": 123.0,
+                "temperature_raw_c": None,
+                "temperature_raw": 24.5,
+            }
+        ]
+    )
+    frame = store.get_frames(eid)[0]
+    assert frame["legacy_ec_us_cm"] == 123.0
+    assert frame["temperature_raw_c"] == 24.5
 
 
 def test_export_csv(store):
@@ -104,5 +155,8 @@ def test_export_csv(store):
     csv_text = store.export_csv(eid)
     lines = csv_text.strip().split("\n")
     assert len(lines) == 4  # 1 表头 + 3 数据行
-    assert "sensor_path_id" in lines[0]
+    header = lines[0].split(",")
+    assert "sensor_path_id" in header
+    assert "kappa_25_us_cm" in header
+    assert "k25" not in header
     assert "NACL_006" in lines[1]
