@@ -53,7 +53,7 @@
 | Configuration | `excitation_frequency_hz`, `excitation_amplitude_v`, `range_id`, `compensation_model`, `alpha_per_c` | 必须随实验版本化 |
 | Quality | `quality_flags` | 饱和、欠量程、开路、短路、温度无效、未校准、校准过期、波形不稳等 |
 
-当前 Mock/API 在线通道已经完成 V2 切换：只接受显式 `message_type=measurement`、`schema_version=2.0` 的完整分层帧，默认链路为 `EC_IV_CELL_MOCK`。V1 `ec` 只保留在数据库 `legacy_ec_us_cm` 历史读取层，不得进入实时 WebSocket、浏览器模拟源或在线验收。
+当前已发布 Mock/API 仍输出简化 `ec` 字段，并保留 `CM2_WIDE` 旧缺省标识以兼容既有测试；它们只表示模拟兼容层，不代表正式硬件仍采用 CM2。迁移时应新增目标字段并保持旧前端可用，完成数据库迁移和 E2E 后再废止旧标识。
 
 ## 5. 校准与验收
 
@@ -73,11 +73,11 @@
 
 | 阶段 | 目标 | 关键产出 |
 |---|---|---|
-| Phase 0–3、7 | 已完成软件骨架、严格 V2 I–V Mock、计算链、Web、SQLite、历史与导出 | 保持 V2 契约；Mock 已输出 U/I/T 并统一计算 G/κ(T)/κ25 |
+| Phase 0–3、7 | 已完成软件骨架、Mock、Web、SQLite、历史与导出 | 保持现状；Mock 改为模拟 I/V 推导值时须兼容现有测试 |
 | Phase 4 | 温度通道接入 | DS18B20 驱动、位置验证、温度校准与质量标志 |
 | Phase 5A | 电气测量台架 | 激励源、电压/电流 AFE、ADC、精密负载测试、保护与量程 |
 | Phase 5B | 导电池与标准液校准 | 电极方案、`Kcell`、重复性、低中高点、校准记录 |
-| Phase 5C | 真实链路计算与温补闭环 | 将硬件 U/I/T 接入现有计算链并完成台架验证；冻结模型版本、质量标志和分层落库证据 |
+| Phase 5C | 计算与温补闭环 | `G/κ(T)/κ25`、模型版本、质量标志、Raw/Calibrated/Derived 落库 |
 | Phase 6 | pH/ORP 等其他传感通道 | 与电导率链路分离开发 |
 | Phase 8 | 判稳、QC、拟合与报告 | 代表值、误差预算、残差与报告 |
 | Phase 9 | ESP32-S3 实时控制 | 激励时序、同步采集、协议、硬件在环测试 |

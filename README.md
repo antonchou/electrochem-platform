@@ -31,7 +31,7 @@ electrochem-platform/
 
 ## 环境要求
 
-- **Node.js 24 LTS**（`.nvmrc` = 24；Windows 可使用系统安装或自行配置的便携版）
+- **Node.js 24 LTS**（`.nvmrc` = 24；Windows 便携版可放 `F:\nodejs24` 并加入 PATH）
 - Python ≥ 3.11
 
 ## 快速开始（模拟数据模式，无需硬件）
@@ -54,8 +54,7 @@ npm install
 npm run dev            # 打开 http://localhost:5173
 ```
 
-点击「开始实验」即可看到实时 U/I/T、G、κ(T)、κ25、质量标志与分层曲线；
-「历史实验」可回看/导出（Phase 7）。
+点击「开始实验」即可看到实时 EC/温度/曲线；「历史实验」可回看/导出（Phase 7）。
 
 ## 切换真实后端
 
@@ -67,10 +66,8 @@ npm run dev            # 打开 http://localhost:5173
 # backend 单元/协议测试（pytest + TestClient，含 SQLite append-only 约束）
 cd backend && .venv/Scripts/python -m pytest tests -q
 
-# E2E 验收（默认 Playwright Chromium）
-cd tests/e2e && npm install && npx playwright test
-# Windows PowerShell 如需改用系统 Edge：
-# $env:E2E_BROWSER='msedge'; npx playwright test
+# E2E 验收（Playwright；Windows 无自带 Chromium 时用系统浏览器：E2E_BROWSER=msedge）
+cd tests/e2e && npm install && E2E_BROWSER=msedge npx playwright test
 ```
 
 ## 树莓派部署
@@ -85,7 +82,7 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 | 规则 | 落实 |
 |---|---|
 | 34 统一 Driver Base Class | `backend/app/drivers/base.py` 定义异步接口；Mock 已实现，后续电压/电流/温度采集驱动按同一边界接入 |
-| 35 配置/schema 版本化 | `configs/` 带 schema_version；DB 由 `SCHEMA_VERSION` / `MIGRATIONS` 自动、幂等升级，不手工改表 |
+| 35 配置/schema 版本化 | `configs/` 带 schema_version；DB 由 `init_db()` 幂等建表（迁移走脚本，不手工改表） |
 | 36 配置地址集中 | 前端 `src/config/config.ts` 唯一入口；后端 DB 路径可用 `EC_DB_PATH` 覆盖 |
 | 37 机密不入 Git | 根 `.gitignore` 已排除 `.env*`/私钥/令牌 |
 | 38 帧溯源 | 原始帧带 `seq_no/timestamp_utc/monotonic_ms/sensor_path_id`；前端 timestamp 仅显示 |
@@ -104,7 +101,7 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 
 **功能实现阶段（本仓库开发主线）**
 
-- **Phase 3（M1–M2）**：严格 V2 电极 I–V Mock + Web 前端闭环 ✅（F01–F10，含未校准/质量帧）
+- **Phase 3（M1–M2）**：Web 前端 + 模拟数据源闭环 ✅（F01–F10 全过）
 - **Phase 2 集成加固**：统一驱动接口、可配置 Mock 场景、慢客户端隔离、SQLite 长跑验收 ✅
 - **Phase 7（M3–M4 前置）**：SQLite 存储 + 历史查询 + 导出 ✅（append-only 已验证）
 - **备选公式拟合**：化学公式（一阶饱和 / Arrhenius / Kohlrausch）按 X 轴语义拟合 ✅
@@ -117,8 +114,9 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 
 | 需求编号 | 需求内容 | 现状 | 交付阶段 |
 |---|---|---|---|
+| REQ-M-001 | 帧需保存 U、I、T，并可追溯计算 G、κ(T)、κ25 | 当前 Mock 只给 ec/T，k25 恒为 NULL | 后续阶段（I/V 采集、校准/温补） |
 | REQ-F-001 / REQ-F-002 | 拟合需输出 CI/残差/RMSE/MAE/AICc/留一交叉验证，声明有效浓度区间、禁止外推 | 仅 R²/RMSE/params/fitted | 后续阶段（拟合报告） |
 | REQ-D-003 | 自动判稳（窗口/统计量/阈值/失败原因）与 QC PASS/WARN/FAIL | 未实现，samples.k25_* 恒 NULL | 后续阶段（判稳与 QC） |
 | REQ-C-001 | 每次结果关联 calibration_id 与标准液批次 | calibration_records 表已建但未写入 | 后续阶段（校准 SOP） |
-| REQ-U-001 | UI 区分原始值/温补值/滤波值/最终代表值 | 已区分 U/I/T、G、κ(T)、κ25；尚缺滤波值与最终代表值 | 后续阶段（判稳与 QC） |
-| SRS 3.3 | 协议需含 schema_version/device_id/firmware_version/range_id/quality_flags | 已含 schema/range/quality；尚缺真实 device_id/firmware_version | 后续阶段（真实设备接入） |
+| REQ-U-001 | UI 区分原始值/温补值/滤波值/最终代表值 | 仅显示 EC 与温度 | 后续阶段（分层显示） |
+| SRS 3.3 | 协议需含 schema_version/device_id/firmware_version/range_id/quality_flags | 实时帧为简化 4 字段 | 后续阶段（真实设备接入） |

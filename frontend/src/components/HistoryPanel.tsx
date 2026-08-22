@@ -65,7 +65,7 @@ export function HistoryPanel({ api, onClose }: Props) {
         // P2-7 修复：拉取全部帧（而非前 3000 帧），曲线降采样显示、拟合用全量
         const [detail, rawFrames] = await Promise.all([
           api.getExperiment(id),
-          api.getAllFrames(id),
+          api.getFrames(id, 100_000),
         ]);
         setSelected(detail);
         setFrames(rawFrames);
@@ -81,14 +81,7 @@ export function HistoryPanel({ api, onClose }: Props) {
   // 注意：所有 Hook 必须位于任何 early return 之前，否则 api 变化时 React 会因
   // Hook 数量不一致直接崩溃（"Rendered more hooks than during the previous render"）。
   const chartData: [number, number][] = useMemo(
-    // 主显示量 κ25 优先，回退 κ(T)，再回退 V1 legacy（旧库帧）；无效点剔除
-    () =>
-      frames
-        .map((f) => [
-          f.t_seconds ?? 0,
-          f.kappa_25_us_cm ?? f.kappa_t_us_cm ?? f.legacy_ec_us_cm ?? null,
-        ])
-        .filter((v): v is [number, number] => v[1] !== null),
+    () => frames.map((f) => [f.t_seconds ?? 0, f.ec_raw]),
     [frames],
   );
 
@@ -105,37 +98,13 @@ export function HistoryPanel({ api, onClose }: Props) {
 
   // 历史详情拟合用的数据点（复用 FitPanel 化学公式拟合，X 轴可切时间/温度）
   const historyPoints: DataPoint[] = useMemo(
-    () => {
-      const concentrations = new Map(
-        (selected?.samples ?? []).map((sample) => [
-          `${sample.sample_id}\u0000${sample.sensor_path_id ?? ''}`,
-          sample.concentration_mmol_l,
-        ]),
-      );
-      return frames.map((f) => ({
+    () =>
+      frames.map((f) => ({
         t: f.t_seconds ?? 0,
-        tc: f.temperature_raw_c ?? null,
-        kt: f.kappa_t_us_cm ?? f.legacy_ec_us_cm ?? null,
-        k25: f.kappa_25_us_cm ?? null,
-        u: f.voltage_raw_v ?? null,
-        i: f.current_raw_a !== null && f.current_raw_a !== undefined ? f.current_raw_a * 1000 : null,
-        g: f.conductance_s ?? null,
-        freq: f.excitation_frequency_hz ?? undefined,
-        amp: f.excitation_amplitude_v ?? undefined,
-        rangeId: f.range_id ?? undefined,
-        sensorPathId: f.sensor_path_id,
-        calibrationId: f.calibration_id ?? undefined,
-        cellConstant: f.cell_constant_cm_inv ?? null,
-        calibrationValidUntil: f.calibration_valid_until_utc ?? null,
-        compensationModel: f.compensation_model ?? undefined,
-        alphaPerC: f.alpha_per_c ?? null,
-        qualityFlags:
-          f.quality_flags_list ?? (f.quality_flags ? f.quality_flags.split('|') : undefined),
-        concentration:
-          concentrations.get(`${f.sample_id ?? ''}\u0000${f.sensor_path_id ?? ''}`) ?? null,
-      }));
-    },
-    [frames, selected],
+        tc: f.temperature_raw,
+        ec: f.ec_raw,
+      })),
+    [frames],
   );
 
   if (!api) {

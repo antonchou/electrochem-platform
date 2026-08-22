@@ -1,5 +1,5 @@
 import type { ClientEvent, ConnectionStatus, ExperimentFrame, ServerMessage } from '../types/protocol';
-import { isDebugBurstFrame, parseServerMessage } from '../types/protocol';
+import { parseServerMessage } from '../types/protocol';
 import { config } from '../config/config';
 
 export type { ClientEvent, ConnectionStatus };
@@ -105,16 +105,12 @@ export class WebSocketClient implements DataClient {
         this.emit({ type: 'error', message: '收到非法数据帧，已忽略' });
         return;
       }
-      if (parsed.message_type === 'measurement') {
-        if (!isDebugBurstFrame(parsed)) this.running = parsed.status === 'running';
+      if ('ec' in parsed) {
+        this.running = parsed.status === 'running';
         this.emit({ type: 'message', frame: parsed as ExperimentFrame });
       } else {
         this.running = parsed.status === 'running';
-        this.emit({
-          type: 'status',
-          status: parsed.status,
-          experimentUid: parsed.experiment_uid,
-        });
+        this.emit({ type: 'status', status: parsed.status });
       }
     };
 
