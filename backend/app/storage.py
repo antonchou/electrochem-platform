@@ -67,9 +67,29 @@ CREATE TABLE IF NOT EXISTS raw_frames (
     timestamp_utc  TEXT,
     monotonic_ms   INTEGER,
     t_seconds      REAL,
-    ec_raw         REAL NOT NULL,
-    temperature_raw REAL NOT NULL,
+    schema_version TEXT,
+    -- Raw（不可变原始量）
+    voltage_raw_v  REAL,
+    current_raw_a  REAL,
+    temperature_raw_c REAL,
+    -- Calibrated
+    voltage_cal_v  REAL,
+    current_cal_a  REAL,
+    conductance_s  REAL,
+    kappa_t_us_cm  REAL,
+    -- Derived
+    kappa_25_us_cm REAL,
     k25            REAL,
+    -- Configuration（随实验版本化）
+    excitation_frequency_hz REAL,
+    excitation_amplitude_v  REAL,
+    range_id       TEXT,
+    compensation_model TEXT,
+    alpha_per_c    REAL,
+    -- Trace
+    calibration_id TEXT,
+    -- 兼容（历史遗留；V1 ec 废弃别名迁移至此，不再是主字段）
+    legacy_ec_us_cm REAL,
     quality_flags  TEXT,
     status         TEXT,
     inserted_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -104,6 +124,107 @@ END;
 """
 
 
+# ==========================================================================
+# 版本化 SQLite 迁移（不手工改树莓派数据库；保留已有历史实验）
+#
+# 每个版本是独立函数，内部先 PRAGMA 检查列存在性再执行，保证幂等；
+# schema_migrations 表记录已应用版本，应用启动时自动推进到最新。
+# ==========================================================================
+
+SCHEMA_VERSION = 3
+
+
+def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _add_column_if_missing(
+    conn: sqlite3.Connection,
+    name: str,
+    declaration: str,
+    existing: set[str],
+) -> None:
+    if name not in existing:
+        conn.execute(f"ALTER TABLE raw_frames ADD COLUMN {name} {declaration}")
+
+
+def _rename_column_if_present(
+    conn: sqlite3.Connection,
+    old: str,
+    new: str,
+    existing: set[str],
+) -> None:
+    # 老列存在且新列不存在时才重命名（新库直接建新列）
+    if old in existing and new not in existing:
+        conn.execute(f"ALTER TABLE raw_frames RENAME COLUMN {old} TO {new}")
+
+
+def _migrate_v1_iv_columns(conn: sqlite3.Connection) -> None:
+    """v1：补齐电极 I–V 链路基础列（Raw/Calibrated/Derived/Trace）。"""
+    existing = _column_names(conn, "raw_frames")
+    for name, decl in {
+        "voltage_raw_v": "REAL",
+        "current_raw_a": "REAL",
+        "conductance_s": "REAL",
+        "kappa_t_us_cm": "REAL",
+        "kappa_25_us_cm": "REAL",
+        "calibration_id": "TEXT",
+    }.items():
+        _add_column_if_missing(conn, name, decl, existing)
+
+
+def _migrate_v2_rename_legacy(conn: sqlite3.Connection) -> None:
+    """v2：列名对齐 V2 协议——temperature_raw→temperature_raw_c；ec_raw→legacy_ec_us_cm。"""
+    existing = _column_names(conn, "raw_frames")
+    _rename_column_if_present(conn, "temperature_raw", "temperature_raw_c", existing)
+    _rename_column_if_present(conn, "ec_raw", "legacy_ec_us_cm", existing)
+
+
+def _migrate_v3_extra_columns(conn: sqlite3.Connection) -> None:
+    """v3：补齐配置层与校准列（schema_version/通道校准/激励/量程/温补模型）。"""
+    existing = _column_names(conn, "raw_frames")
+    for name, decl in {
+        "schema_version": "TEXT",
+        "voltage_cal_v": "REAL",
+        "current_cal_a": "REAL",
+        "excitation_frequency_hz": "REAL",
+        "excitation_amplitude_v": "REAL",
+        "range_id": "TEXT",
+        "compensation_model": "TEXT",
+        "alpha_per_c": "REAL",
+    }.items():
+        _add_column_if_missing(conn, name, decl, existing)
+
+
+MIGRATIONS: Dict[int, Any] = {
+    1: _migrate_v1_iv_columns,
+    2: _migrate_v2_rename_legacy,
+    3: _migrate_v3_extra_columns,
+}
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """按版本顺序应用迁移（幂等）；新库已含全部列，仅记录版本。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version     INTEGER PRIMARY KEY,
+            applied_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        )
+        """
+    )
+    applied = {
+        row[0] for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+    }
+    for version, apply in sorted(MIGRATIONS.items()):
+        if version in applied:
+            continue
+        apply(conn)
+        conn.execute(
+            "INSERT INTO schema_migrations (version) VALUES (?)", (version,)
+        )
+
+
 def _conn() -> sqlite3.Connection:
     db = _db_path()
     Path(db).parent.mkdir(parents=True, exist_ok=True)
@@ -115,9 +236,10 @@ def _conn() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """建表（幂等）。应用启动时调用。"""
+    """建表（幂等）+ 版本化迁移。应用启动时调用；旧库自动升级，不手工改库。"""
     with _conn() as conn:
         conn.executescript(SCHEMA)
+        _apply_migrations(conn)
 
 
 # ---------------- 实验生命周期 ----------------
@@ -275,19 +397,68 @@ def upsert_sample(
 # ---------------- 原始帧 ----------------
 
 def insert_frames(frames: List[Dict[str, Any]]) -> None:
-    """批量写入原始帧（append-only），并累加对应样品的 frame_count（P2-4）。"""
+    """批量写入原始帧（append-only），并累加对应样品的 frame_count（P2-4）。
+
+    兼容旧调用方：缺省 I–V 列用 None 填充（老记录 U/I 允许 NULL）。
+    """
     if not frames:
         return
     with _conn() as conn:
+        rows = []
+        for f in frames:
+            rows.append(
+                {
+                    "experiment_id": f["experiment_id"],
+                    "sample_id": f.get("sample_id"),
+                    "sensor_path_id": f["sensor_path_id"],
+                    "seq_no": f.get("seq_no"),
+                    "timestamp_utc": f.get("timestamp_utc"),
+                    "monotonic_ms": f.get("monotonic_ms"),
+                    "t_seconds": f.get("t_seconds"),
+                    "schema_version": f.get("schema_version"),
+                    # legacy = V1 ec 废弃别名迁移列；兼容旧调用方字段 ec_raw
+                    "legacy_ec_us_cm": f.get("legacy_ec_us_cm", f.get("ec_raw")),
+                    # temperature_raw_c 优先，兼容旧调用方字段 temperature_raw
+                    "temperature_raw_c": f.get("temperature_raw_c", f.get("temperature_raw")),
+                    "voltage_raw_v": f.get("voltage_raw_v"),
+                    "current_raw_a": f.get("current_raw_a"),
+                    "voltage_cal_v": f.get("voltage_cal_v"),
+                    "current_cal_a": f.get("current_cal_a"),
+                    "conductance_s": f.get("conductance_s"),
+                    "kappa_t_us_cm": f.get("kappa_t_us_cm"),
+                    "kappa_25_us_cm": f.get("kappa_25_us_cm"),
+                    "k25": f.get("k25"),
+                    "excitation_frequency_hz": f.get("excitation_frequency_hz"),
+                    "excitation_amplitude_v": f.get("excitation_amplitude_v"),
+                    "range_id": f.get("range_id"),
+                    "compensation_model": f.get("compensation_model"),
+                    "alpha_per_c": f.get("alpha_per_c"),
+                    "calibration_id": f.get("calibration_id"),
+                    "quality_flags": f.get("quality_flags"),
+                    "status": f.get("status"),
+                }
+            )
         conn.executemany(
             """
             INSERT INTO raw_frames
                 (experiment_id, sample_id, sensor_path_id, seq_no, timestamp_utc,
-                 monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status)
+                 monotonic_ms, t_seconds, schema_version,
+                 legacy_ec_us_cm, temperature_raw_c,
+                 voltage_raw_v, current_raw_a, voltage_cal_v, current_cal_a,
+                 conductance_s, kappa_t_us_cm, kappa_25_us_cm, k25,
+                 excitation_frequency_hz, excitation_amplitude_v, range_id,
+                 compensation_model, alpha_per_c, calibration_id,
+                 quality_flags, status)
             VALUES (:experiment_id, :sample_id, :sensor_path_id, :seq_no, :timestamp_utc,
-                    :monotonic_ms, :t_seconds, :ec_raw, :temperature_raw, :k25, :quality_flags, :status)
+                    :monotonic_ms, :t_seconds, :schema_version,
+                    :legacy_ec_us_cm, :temperature_raw_c,
+                    :voltage_raw_v, :current_raw_a, :voltage_cal_v, :current_cal_a,
+                    :conductance_s, :kappa_t_us_cm, :kappa_25_us_cm, :k25,
+                    :excitation_frequency_hz, :excitation_amplitude_v, :range_id,
+                    :compensation_model, :alpha_per_c, :calibration_id,
+                    :quality_flags, :status)
             """,
-            frames,
+            rows,
         )
         # 必须按完整样品链路聚合；同一样品编号可能同时走 WIDE/NARROW 等不同通道。
         counts: Dict[tuple[int, str, str], int] = {}
@@ -352,7 +523,13 @@ def get_frames(
         rows = conn.execute(
             """
             SELECT id, sample_id, sensor_path_id, seq_no, timestamp_utc,
-                   monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status
+                   monotonic_ms, t_seconds, schema_version,
+                   legacy_ec_us_cm, temperature_raw_c,
+                   voltage_raw_v, current_raw_a, voltage_cal_v, current_cal_a,
+                   conductance_s, kappa_t_us_cm, kappa_25_us_cm, k25,
+                   excitation_frequency_hz, excitation_amplitude_v, range_id,
+                   compensation_model, alpha_per_c, calibration_id,
+                   quality_flags, status
             FROM raw_frames
             WHERE experiment_id = ?
             ORDER BY id ASC
@@ -372,12 +549,21 @@ def count_frames(experiment_id: int) -> int:
 
 
 def export_csv(experiment_id: int) -> str:
-    """导出该实验全部原始帧为 CSV 文本（Excel 可直接打开）。"""
+    """导出该实验全部原始帧为 CSV 文本（Excel 可直接打开）。
+
+    同时包含 Raw / Calibrated / Derived / Configuration / Trace / Quality 各层字段。
+    """
     with _conn() as conn:
         rows = conn.execute(
             """
-            SELECT seq_no, timestamp_utc, monotonic_ms, t_seconds,
-                   sensor_path_id, sample_id, ec_raw, temperature_raw, k25, quality_flags, status
+            SELECT seq_no, timestamp_utc, monotonic_ms, t_seconds, schema_version,
+                   sensor_path_id, sample_id,
+                   legacy_ec_us_cm, temperature_raw_c,
+                   voltage_raw_v, current_raw_a, voltage_cal_v, current_cal_a,
+                   conductance_s, kappa_t_us_cm, kappa_25_us_cm, k25,
+                   excitation_frequency_hz, excitation_amplitude_v, range_id,
+                   compensation_model, alpha_per_c, calibration_id,
+                   quality_flags, status
             FROM raw_frames
             WHERE experiment_id = ?
             ORDER BY id ASC
@@ -393,11 +579,25 @@ def export_csv(experiment_id: int) -> str:
             "timestamp_utc",
             "monotonic_ms",
             "t_seconds",
+            "schema_version",
             "sensor_path_id",
             "sample_id",
-            "ec_raw_us_cm",
+            "legacy_ec_us_cm",
             "temperature_raw_c",
+            "voltage_raw_v",
+            "current_raw_a",
+            "voltage_cal_v",
+            "current_cal_a",
+            "conductance_s",
+            "kappa_t_us_cm",
+            "kappa_25_us_cm",
             "k25_us_cm",
+            "excitation_frequency_hz",
+            "excitation_amplitude_v",
+            "range_id",
+            "compensation_model",
+            "alpha_per_c",
+            "calibration_id",
             "quality_flags",
             "status",
         ]
@@ -409,11 +609,25 @@ def export_csv(experiment_id: int) -> str:
                 r["timestamp_utc"],
                 r["monotonic_ms"],
                 r["t_seconds"],
+                r["schema_version"],
                 r["sensor_path_id"],
                 r["sample_id"],
-                r["ec_raw"],
-                r["temperature_raw"],
+                r["legacy_ec_us_cm"],
+                r["temperature_raw_c"],
+                r["voltage_raw_v"],
+                r["current_raw_a"],
+                r["voltage_cal_v"],
+                r["current_cal_a"],
+                r["conductance_s"],
+                r["kappa_t_us_cm"],
+                r["kappa_25_us_cm"],
                 r["k25"],
+                r["excitation_frequency_hz"],
+                r["excitation_amplitude_v"],
+                r["range_id"],
+                r["compensation_model"],
+                r["alpha_per_c"],
+                r["calibration_id"],
                 r["quality_flags"],
                 r["status"],
             ]
