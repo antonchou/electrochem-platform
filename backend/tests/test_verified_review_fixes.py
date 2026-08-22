@@ -83,7 +83,7 @@ def test_read_completed_after_stop_is_discarded(monkeypatch):
         async def read(self, _elapsed: float) -> DriverReading:
             self.started.set()
             await self.release.wait()
-            return DriverReading(ec=123.0, temperature=25.0)
+            return DriverReading(voltage_raw_v=1.0, current_raw_a=0.001, temperature_raw_c=25.0)
 
     async def scenario() -> None:
         driver = DelayedDriver()
@@ -110,7 +110,7 @@ def test_read_completed_after_stop_is_discarded(monkeypatch):
         await task
         await state.reset()
 
-        assert not any("ec" in item for item in published)
+        assert published == []
         assert persisted == []
 
     asyncio.run(scenario())
