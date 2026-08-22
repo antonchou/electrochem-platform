@@ -1,4 +1,12 @@
-"""Deterministic, configurable EC/temperature/pH mock driver."""
+"""Deterministic, configurable U/I/T mock driver（电极 I–V 链路模拟）。
+
+Mock 只模拟原始量：
+1. 固定/可配置的激励电压 U（默认 0.4 V）；
+2. 由目标 κ25 反推等效电阻 R = Kcell / (κ25·1e-6)，再求电流 I = U / R；
+3. 模拟温度 T。
+不在此处计算 G / κ(T) / κ25——交给软件计算层（app.measurement / app.calibration），
+与未来硬件走同一条计算链，接入硬件时只替换数据源。
+"""
 
 from __future__ import annotations
 
@@ -26,7 +34,7 @@ class MockDeviceConfig:
     scenario: MockScenario = MockScenario.STABLE
     seed: int = 2026
     sample_rate_hz: float = 10.0
-    base_ec: float = 1413.0
+    base_ec: float = 1413.0  # 目标 κ25（μS/cm）；旧字段名保留以兼容既有配置
     base_temperature: float = 25.0
     base_ph: float = 7.0
     ec_noise: float = 1.5
@@ -34,6 +42,10 @@ class MockDeviceConfig:
     ph_noise: float = 0.01
     drift_ec_per_second: float = 0.2
     dropout_every_n: int = 10
+    # ---- 电极 I–V 链路参数（仅用于反推等效阻抗/电流，计算链由上层完成） ----
+    excitation_voltage_v: float = 0.4  # 激励电压有效值，V
+    cell_constant_per_cm: float = 1.0  # Kcell，cm⁻¹（与校准层一致才能还原目标 κ25）
+    alpha_per_c: float = 0.02  # 线性温补系数（仅配置透传，计算在 calibration 层）
 
     def __post_init__(self) -> None:
         if self.sample_rate_hz <= 0:
@@ -46,6 +58,10 @@ class MockDeviceConfig:
             raise ValueError("noise values must be non-negative")
         if self.dropout_every_n < 0:
             raise ValueError("dropout_every_n must be non-negative")
+        if self.excitation_voltage_v <= 0:
+            raise ValueError("excitation_voltage_v must be positive")
+        if self.cell_constant_per_cm < 0:
+            raise ValueError("cell_constant_per_cm must be non-negative")
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any]) -> "MockDeviceConfig":
@@ -61,6 +77,9 @@ class MockDeviceConfig:
             "ph_noise",
             "drift_ec_per_second",
             "dropout_every_n",
+            "excitation_voltage_v",
+            "cell_constant_per_cm",
+            "alpha_per_c",
         }
         unknown = set(raw) - allowed - {"schema_version", "driver"}
         if unknown:
@@ -130,7 +149,7 @@ def load_mock_config() -> MockDeviceConfig:
 
 
 class MockDevice(DeviceDriver):
-    """Generate repeatable fixture data; values are not hardware claims."""
+    """Generate repeatable raw U/I/T fixture data; values are not hardware claims."""
 
     def __init__(self, config: MockDeviceConfig | None = None) -> None:
         self.config = config or MockDeviceConfig()
@@ -163,30 +182,26 @@ class MockDevice(DeviceDriver):
             and self.config.dropout_every_n > 0
             and (index + 1) % self.config.dropout_every_n == 0
         ):
-            return DriverReading(
-                ec=None,
-                temperature=None,
-                ph=None,
-                quality_flags=("SIMULATED", "DROPOUT"),
-            )
+            return DriverReading(quality_flags=("SIMULATED", "DROPOUT"))
 
         noise_scale = 8.0 if self.config.scenario is MockScenario.NOISY else 1.0
-        ec = (
+        target_k25 = (
             self.config.base_ec
             + math.sin(elapsed_seconds / 30.0) * 6.0
             + self._random.uniform(-self.config.ec_noise, self.config.ec_noise)
             * noise_scale
         )
         if self.config.scenario is MockScenario.DRIFT:
-            ec += self.config.drift_ec_per_second * elapsed_seconds
+            target_k25 += self.config.drift_ec_per_second * elapsed_seconds
 
-        temperature = (
+        temperature = round(
             self.config.base_temperature
             + self._random.uniform(
                 -self.config.temperature_noise,
                 self.config.temperature_noise,
             )
-            * noise_scale
+            * noise_scale,
+            2,
         )
         ph = (
             self.config.base_ph
@@ -195,12 +210,18 @@ class MockDevice(DeviceDriver):
             * noise_scale
         )
 
+        # 由目标 κ25 反推等效阻抗与电流（激励电压固定）：
+        #   G = κ / Kcell  →  R = 1/G = Kcell / κ   →  I = U / R
+        voltage = round(self.config.excitation_voltage_v, 4)
+        resistance = self.config.cell_constant_per_cm / (target_k25 * 1e-6)
+        current = round(voltage / resistance, 9)
+
         flags = ["SIMULATED"]
-        if ec < 0 or not 0 <= ph <= 14:
+        if target_k25 < 0 or not 0 <= ph <= 14:
             flags.append("OUT_OF_RANGE")
         return DriverReading(
-            ec=round(ec, 1),
-            temperature=round(temperature, 2),
-            ph=round(ph, 3),
+            voltage_raw_v=voltage,
+            current_raw_a=current,
+            temperature_raw_c=temperature,
             quality_flags=tuple(flags),
         )
