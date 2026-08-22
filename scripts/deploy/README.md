@@ -5,17 +5,21 @@
 ## 前置
 
 - Raspberry Pi OS 桌面版，Python 3.11+，**Node.js 24 LTS**（安装：`curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && sudo apt install -y nodejs`）
-- 已安装 Chromium 浏览器：`sudo apt install chromium-browser`
+- 已安装 Chromium 浏览器：`sudo apt install -y chromium`（旧版系统也兼容 `chromium-browser` 命令）
+- 系统使用图形桌面；脚本会通过 `raspi-config` 设置为桌面自动登录
 
 ## 用法
 
 把整个 `electrochem-platform` 目录放到树莓派上（建议路径 `/home/pi/electrochem-platform`），然后：
 
 ```bash
-cd /home/pi/electrochem-platform/scripts/deploy
-chmod +x setup.sh
-./setup.sh
+cd /home/pi/electrochem-platform
+chmod +x scripts/deploy/setup.sh
+./scripts/deploy/setup.sh
 ```
+
+请以需要自动打开 Kiosk 的**桌面登录用户**执行，不要使用 `sudo ./scripts/deploy/setup.sh`；
+脚本会在安装 systemd 服务时自行调用 `sudo`。这样可确保自启动配置写入正确用户的主目录。
 
 脚本会自动完成：
 
@@ -24,16 +28,29 @@ chmod +x setup.sh
 3. 生成并安装两个 systemd 服务：
    - `ec-backend`：FastAPI 后端（8000 端口，开机自启 + 崩溃自动重启）
    - `ec-web`：静态托管前端产物（5173 端口）
-4. 安装 Chromium Kiosk 开机自启动（`~/.config/autostart/ec-kiosk.desktop`）
+4. 自动识别 `chromium` / `chromium-browser`，设置桌面自动登录并安装 Kiosk 自启动：
+   - 新版 Raspberry Pi OS（Labwc）：`~/.config/labwc/autostart`
+   - 旧版 LXDE/X11：`~/.config/autostart/ec-kiosk.desktop`
 
+脚本可以重复执行：每次都会重新构建前端、同步后端依赖，并重启两个 systemd 服务。
 重启树莓派后，会自动全屏打开 `http://localhost:5173` 的实验界面。
 
 ## 常用命令
 
 ```bash
-sudo systemctl status ec-backend    # 查看后端状态
-sudo systemctl restart ec-web       # 重启前端
-systemctl --user ...                 # kiosk 随桌面自动启动
+sudo systemctl status ec-backend ec-web  # 查看服务状态
+sudo systemctl restart ec-backend ec-web # 重启前后端
+pgrep -a chromium                        # 检查 Kiosk 浏览器进程
+cat ~/.config/labwc/autostart            # 检查新版系统的自启动配置
+```
+
+如果服务正常但重启后没有打开 Chromium，请检查：
+
+```bash
+command -v chromium || command -v chromium-browser
+systemctl get-default
+curl -fsS http://127.0.0.1:8000/health
+curl -I http://127.0.0.1:5173/
 ```
 
 ## 自定义
