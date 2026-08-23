@@ -109,6 +109,42 @@ export function ExperimentPage() {
           precision={2}
           testId="value-temperature"
         />
+        {/* REQ-U-001 分层显示：原始量 / 计算量 / 温补量（后端 v2+ 才下发，缺省显示 --） */}
+        <ValueDisplay
+          label="原始电压 U"
+          value={latest?.voltage_raw_v ?? null}
+          unit="V"
+          precision={6}
+          testId="value-voltage"
+        />
+        <ValueDisplay
+          label="原始电流 I"
+          value={latest?.current_raw_a != null ? latest.current_raw_a * 1e6 : null}
+          unit="μA"
+          precision={3}
+          testId="value-current"
+        />
+        <ValueDisplay
+          label="电导 G"
+          value={latest?.conductance_s != null ? latest.conductance_s * 1e6 : null}
+          unit="μS"
+          precision={3}
+          testId="value-conductance"
+        />
+        <ValueDisplay
+          label="κ(T)"
+          value={latest?.kappa_t_us_cm ?? null}
+          unit="μS/cm"
+          precision={1}
+          testId="value-kappa-t"
+        />
+        <ValueDisplay
+          label="κ25"
+          value={latest?.kappa_25_us_cm ?? null}
+          unit="μS/cm"
+          precision={1}
+          testId="value-kappa25"
+        />
         {/* 传感器扩展位：后续接入 pH / ORP 等 */}
         <ValueDisplay label="pH（扩展）" value={null} unit="—" testId="value-ph" />
       </section>

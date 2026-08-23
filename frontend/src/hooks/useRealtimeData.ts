@@ -23,6 +23,13 @@ export function useRealtimeData(bridge: ExperimentBridge) {
           t: frame.timestamp,
           ec: frame.ec,
           tc: frame.temperature,
+          // I–V 链路扩展（REQ-U-001 分层显示）：后端 v2+ 才下发，缺省为 undefined
+          voltage_raw_v: frame.voltage_raw_v,
+          current_raw_a: frame.current_raw_a,
+          conductance_s: frame.conductance_s,
+          kappa_t_us_cm: frame.kappa_t_us_cm,
+          kappa_25_us_cm: frame.kappa_25_us_cm,
+          quality_flags: frame.quality_flags ?? undefined,
         };
         const arr = pointsRef.current;
         arr.push(p);

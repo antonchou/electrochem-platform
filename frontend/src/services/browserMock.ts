@@ -71,17 +71,40 @@ export class BrowserMockSource implements DataClient {
 
   private startStream(): void {
     if (this.timer) return;
-    // 10 Hz 模拟电导率读数：稳定基值 + 噪声 + 轻微漂移
+    // 10 Hz 模拟 I–V 测量链路：由目标 κ25 反推原始电压/电流（与后端 Mock 一致）
     const base = 1413;
+    const cellConstant = 1.0;
+    const alpha = 0.02;
+    const excitation = 1.0;
     this.timer = setInterval(() => {
       const t = Date.now() / 1000 - this.t0;
       const drift = Math.sin(t / 30) * 6;
       const noise = (Math.random() - 0.5) * 3;
-      const ec = +(base + drift + noise).toFixed(1);
+      const kappa25 = +(base + drift + noise).toFixed(1);
       const temperature = +(25 + (Math.random() - 0.5) * 0.3).toFixed(2);
+      // κ(T) = κ25·(1+α·(T-25))；G = κ(T)·1e-6/Kcell；I = G·U
+      const kappaT = kappa25 * (1 + alpha * (temperature - 25));
+      const g = +(kappaT * 1e-6 / cellConstant);
+      const current = +(g * excitation);
       this.emit({
         type: 'message',
-        frame: { timestamp: +t.toFixed(2), ec, temperature, status: 'running' },
+        frame: {
+          timestamp: +t.toFixed(2),
+          ec: kappa25,
+          temperature,
+          status: 'running',
+          schema_version: 2,
+          device_id: 'MOCK-IV-01',
+          firmware_version: '0.1.0',
+          range_id: 'WIDE',
+          voltage_raw_v: excitation,
+          current_raw_a: current,
+          temperature_raw_c: temperature,
+          conductance_s: g,
+          kappa_t_us_cm: kappaT,
+          kappa_25_us_cm: kappa25,
+          quality_flags: 'SIMULATED',
+        },
       });
     }, 100);
   }
