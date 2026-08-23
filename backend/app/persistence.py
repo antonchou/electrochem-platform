@@ -128,5 +128,8 @@ class PersistService:
     async def upsert_sample(self, **kwargs: Any) -> None:
         await asyncio.to_thread(storage.upsert_sample, **kwargs)
 
+    async def update_sample_qc(self, **kwargs: Any) -> None:
+        await asyncio.to_thread(storage.update_sample_qc, **kwargs)
+
 
 persist = PersistService()
