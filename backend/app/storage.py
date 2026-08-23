@@ -20,6 +20,20 @@ from typing import Any, Dict, List, Optional
 DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "ec.db"
 FINAL_EXPERIMENT_STATUSES = frozenset({"stopped", "aborted", "error"})
 
+# ---------------------------------------------------------------------------
+# 版本化迁移框架（2026-08-23 建立，V2 回归事故后）
+#
+# 纪律（见 docs/V2-regression-postmortem.md 教训）：
+# - 一个迁移一个事务，失败整体回滚，绝不出现半迁移状态
+# - 迁移内禁用 executescript（会隐式提交），全部用 execute 逐条执行
+# - 新增迁移必须同时提供「旧库升级」测试（tests/test_migrations.py）
+# - SCHEMA 保持为 version 1（V1 baseline）结构；新库直建即 version 1
+# ---------------------------------------------------------------------------
+SCHEMA_VERSION = 1
+
+# 迁移注册表：{版本号: 迁移函数(conn)}，版本号单调递增、必须 <= SCHEMA_VERSION
+MIGRATIONS: Dict[int, Any] = {}
+
 
 def _db_path() -> str:
     return os.environ.get("EC_DB_PATH", str(DEFAULT_DB))
@@ -115,9 +129,57 @@ def _conn() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """建表（幂等）。应用启动时调用。"""
-    with _conn() as conn:
+    """幂等初始化：全新库建 V1 结构并标记 version 1；历史库逐步迁移到 SCHEMA_VERSION。
+
+    迁移纪律（V2 回归事故教训）：
+    - 每个迁移独立事务，失败整体回滚，绝不留下半迁移状态；
+    - 迁移内禁用 executescript（会隐式提交），全部用 execute 逐条执行；
+    - 新增迁移必须同时提供「旧库升级」测试（tests/test_migrations.py）。
+    """
+    conn = _conn()
+    try:
+        _apply_migrations(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """确保 schema_migrations 表存在，并把库推进到 SCHEMA_VERSION。"""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        " version INTEGER PRIMARY KEY,"
+        " applied_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
+        ")"
+    )
+    applied = {r["version"] for r in conn.execute("SELECT version FROM schema_migrations")}
+    if not applied:
+        # 全新库 或 未迁移的 V1 历史库：当前 SCHEMA 即 version 1 结构（带数据时保留）
         conn.executescript(SCHEMA)
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)")
+        return
+    # 已迁移库：幂等确保基础表存在（IF NOT EXISTS 全表/索引/触发器，无副作用），
+    # 然后逐版本应用到 SCHEMA_VERSION。
+    conn.executescript(SCHEMA)
+    for version in sorted(MIGRATIONS):
+        if version in applied or version > SCHEMA_VERSION:
+            continue
+        _run_migration(conn, version)
+
+
+def _run_migration(conn: sqlite3.Connection, version: int) -> None:
+    """以独立事务执行一个迁移：成功则记录版本并提交，失败整体回滚。"""
+    conn.execute("BEGIN")
+    try:
+        MIGRATIONS[version](conn)
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
 
 
 # ---------------- 实验生命周期 ----------------
