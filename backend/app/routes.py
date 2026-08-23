@@ -11,7 +11,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 
-from . import analysis, storage
+from . import analysis, measurement, storage
 from .broadcast import BroadcastHub
 from .drivers import DeviceDriver, MockDevice, load_mock_config
 from .persistence import persist
@@ -66,6 +66,24 @@ async def stop_acquisition() -> None:
     await _hub.close_all(code=1001, reason="server shutdown")
 
 
+def _measurement_params() -> dict:
+    """取当前驱动的 I–V 计算参数（电池常数/温补系数/协议元数据）。
+
+    真实硬件驱动接入后从驱动配置读取；Mock 从 MockDeviceConfig 读取。
+    缺省使用标准值，保证旧/测试驱动也能走通。
+    """
+    config = getattr(_driver, "config", None)
+    cell = getattr(config, "cell_constant_per_cm", 1.0)
+    alpha = getattr(config, "alpha_per_c", 0.02)
+    return {
+        "cell_constant_per_cm": cell,
+        "alpha_per_c": alpha,
+        "device_id": getattr(config, "device_id", "MOCK-IV-01"),
+        "firmware_version": getattr(config, "firmware_version", "0.1.0"),
+        "range_id": getattr(config, "range_id", "WIDE"),
+    }
+
+
 async def _acquisition_loop() -> None:
     """后台采集循环：实验 running 期间按配置频率读取 → 落库 → 广播。
 
@@ -96,19 +114,9 @@ async def _acquisition_loop() -> None:
                     )
                     await asyncio.sleep(_sample_period_seconds)
                     continue
-                frame = {
-                    "timestamp": round(elapsed, 2),
-                    "ec": reading.ec,
-                    "temperature": reading.temperature,
-                    "status": "running",
-                }
+                frame = _build_frame(elapsed, reading)
                 # 先落库再推送：客户端收到帧时，该帧必然已进入持久化队列（避免停止时丢帧）
-                _enqueue_frame(
-                    frame["timestamp"],
-                    frame["ec"],
-                    frame["temperature"],
-                    reading.quality_flags,
-                )
+                _enqueue_frame(frame)
                 await broadcast(frame)
             await asyncio.sleep(_sample_period_seconds)
         except asyncio.CancelledError:
@@ -119,17 +127,52 @@ async def _acquisition_loop() -> None:
             await asyncio.sleep(0.1)
 
 
+def _build_frame(elapsed: float, reading) -> dict:
+    """把一次读数组装成协议帧。
+
+    - 读数含 U/I/T（complete_for_iv）：走软件计算链 G=I/U → κ(T) → κ25，
+      帧补全 I–V 字段；旧字段 ec 仍是 κ25 的兼容别名，temperature 仍为温度。
+    - 读数只有 ec/temperature（旧驱动或 dropout 后仍完整）：回退 V1 简化帧。
+    """
+    params = _measurement_params()
+    quality = "|".join(reading.quality_flags) or None
+    base = {
+        "timestamp": round(elapsed, 2),
+        "temperature": reading.temperature,
+        "status": "running",
+        "quality_flags": quality,
+    }
+    if reading.complete_for_iv:
+        result = measurement.compute_chain(
+            reading.voltage_v,
+            reading.current_a,
+            reading.temperature,
+            params["cell_constant_per_cm"],
+            params["alpha_per_c"],
+        )
+        return {
+            **base,
+            "ec": round(result.kappa_25_us_cm, 1),
+            "schema_version": 2,
+            "device_id": params["device_id"],
+            "firmware_version": params["firmware_version"],
+            "range_id": params["range_id"],
+            "voltage_raw_v": reading.voltage_v,
+            "current_raw_a": reading.current_a,
+            "temperature_raw_c": reading.temperature,
+            "conductance_s": result.conductance_s,
+            "kappa_t_us_cm": result.kappa_t_us_cm,
+            "kappa_25_us_cm": result.kappa_25_us_cm,
+        }
+    return {**base, "ec": reading.ec}
+
+
 def _utc_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _frame_to_row(
-    t_seconds: float,
-    ec: float,
-    temperature: float,
-    quality_flags: tuple[str, ...] = (),
-) -> dict:
-    """把一帧实时数据转成 raw_frames 行（带溯源字段）。"""
+def _frame_to_row(frame: dict) -> dict:
+    """把一帧实时数据转成 raw_frames 行（带溯源字段与 I–V 计算列）。"""
     return {
         "experiment_id": state.experiment_db_id,
         "sample_id": state.sample_id,
@@ -137,26 +180,24 @@ def _frame_to_row(
         "seq_no": state.next_seq(),
         "timestamp_utc": _utc_now(),
         "monotonic_ms": int(time.monotonic() * 1000),
-        "t_seconds": t_seconds,
-        "ec_raw": ec,
-        "temperature_raw": temperature,
-        "k25": None,
-        "quality_flags": "|".join(quality_flags) or None,
+        "t_seconds": frame.get("timestamp"),
+        "ec_raw": frame.get("ec"),
+        "temperature_raw": frame.get("temperature"),
+        "k25": frame.get("kappa_25_us_cm"),
+        "quality_flags": frame.get("quality_flags"),
         "status": state.status,
+        "voltage_raw_v": frame.get("voltage_raw_v"),
+        "current_raw_a": frame.get("current_raw_a"),
+        "conductance_s": frame.get("conductance_s"),
+        "kappa_t_us_cm": frame.get("kappa_t_us_cm"),
+        "kappa_25_us_cm": frame.get("kappa_25_us_cm"),
     }
 
 
-def _enqueue_frame(
-    t_seconds: float,
-    ec: float,
-    temperature: float,
-    quality_flags: tuple[str, ...] = (),
-) -> None:
+def _enqueue_frame(frame: dict) -> None:
     """后台异步落库（仅当前有实验上下文时）。"""
     if state.experiment_db_id is not None:
-        persist.enqueue_frame(
-            _frame_to_row(t_seconds, ec, temperature, quality_flags)
-        )
+        persist.enqueue_frame(_frame_to_row(frame))
 
 
 @router.websocket("/ws/stream")
