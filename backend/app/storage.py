@@ -29,7 +29,7 @@ FINAL_EXPERIMENT_STATUSES = frozenset({"stopped", "aborted", "error"})
 # - 新增迁移必须同时提供「旧库升级」测试（tests/test_migrations.py）
 # - SCHEMA 保持为 version 1（V1 baseline）结构；新库直建即 version 1
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _migrate_v2(conn: sqlite3.Connection) -> None:
@@ -60,10 +60,72 @@ def _migrate_v3(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE samples ADD COLUMN qc_checked_at_utc TEXT")
 
 
+def _migrate_v4(conn: sqlite3.Connection) -> None:
+    """v4：raw_frames.ec_raw 解除 NOT NULL（真实原始帧可无 ec）。
+
+    CV 数据电压可为负 -> 计算链拒绝 -> ec 为 NULL；V1 遗留 ec_raw NOT NULL
+    约束不再成立。按 V2 教训 #2 重建表：同一事务内 DROP/CREATE/COPY/RENAME
+    + 重建索引/触发器 + 行数校验。
+    """
+    old_count = conn.execute("SELECT COUNT(*) FROM raw_frames").fetchone()[0]
+    conn.execute(
+        """
+        CREATE TABLE raw_frames_v4 (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            experiment_id  INTEGER NOT NULL REFERENCES experiments(id),
+            sample_id      TEXT,
+            sensor_path_id TEXT NOT NULL,
+            seq_no         INTEGER,
+            timestamp_utc  TEXT,
+            monotonic_ms   INTEGER,
+            t_seconds      REAL,
+            ec_raw         REAL,
+            temperature_raw REAL NOT NULL,
+            k25            REAL,
+            quality_flags  TEXT,
+            status         TEXT,
+            voltage_raw_v  REAL,
+            current_raw_a  REAL,
+            conductance_s  REAL,
+            kappa_t_us_cm  REAL,
+            kappa_25_us_cm REAL,
+            inserted_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO raw_frames_v4 "
+        "(id, experiment_id, sample_id, sensor_path_id, seq_no, timestamp_utc, monotonic_ms, "
+        "t_seconds, ec_raw, temperature_raw, k25, quality_flags, status, voltage_raw_v, "
+        "current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm, inserted_at_utc) "
+        "SELECT id, experiment_id, sample_id, sensor_path_id, seq_no, timestamp_utc, monotonic_ms, "
+        "t_seconds, ec_raw, temperature_raw, k25, quality_flags, status, voltage_raw_v, "
+        "current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm, inserted_at_utc "
+        "FROM raw_frames"
+    )
+    new_count = conn.execute("SELECT COUNT(*) FROM raw_frames_v4").fetchone()[0]
+    if new_count != old_count:
+        raise RuntimeError(f"v4 row count mismatch: old={old_count} new={new_count}")
+    conn.execute("DROP TABLE raw_frames")
+    conn.execute("ALTER TABLE raw_frames_v4 RENAME TO raw_frames")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_frames_exp ON raw_frames(experiment_id, id)")
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS block_raw_frames_update "
+        "BEFORE UPDATE ON raw_frames "
+        "BEGIN SELECT RAISE(ABORT, 'raw_frames is append-only: UPDATE is not allowed'); END"
+    )
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS block_raw_frames_delete "
+        "BEFORE DELETE ON raw_frames "
+        "BEGIN SELECT RAISE(ABORT, 'raw_frames is append-only: DELETE is not allowed'); END"
+    )
+
+
 # 迁移注册表：{版本号: 迁移函数(conn)}，版本号单调递增、必须 <= SCHEMA_VERSION
 MIGRATIONS: Dict[int, Any] = {
     2: _migrate_v2,
     3: _migrate_v3,
+    4: _migrate_v4,
 }
 
 

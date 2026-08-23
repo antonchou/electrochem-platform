@@ -13,7 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocke
 
 from . import analysis, measurement, stability, storage
 from .broadcast import BroadcastHub
-from .drivers import DeviceDriver, MockDevice, load_mock_config
+from .drivers import (
+    CsvPlaybackConfig,
+    CsvPlaybackDriver,
+    DeviceDriver,
+    MockDevice,
+    load_mock_config,
+)
 from .persistence import persist
 from .schemas import ControlResponse, ExperimentStartRequest, FitRequest
 from .state import state
@@ -39,14 +45,29 @@ async def broadcast(payload: dict) -> int:
     return await _hub.publish(payload)
 
 
+def _build_driver() -> tuple[DeviceDriver, float]:
+    """按环境变量选择采集驱动（真实数据接入测试用）。
+
+    - EC_DRIVER=csv + EC_CSV_PATH=... → CsvPlaybackDriver（回放 echemdb 数据）
+    - 缺省 → MockDevice（仿真）
+    """
+    kind = os.environ.get("EC_DRIVER", "mock").strip().lower()
+    if kind == "csv":
+        path = os.environ.get("EC_CSV_PATH", "")
+        if not path:
+            raise ValueError("EC_CSV_PATH is required when EC_DRIVER=csv")
+        cfg = CsvPlaybackConfig(path=path)
+        return CsvPlaybackDriver(cfg), 1.0 / cfg.sample_rate_hz
+    config = load_mock_config()
+    return MockDevice(config), 1.0 / config.sample_rate_hz
+
+
 async def start_acquisition() -> None:
     """启动单一采集任务（幂等）。"""
     global _acquisition_task, _driver, _sample_period_seconds
     if _acquisition_task is None or _acquisition_task.done():
-        config = load_mock_config()
-        _driver = MockDevice(config)
+        _driver, _sample_period_seconds = _build_driver()
         await _driver.connect()
-        _sample_period_seconds = 1.0 / config.sample_rate_hz
         _acquisition_task = asyncio.create_task(_acquisition_loop())
 
 
@@ -107,7 +128,7 @@ async def _acquisition_loop() -> None:
                     or state.experiment_db_id != experiment_db_id
                 ):
                     continue
-                if not reading.complete_for_conductivity:
+                if not reading.complete_for_conductivity and not reading.complete_for_iv:
                     logger.warning(
                         "设备读数不完整，跳过本周期: flags=%s",
                         reading.quality_flags,
@@ -143,13 +164,33 @@ def _build_frame(elapsed: float, reading) -> dict:
         "quality_flags": quality,
     }
     if reading.complete_for_iv:
-        result = measurement.compute_chain(
-            reading.voltage_v,
-            reading.current_a,
-            reading.temperature,
-            params["cell_constant_per_cm"],
-            params["alpha_per_c"],
-        )
+        try:
+            result = measurement.compute_chain(
+                reading.voltage_v,
+                reading.current_a,
+                reading.temperature,
+                params["cell_constant_per_cm"],
+                params["alpha_per_c"],
+            )
+        except ValueError as exc:
+            # CV 数据的电压是电极电位（可为负/零），不满足激励电压>0的物理前提。
+            # 原始 U/I/T 仍落库（Raw 不可变），Derived 标记 COMPUTE_INVALID，不崩溃。
+            logger.warning("计算链拒绝该帧: %s flags=%s", exc, reading.quality_flags)
+            return {
+                **base,
+                "ec": None,
+                "schema_version": 2,
+                "device_id": params["device_id"],
+                "firmware_version": params["firmware_version"],
+                "range_id": params["range_id"],
+                "voltage_raw_v": reading.voltage_v,
+                "current_raw_a": reading.current_a,
+                "temperature_raw_c": reading.temperature,
+                "conductance_s": None,
+                "kappa_t_us_cm": None,
+                "kappa_25_us_cm": None,
+                "quality_flags": (quality + "|" if quality else "") + "COMPUTE_INVALID",
+            }
         return {
             **base,
             "ec": round(result.kappa_25_us_cm, 1),
