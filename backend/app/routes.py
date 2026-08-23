@@ -11,7 +11,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 
-from . import analysis, measurement, storage
+from . import analysis, measurement, stability, storage
 from .broadcast import BroadcastHub
 from .drivers import DeviceDriver, MockDevice, load_mock_config
 from .persistence import persist
@@ -278,6 +278,7 @@ async def stop() -> ControlResponse:
     if changed and exp_id is not None:
         # 仅在 running→stopped 时结束实验：重复 stop 不再刷新 ended_at_utc
         await persist.flush()  # 确保在途帧先落库
+        await _compute_and_store_qc(exp_id)
         await persist.finish_experiment(exp_id, "stopped")
         await broadcast({"status": state.status})
     return ControlResponse(
@@ -286,6 +287,38 @@ async def stop() -> ControlResponse:
         experiment_id=exp_id,
         message=None if changed else "当前没有运行中的实验",
     )
+
+
+async def _compute_and_store_qc(exp_id: int) -> None:
+    """实验停止时，对已落库的 κ25 帧做一次判稳，把 QC 结果写回 samples（REQ-D-003）。
+
+    纯增量：帧不足或计算异常时跳过写 QC，不影响 stop 主流程。
+    """
+    try:
+        rows = await asyncio.to_thread(
+            storage.get_frames, exp_id, limit=100_000
+        )
+        if not rows:
+            return
+        kappa25 = [r["kappa_25_us_cm"] for r in rows if r.get("kappa_25_us_cm") is not None]
+        flags = [r.get("quality_flags") or "" for r in rows]
+        if len(kappa25) < 3:
+            return
+        result = stability.check_stability(kappa25, quality_flags=flags)
+        sample_id = rows[-1].get("sample_id") or state.sample_id
+        sensor_path_id = rows[-1].get("sensor_path_id") or state.sensor_path_id
+        await persist.update_sample_qc(
+            experiment_id=exp_id,
+            sample_id=sample_id,
+            sensor_path_id=sensor_path_id,
+            qc_status=result.status,
+            qc_reason=result.reason,
+            representative_value=result.representative_value,
+            k25_median=result.mean,
+            k25_sd=result.std,
+        )
+    except Exception:
+        logger.exception("QC 计算失败，跳过（不影响 stop 主流程）")
 
 
 @router.post("/api/experiment/reset")

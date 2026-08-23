@@ -226,6 +226,45 @@ def test_debug_burst_count_is_bounded(client):
     assert client.post("/api/debug/burst?count=10001").status_code == 422
 
 
+# ---------------- 判稳与 QC（REQ-D-003） ----------------
+
+def test_stop_writes_qc_to_samples(client):
+    """实验停止时自动判稳，QC 结果（状态/原因/代表值/统计量）写入 samples。"""
+    import time as _time
+
+    exp_id = client.post("/api/experiment/start").json()["experiment_id"]
+    # 等够 ≥ min_samples(10) 帧（默认 10Hz）：约 1.6s → ~16 帧，稳定场景应判 PASS
+    _time.sleep(1.6)
+    client.post("/api/experiment/stop")
+
+    detail = client.get(f"/api/experiments/{exp_id}").json()
+    samples = detail["samples"]
+    assert len(samples) == 1
+    s = samples[0]
+    assert s["qc_status"] in {"PASS", "WARN", "FAIL"}
+    assert s["qc_reason"]
+    assert s["qc_checked_at_utc"] is not None
+    # 帧数足够 + mock 稳定场景：应判 PASS，代表值非空
+    assert s["qc_status"] == "PASS"
+    assert s["representative_value"] is not None
+    assert s["k25_median"] is not None
+    client.post("/api/experiment/reset")
+
+
+def test_short_experiment_skips_qc(client):
+    """帧不足（<3）时停止：不写 QC，不影响 stop 主流程。"""
+    import time as _time
+
+    exp_id = client.post("/api/experiment/start").json()["experiment_id"]
+    _time.sleep(0.1)  # 可能不足 3 帧
+    client.post("/api/experiment/stop")
+    detail = client.get(f"/api/experiments/{exp_id}").json()
+    s = detail["samples"][0]
+    # 允许帧不足跳过（qc_status 为 NULL），但不允许 stop 报错
+    assert detail["status"] == "stopped"
+    client.post("/api/experiment/reset")
+
+
 # ---------------- Review B-3 / B-4 / B-5 回归 ----------------
 
 def test_stop_idempotent_does_not_refresh_ended_at(client):

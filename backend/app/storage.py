@@ -29,7 +29,7 @@ FINAL_EXPERIMENT_STATUSES = frozenset({"stopped", "aborted", "error"})
 # - 新增迁移必须同时提供「旧库升级」测试（tests/test_migrations.py）
 # - SCHEMA 保持为 version 1（V1 baseline）结构；新库直建即 version 1
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _migrate_v2(conn: sqlite3.Connection) -> None:
@@ -46,9 +46,24 @@ def _migrate_v2(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE raw_frames ADD COLUMN kappa_25_us_cm REAL")
 
 
+def _migrate_v3(conn: sqlite3.Connection) -> None:
+    """v3：samples 增加判稳与 QC 字段（REQ-D-003）。
+
+    - qc_status / qc_reason：PASS/WARN/FAIL 判定与失败原因
+    - representative_value：稳定段代表值
+    - qc_checked_at_utc：判稳执行时间
+    - 仅加可空列，旧数据不受影响。
+    """
+    conn.execute("ALTER TABLE samples ADD COLUMN qc_status TEXT")
+    conn.execute("ALTER TABLE samples ADD COLUMN qc_reason TEXT")
+    conn.execute("ALTER TABLE samples ADD COLUMN representative_value REAL")
+    conn.execute("ALTER TABLE samples ADD COLUMN qc_checked_at_utc TEXT")
+
+
 # 迁移注册表：{版本号: 迁移函数(conn)}，版本号单调递增、必须 <= SCHEMA_VERSION
 MIGRATIONS: Dict[int, Any] = {
     2: _migrate_v2,
+    3: _migrate_v3,
 }
 
 
@@ -351,6 +366,52 @@ def upsert_sample(
                 k25_mean,
                 k25_sd,
                 frame_count_delta,
+            ),
+        )
+
+
+# ---------------- 判稳与 QC（REQ-D-003） ----------------
+
+def update_sample_qc(
+    experiment_id: int,
+    sample_id: str,
+    sensor_path_id: str,
+    *,
+    qc_status: Optional[str],
+    qc_reason: Optional[str],
+    representative_value: Optional[float] = None,
+    k25_median: Optional[float] = None,
+    k25_mean: Optional[float] = None,
+    k25_sd: Optional[float] = None,
+) -> None:
+    """把判稳/QC 结果写入 samples（REQ-D-003）。仅更新已存在行；不存在则跳过。"""
+    import datetime
+
+    checked = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    with _conn() as conn:
+        conn.execute(
+            """
+            UPDATE samples SET
+                qc_status            = ?,
+                qc_reason            = ?,
+                representative_value = COALESCE(?, representative_value),
+                k25_median           = COALESCE(?, k25_median),
+                k25_mean             = COALESCE(?, k25_mean),
+                k25_sd               = COALESCE(?, k25_sd),
+                qc_checked_at_utc    = ?
+            WHERE experiment_id = ? AND sample_id = ? AND sensor_path_id = ?
+            """,
+            (
+                qc_status,
+                qc_reason,
+                representative_value,
+                k25_median,
+                k25_mean,
+                k25_sd,
+                checked,
+                experiment_id,
+                sample_id,
+                sensor_path_id,
             ),
         )
 
