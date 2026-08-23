@@ -17,6 +17,26 @@ export interface ExperimentFrame {
   temperature: number;
   /** 状态字段 */
   status: ExperimentStatus;
+  // ---- I–V 测量链路扩展（REQ-M-001/REQ-U-001，后端 v2+ 才下发，均可选） ----
+  /** 协议版本 */
+  schema_version?: number;
+  device_id?: string;
+  firmware_version?: string;
+  range_id?: string;
+  /** 原始电压 V（不可变原始量） */
+  voltage_raw_v?: number;
+  /** 原始电流 A（不可变原始量） */
+  current_raw_a?: number;
+  /** 原始温度 °C（不可变原始量） */
+  temperature_raw_c?: number;
+  /** 电导 G = I/U，S */
+  conductance_s?: number;
+  /** 电导率 κ(T)，μS/cm */
+  kappa_t_us_cm?: number;
+  /** 温补后电导率 κ25，μS/cm */
+  kappa_25_us_cm?: number;
+  /** 质量标志（| 分隔） */
+  quality_flags?: string | null;
 }
 
 /** 纯状态帧（后端在某些时刻只下发状态，如 stopped） */
@@ -66,6 +86,11 @@ export interface SampleSummary {
   k25_mean: number | null;
   k25_sd: number | null;
   frame_count: number;
+  // 判稳与 QC（REQ-D-003，后端 v3+）：实验停止时自动判稳写入
+  qc_status?: string | null;
+  qc_reason?: string | null;
+  representative_value?: number | null;
+  qc_checked_at_utc?: string | null;
 }
 
 /** 实验详情 */
@@ -90,6 +115,12 @@ export interface RawFrame {
   k25: number | null;
   quality_flags: string | null;
   status: string | null;
+  // I–V 计算链列（后端 v2+）
+  voltage_raw_v?: number | null;
+  current_raw_a?: number | null;
+  conductance_s?: number | null;
+  kappa_t_us_cm?: number | null;
+  kappa_25_us_cm?: number | null;
 }
 
 /** 开始实验的可选参数 */
@@ -138,6 +169,19 @@ export interface DataPoint {
   tc: number;
   /** 浓度 mmol/L（可选）。实时帧/历史帧暂无该字段；浓度轴拟合时缺省用序号 1..N 占位 */
   concentration?: number;
+  // ---- I–V 测量链路（REQ-U-001 分层显示，可选） ----
+  /** 原始电压 V */
+  voltage_raw_v?: number;
+  /** 原始电流 A */
+  current_raw_a?: number;
+  /** 电导 G = I/U，S */
+  conductance_s?: number;
+  /** 电导率 κ(T)，μS/cm */
+  kappa_t_us_cm?: number;
+  /** 温补后电导率 κ25，μS/cm */
+  kappa_25_us_cm?: number;
+  /** 质量标志 */
+  quality_flags?: string;
 }
 
 /** 客户端事件总线（供 hooks 订阅） */
@@ -193,5 +237,26 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
   const temperature = parseFiniteNumber(raw.temperature);
   if (timestamp === null || ec === null || temperature === null) return null;
 
-  return { timestamp, ec, temperature, status: status as ExperimentStatus };
+  // I–V 测量链路扩展字段（REQ-M-001/REQ-U-001）：全部可选，缺字段也接受
+  // （兼容旧后端/旧浏览器模拟）。后端 v2+ 才下发，前端拿不到时显示为空。
+  return {
+    timestamp,
+    ec,
+    temperature,
+    status: status as ExperimentStatus,
+    schema_version: typeof raw.schema_version === 'number' ? raw.schema_version : undefined,
+    device_id: typeof raw.device_id === 'string' ? raw.device_id : undefined,
+    firmware_version: typeof raw.firmware_version === 'string' ? raw.firmware_version : undefined,
+    range_id: typeof raw.range_id === 'string' ? raw.range_id : undefined,
+    voltage_raw_v: parseFiniteNumber(raw.voltage_raw_v) ?? undefined,
+    current_raw_a: parseFiniteNumber(raw.current_raw_a) ?? undefined,
+    temperature_raw_c: parseFiniteNumber(raw.temperature_raw_c) ?? undefined,
+    conductance_s: parseFiniteNumber(raw.conductance_s) ?? undefined,
+    kappa_t_us_cm: parseFiniteNumber(raw.kappa_t_us_cm) ?? undefined,
+    kappa_25_us_cm: parseFiniteNumber(raw.kappa_25_us_cm) ?? undefined,
+    quality_flags:
+      typeof raw.quality_flags === 'string' && raw.quality_flags.length > 0
+        ? raw.quality_flags
+        : undefined,
+  };
 }
