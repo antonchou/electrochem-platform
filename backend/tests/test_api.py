@@ -82,8 +82,25 @@ def test_ws_stream_protocol(client):
                 data = msg
                 break
         assert data is not None, "未收到数据帧"
-        assert set(data) == {"timestamp", "ec", "temperature", "status"}
+        # 兼容层：旧 4 字段必须仍在（旧前端不破）
+        assert {"timestamp", "ec", "temperature", "status"} <= set(data)
+        # I–V 扩展字段（REQ-M-001 软件侧）：原始量 + 计算链结果 + 溯源
+        assert {
+            "schema_version",
+            "device_id",
+            "firmware_version",
+            "range_id",
+            "voltage_raw_v",
+            "current_raw_a",
+            "temperature_raw_c",
+            "conductance_s",
+            "kappa_t_us_cm",
+            "kappa_25_us_cm",
+            "quality_flags",
+        } <= set(data)
         assert data["status"] == "running"
+        assert data["ec"] is not None
+        assert data["kappa_25_us_cm"] is not None
         client.post("/api/experiment/stop")
     client.post("/api/experiment/reset")
 

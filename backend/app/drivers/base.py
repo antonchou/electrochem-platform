@@ -10,19 +10,31 @@ from dataclasses import dataclass
 class DriverReading:
     """One unprocessed device reading.
 
-    pH is reserved for a later sensor slice. The current conductivity protocol
-    deliberately exposes only EC and temperature, but keeping the raw driver
-    field here avoids changing the hardware boundary when pH support arrives.
+    pH is reserved for a later sensor slice. The I–V measurement chain
+    (REQ-M-001) needs raw voltage/current/temperature: voltage_v / current_a /
+    temperature are the immutable raw quantities; ec (if set) is a compatible
+    alias for the derived κ25 and must not be treated as a raw hardware value.
     """
 
     ec: float | None
     temperature: float | None
     ph: float | None = None
+    voltage_v: float | None = None
+    current_a: float | None = None
     quality_flags: tuple[str, ...] = ()
 
     @property
     def complete_for_conductivity(self) -> bool:
         return self.ec is not None and self.temperature is not None
+
+    @property
+    def complete_for_iv(self) -> bool:
+        """I–V 链路完整性：U/I/T 齐备才可走计算链。"""
+        return (
+            self.voltage_v is not None
+            and self.current_a is not None
+            and self.temperature is not None
+        )
 
 
 class DeviceDriver(ABC):

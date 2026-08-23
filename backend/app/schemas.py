@@ -8,12 +8,29 @@ ExperimentStatus = Literal["idle", "running", "stopped", "error"]
 
 
 class Frame(BaseModel):
-    """实时数据帧。"""
+    """实时数据帧。
+
+    V1 兼容字段：timestamp / ec / temperature / status（旧前端不变）。
+    I–V 链路扩展（REQ-M-001 + SRS 3.3 软件侧）：电压/电流/温度原始量，
+    G/κ(T)/κ25 可重算结果，以及协议溯源字段。旧字段 ec 仍是 κ25 的别名。
+    """
 
     timestamp: float  # 实验开始后的时间，单位秒
-    ec: float  # 电导率，μS/cm
-    temperature: float  # 温度，°C
+    ec: float  # 电导率，μS/cm（兼容层 = κ25）
+    temperature: float  # 温度，°C（兼容层 = temperature_raw_c）
     status: ExperimentStatus
+    # I–V 链路（软件侧，真实硬件未接时由 Mock 仿真）
+    schema_version: Optional[int] = 2
+    device_id: Optional[str] = None
+    firmware_version: Optional[str] = None
+    range_id: Optional[str] = None
+    voltage_raw_v: Optional[float] = None
+    current_raw_a: Optional[float] = None
+    temperature_raw_c: Optional[float] = None
+    conductance_s: Optional[float] = None
+    kappa_t_us_cm: Optional[float] = None
+    kappa_25_us_cm: Optional[float] = None
+    quality_flags: Optional[str] = None
 
 
 class ControlResponse(BaseModel):
