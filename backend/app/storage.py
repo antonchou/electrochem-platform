@@ -29,10 +29,27 @@ FINAL_EXPERIMENT_STATUSES = frozenset({"stopped", "aborted", "error"})
 # - 新增迁移必须同时提供「旧库升级」测试（tests/test_migrations.py）
 # - SCHEMA 保持为 version 1（V1 baseline）结构；新库直建即 version 1
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+
+def _migrate_v2(conn: sqlite3.Connection) -> None:
+    """v2：raw_frames 增加 I–V 计算链字段（REQ-M-001 软件侧）。
+
+    - voltage_raw_v / current_raw_a：原始 U/I（不可变，替代 ec_raw 语义）
+    - conductance_s / kappa_t_us_cm / kappa_25_us_cm：可重算结果
+    - 仅加可空列，旧数据/旧前端不受影响；不触碰 append-only 触发器。
+    """
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN voltage_raw_v REAL")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN current_raw_a REAL")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN conductance_s REAL")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN kappa_t_us_cm REAL")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN kappa_25_us_cm REAL")
+
 
 # 迁移注册表：{版本号: 迁移函数(conn)}，版本号单调递增、必须 <= SCHEMA_VERSION
-MIGRATIONS: Dict[int, Any] = {}
+MIGRATIONS: Dict[int, Any] = {
+    2: _migrate_v2,
+}
 
 
 def _db_path() -> str:
@@ -148,22 +165,26 @@ def init_db() -> None:
 
 
 def _apply_migrations(conn: sqlite3.Connection) -> None:
-    """确保 schema_migrations 表存在，并把库推进到 SCHEMA_VERSION。"""
+    """确保 schema_migrations 表存在，并把库推进到 SCHEMA_VERSION。
+
+    新库与旧库都从 V1 结构出发，逐版本迁移到 SCHEMA_VERSION，保证两路径结果一致
+    （V2 事故教训 #3：新库直建 vs 旧库升级到同一版本后结构必须相同）。
+    """
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations ("
         " version INTEGER PRIMARY KEY,"
         " applied_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
         ")"
     )
+    conn.executescript(SCHEMA)  # 幂等：基础表/索引/触发器 IF NOT EXISTS
     applied = {r["version"] for r in conn.execute("SELECT version FROM schema_migrations")}
-    if not applied:
-        # 全新库 或 未迁移的 V1 历史库：当前 SCHEMA 即 version 1 结构（带数据时保留）
-        conn.executescript(SCHEMA)
+    if 1 not in applied:
+        # 全新库 或 未迁移的历史库：V1 结构即 SCHEMA（已在上方 executescript 建立）
         conn.execute("INSERT INTO schema_migrations (version) VALUES (1)")
-        return
-    # 已迁移库：幂等确保基础表存在（IF NOT EXISTS 全表/索引/触发器，无副作用），
-    # 然后逐版本应用到 SCHEMA_VERSION。
-    conn.executescript(SCHEMA)
+        # 提交基线标记，清空 sqlite3 legacy 模式自动开启的事务，
+        # 否则后续 _run_migration 的显式 BEGIN 会报 nested transaction。
+        conn.commit()
+        applied.add(1)
     for version in sorted(MIGRATIONS):
         if version in applied or version > SCHEMA_VERSION:
             continue
@@ -336,20 +357,50 @@ def upsert_sample(
 
 # ---------------- 原始帧 ----------------
 
+# raw_frames 全列（含 v2 迁移新增的 I–V 计算链列）。
+# insert_frames 用命名参数；旧帧缺字段时自动补 None，避免 sqlite3 报错。
+_FRAME_COLUMNS = [
+    "experiment_id",
+    "sample_id",
+    "sensor_path_id",
+    "seq_no",
+    "timestamp_utc",
+    "monotonic_ms",
+    "t_seconds",
+    "ec_raw",
+    "temperature_raw",
+    "k25",
+    "quality_flags",
+    "status",
+    "voltage_raw_v",
+    "current_raw_a",
+    "conductance_s",
+    "kappa_t_us_cm",
+    "kappa_25_us_cm",
+]
+
+
 def insert_frames(frames: List[Dict[str, Any]]) -> None:
-    """批量写入原始帧（append-only），并累加对应样品的 frame_count（P2-4）。"""
+    """批量写入原始帧（append-only），并累加对应样品的 frame_count（P2-4）。
+
+    v2 之后 raw_frames 带 I–V 计算链列；旧帧（无新字段）插入时这些列保持 NULL。
+    对缺失字段自动补 None，兼容历史测试/旧调用方的简化帧。
+    """
     if not frames:
         return
+    rows = [{col: f.get(col) for col in _FRAME_COLUMNS} for f in frames]
     with _conn() as conn:
         conn.executemany(
             """
             INSERT INTO raw_frames
                 (experiment_id, sample_id, sensor_path_id, seq_no, timestamp_utc,
-                 monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status)
+                 monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status,
+                 voltage_raw_v, current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm)
             VALUES (:experiment_id, :sample_id, :sensor_path_id, :seq_no, :timestamp_utc,
-                    :monotonic_ms, :t_seconds, :ec_raw, :temperature_raw, :k25, :quality_flags, :status)
+                    :monotonic_ms, :t_seconds, :ec_raw, :temperature_raw, :k25, :quality_flags, :status,
+                    :voltage_raw_v, :current_raw_a, :conductance_s, :kappa_t_us_cm, :kappa_25_us_cm)
             """,
-            frames,
+            rows,
         )
         # 必须按完整样品链路聚合；同一样品编号可能同时走 WIDE/NARROW 等不同通道。
         counts: Dict[tuple[int, str, str], int] = {}
@@ -414,7 +465,8 @@ def get_frames(
         rows = conn.execute(
             """
             SELECT id, sample_id, sensor_path_id, seq_no, timestamp_utc,
-                   monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status
+                   monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status,
+                   voltage_raw_v, current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm
             FROM raw_frames
             WHERE experiment_id = ?
             ORDER BY id ASC
@@ -434,12 +486,17 @@ def count_frames(experiment_id: int) -> int:
 
 
 def export_csv(experiment_id: int) -> str:
-    """导出该实验全部原始帧为 CSV 文本（Excel 可直接打开）。"""
+    """导出该实验全部原始帧为 CSV 文本（Excel 可直接打开）。
+
+    v2 之后含 I–V 计算链列（voltage_raw_v / current_raw_a / conductance_s /
+    kappa_t_us_cm / kappa_25_us_cm），旧列名 ec_raw_us_cm / temperature_raw_c 保留。
+    """
     with _conn() as conn:
         rows = conn.execute(
             """
             SELECT seq_no, timestamp_utc, monotonic_ms, t_seconds,
-                   sensor_path_id, sample_id, ec_raw, temperature_raw, k25, quality_flags, status
+                   sensor_path_id, sample_id, ec_raw, temperature_raw, k25, quality_flags, status,
+                   voltage_raw_v, current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm
             FROM raw_frames
             WHERE experiment_id = ?
             ORDER BY id ASC
@@ -462,6 +519,11 @@ def export_csv(experiment_id: int) -> str:
             "k25_us_cm",
             "quality_flags",
             "status",
+            "voltage_raw_v",
+            "current_raw_a",
+            "conductance_s",
+            "kappa_t_us_cm",
+            "kappa_25_us_cm",
         ]
     )
     for r in rows:
