@@ -106,3 +106,28 @@ def test_export_csv(store):
     assert len(lines) == 4  # 1 表头 + 3 数据行
     assert "sensor_path_id" in lines[0]
     assert "NACL_006" in lines[1]
+
+
+def test_get_recent_frames_returns_tail(store):
+    eid = store.create_experiment("EXP-TAIL", "t", sample_id="S", sensor_path_id="MOCK_EC_IV")
+    store.insert_frames(
+        [
+            {
+                "experiment_id": eid,
+                "sample_id": "S",
+                "sensor_path_id": "MOCK_EC_IV",
+                "seq_no": i,
+                "timestamp_utc": f"2026-08-19T00:00:{i:02d}Z",
+                "monotonic_ms": i * 100,
+                "t_seconds": float(i),
+                "ec_raw": float(i),
+                "temperature_raw": 25.0,
+                "k25": None,
+                "quality_flags": None,
+                "status": "running",
+            }
+            for i in range(1, 11)
+        ]
+    )
+    tail = store.get_recent_frames(eid, limit=3)
+    assert [row["seq_no"] for row in tail] == [8, 9, 10]

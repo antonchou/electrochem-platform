@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from . import storage
+
+logger = logging.getLogger("app.persistence")
 
 
 @dataclass(slots=True)
@@ -26,6 +29,7 @@ class PersistService:
         self._queue: Optional[asyncio.Queue[object]] = None
         self._task: Optional[asyncio.Task] = None
         self._accepting = False
+        self._error: BaseException | None = None
 
     async def start(self) -> None:
         # 队列在应用事件循环内创建，确保与调用方同 loop（避免测试/多实例下"不同事件循环"错误）
@@ -34,6 +38,7 @@ class PersistService:
             return
         self._queue = asyncio.Queue()
         self._accepting = True
+        self._error = None
         self._task = asyncio.create_task(self._drain(), name="sqlite-frame-writer")
 
     async def stop(self) -> None:
@@ -74,6 +79,20 @@ class PersistService:
         if self._accepting and self._queue is not None:
             self._queue.put_nowait(frame)
 
+    async def _commit_batch(self, batch: List[Dict[str, Any]]) -> None:
+        """Write one batch. On failure, stop accepting so RAM cannot grow unbounded."""
+        if not batch:
+            return
+        try:
+            await asyncio.to_thread(storage.insert_frames, list(batch))
+            batch.clear()
+        except Exception as exc:
+            logger.exception("frame persist failed; refusing further frames")
+            self._accepting = False
+            self._error = exc
+            batch.clear()
+            raise
+
     async def _drain(self) -> None:
         batch: List[Dict[str, Any]] = []
         deadline: float | None = None
@@ -83,35 +102,48 @@ class PersistService:
                 item = await asyncio.wait_for(self._queue.get(), timeout=timeout)
             except asyncio.TimeoutError:
                 if batch:
-                    await asyncio.to_thread(storage.insert_frames, batch)
-                    batch.clear()
+                    try:
+                        await self._commit_batch(batch)
+                    except Exception:
+                        deadline = None
+                        continue
                 deadline = None
                 continue
 
             if item is _STOP:
                 if batch:
-                    await asyncio.to_thread(storage.insert_frames, batch)
+                    try:
+                        await self._commit_batch(batch)
+                    except Exception:
+                        pass
                 return
             if isinstance(item, _FlushBarrier):
                 try:
                     if batch:
-                        await asyncio.to_thread(storage.insert_frames, batch)
-                        batch.clear()
-                    item.completed.set_result(None)
+                        await self._commit_batch(batch)
+                    if self._error is not None:
+                        item.completed.set_exception(self._error)
+                    else:
+                        item.completed.set_result(None)
                 except Exception as exc:
-                    item.completed.set_exception(exc)
-                    raise
+                    if not item.completed.done():
+                        item.completed.set_exception(exc)
                 deadline = None
                 continue
 
             if not isinstance(item, dict):
                 raise TypeError(f"unsupported persistence queue item: {type(item)!r}")
+            if not self._accepting:
+                continue
             batch.append(item)
             if deadline is None:
                 deadline = asyncio.get_running_loop().time() + 0.5
             if len(batch) >= 200:
-                await asyncio.to_thread(storage.insert_frames, batch)
-                batch.clear()
+                try:
+                    await self._commit_batch(batch)
+                except Exception:
+                    deadline = None
+                    continue
                 deadline = None
 
     # ---------- 实验生命周期（少量写，直接等待） ----------

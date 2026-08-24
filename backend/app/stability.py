@@ -41,6 +41,7 @@ class StabilityResult:
     status: QcStatus
     reason: str
     mean: float | None = None
+    median: float | None = None
     std: float | None = None
     cv: float | None = None
     slope: float | None = None
@@ -96,6 +97,12 @@ def check_stability(
     if not values:
         return StabilityResult(status="FAIL", reason="empty_data", n=0)
 
+    if quality_flags is not None and len(quality_flags) != len(values):
+        raise ValueError(
+            "quality_flags must be the same length as values "
+            f"(got {len(quality_flags)} flags for {len(values)} values)"
+        )
+
     window_values = values[-cfg.window :]
     n = len(window_values)
     if timestamps is not None:
@@ -125,6 +132,7 @@ def check_stability(
         )
 
     mean = statistics.fmean(window_values)
+    median = statistics.median(window_values)
     std = statistics.stdev(window_values) if n >= 2 else 0.0
     cv = std / abs(mean) if abs(mean) > 1e-12 else float("inf")
     slope = _linear_slope(window_ts, window_values)
@@ -151,12 +159,34 @@ def check_stability(
         status=status,
         reason=reason,
         mean=mean,
+        median=median,
         std=std,
         cv=cv,
         slope=slope,
         n=n,
         representative_value=representative,
     )
+
+
+def qc_series_from_frames(rows: list[dict]) -> tuple[list[float], list[str]]:
+    """Build aligned κ25 / quality-flag series for stop-time QC.
+
+    Drops rows without κ25 and rows marked COMPUTE_INVALID so flags stay
+    aligned with the numeric window. Hard flags (SATURATED, …) remain.
+    """
+    values: list[float] = []
+    flags: list[str] = []
+    for row in rows:
+        kappa25 = row.get("kappa_25_us_cm")
+        if kappa25 is None:
+            continue
+        flag = row.get("quality_flags") or ""
+        parts = [part for part in flag.split("|") if part]
+        if "COMPUTE_INVALID" in parts:
+            continue
+        values.append(float(kappa25))
+        flags.append(flag)
+    return values, flags
 
 
 def _safe_mean(values: list[float]) -> float | None:

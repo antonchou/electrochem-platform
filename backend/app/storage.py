@@ -574,6 +574,30 @@ def get_samples(experiment_id: int) -> List[Dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
+def get_recent_frames(experiment_id: int, *, limit: int = 500) -> List[Dict[str, Any]]:
+    """Return the newest `limit` frames in chronological order (oldest→newest).
+
+    Used by stop-time QC so the stability window is the experiment tail, not a
+    prefix of the first 100k rows.
+    """
+    if not 1 <= limit <= 1_000_000:
+        raise ValueError("limit must be between 1 and 1000000")
+    with _conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, sample_id, sensor_path_id, seq_no, timestamp_utc,
+                   monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status,
+                   voltage_raw_v, current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm
+            FROM raw_frames
+            WHERE experiment_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (experiment_id, limit),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+
 def get_frames(
     experiment_id: int,
     *,

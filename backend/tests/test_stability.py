@@ -29,6 +29,8 @@ def test_stable_series_passes():
     assert result.mean is not None
     assert 90 < result.mean < 110
     assert result.cv is not None and result.cv < 0.01
+    assert result.median is not None
+    assert 90 < result.median < 110
 
 
 def test_drift_fails():
@@ -52,7 +54,7 @@ def test_jump_high_variation_fails():
 
 def test_hard_quality_flag_fails():
     values = _stable_series()
-    flags = [""] * 35 + ["SATURATED"]
+    flags = [""] * (len(values) - 1) + ["SATURATED"]
     result = check_stability(values, quality_flags=flags)
     assert result.status == "FAIL"
     assert result.reason == "hard_quality_flag"
@@ -85,6 +87,29 @@ def test_config_thresholds_are_respected():
     loose = StabilityConfig(cv_warn=0.20, cv_fail=0.50)
     result = check_stability(values, config=loose)
     assert result.status == "PASS"
+
+
+def test_quality_flags_must_match_values_length():
+    with pytest.raises(ValueError, match="same length"):
+        check_stability([1.0, 2.0, 3.0], quality_flags=["SATURATED"])
+
+
+def test_qc_series_from_frames_aligns_and_drops_invalid():
+    from app.stability import qc_series_from_frames
+
+    rows = [
+        {"kappa_25_us_cm": 100.0, "quality_flags": "SIMULATED"},
+        {"kappa_25_us_cm": None, "quality_flags": "COMPUTE_INVALID"},
+        {"kappa_25_us_cm": 101.0, "quality_flags": "SIMULATED|COMPUTE_INVALID"},
+        {"kappa_25_us_cm": 102.0, "quality_flags": "SIMULATED"},
+        {"kappa_25_us_cm": 103.0, "quality_flags": "SATURATED"},
+    ]
+    values, flags = qc_series_from_frames(rows)
+    assert values == [100.0, 102.0, 103.0]
+    assert flags == ["SIMULATED", "SIMULATED", "SATURATED"]
+    result = check_stability(values, quality_flags=flags)
+    assert result.status == "FAIL"
+    assert result.reason == "hard_quality_flag"
 
 
 def test_timestamps_affect_slope():

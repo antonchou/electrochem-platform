@@ -49,6 +49,26 @@ def test_health(client):
     assert r.json()["status"] == "ok"
 
 
+def test_current_experiment_and_default_sensor_path(client):
+    idle = client.get("/api/experiment/current").json()
+    assert idle["status"] == "idle"
+    assert idle["experiment_id"] is None
+
+    started = client.post("/api/experiment/start").json()
+    current = client.get("/api/experiment/current").json()
+    assert current["status"] == "running"
+    assert current["experiment_id"] == started["experiment_id"]
+    detail = client.get(f"/api/experiments/{started['experiment_id']}").json()
+    assert detail["sensor_path_id"] == "MOCK_EC_IV"
+
+    client.post("/api/experiment/stop")
+    stopped = client.get("/api/experiment/current").json()
+    assert stopped["status"] == "stopped"
+    assert stopped["experiment_id"] == started["experiment_id"]
+    client.post("/api/experiment/reset")
+    assert client.get("/api/experiment/current").json()["experiment_id"] is None
+
+
 def test_control_state_machine(client):
     # idle -> running
     r = client.post("/api/experiment/start")
@@ -60,7 +80,9 @@ def test_control_state_machine(client):
 
     # 重复 start 应拒绝
     r = client.post("/api/experiment/start")
+    assert r.status_code == 200
     assert r.json()["ok"] is False
+    assert r.json()["message"] == "实验已在进行中"
 
     # running -> stopped
     r = client.post("/api/experiment/stop")
@@ -205,9 +227,12 @@ def test_frames_persist_and_export(client):
         values = [ln.split(",")[idx] for ln in csv_text.splitlines()[1:] if ln.strip()]
         assert any(v not in ("", "None") for v in values), f"{col} 列全空"
 
-    json_resp = client.get(f"/api/experiments/{exp_id}/export.json").json()
-    assert len(json_resp["frames"]) >= 3
-    assert json_resp["frames"][0]["sensor_path_id"] == "BA121S_LOW"
+    json_resp = client.get(f"/api/experiments/{exp_id}/export.json")
+    assert json_resp.status_code == 200
+    assert "attachment" in json_resp.headers.get("content-disposition", "")
+    body = json_resp.json()
+    assert len(body["frames"]) >= 3
+    assert body["frames"][0]["sensor_path_id"] == "BA121S_LOW"
 
 
 def test_experiment_404(client):
@@ -255,6 +280,7 @@ def test_stop_writes_qc_to_samples(client):
     assert s["qc_status"] == "PASS"
     assert s["representative_value"] is not None
     assert s["k25_median"] is not None
+    assert s["k25_mean"] is not None
     client.post("/api/experiment/reset")
 
 
@@ -269,6 +295,8 @@ def test_short_experiment_skips_qc(client):
     s = detail["samples"][0]
     # 允许帧不足跳过（qc_status 为 NULL），但不允许 stop 报错
     assert detail["status"] == "stopped"
+    if detail["frame_count"] < 3:
+        assert s["qc_status"] is None
     client.post("/api/experiment/reset")
 
 

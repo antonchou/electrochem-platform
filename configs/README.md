@@ -21,22 +21,17 @@ configs/
 
 ```json
 {
-  "schema_version": 1,
-  "device": {
-    "id": "mock-ec-iv-01",
-    "driver": "MockECDriver",
-    "sensor_path_id": "MOCK_EC_IV_01",
-    "unit": "us_cm",
-    "sample_rate_hz": 10,
-    "measurement_model": "electrode_iv_to_kappa25"
-  },
-  "experiment": {
-    "template_id": "nacl-gradient",
-    "samples": ["BLANK", "NACL_002", "NACL_004", "NACL_008"],
-    "duration_s": 300
-  }
+  "schema_version": "1.0.0",
+  "driver": "mock",
+  "scenario": "stable",
+  "seed": 2026,
+  "sample_rate_hz": 10.0,
+  "base_ec": 1413.0,
+  "base_temperature": 25.0
 }
 ```
+
+完整可加载示例见 `configs/devices/mock.example.json`（扁平字段，与 `MockDeviceConfig.from_mapping` 一致）。
 
 Mock 后端可通过 `EC_MOCK_CONFIG=configs/devices/mock.example.json` 加载完整配置；
 `EC_MOCK_SCENARIO`、`EC_SAMPLE_RATE_HZ`、`EC_MOCK_SEED` 可覆盖常用运行参数。

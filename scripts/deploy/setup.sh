@@ -31,12 +31,17 @@ cd "$PROJECT_DIR/backend"
 if [ ! -d .venv ]; then
   python3 -m venv .venv
 fi
-.venv/bin/pip install -r requirements.txt
+if [ -f requirements.lock.txt ]; then
+  .venv/bin/pip install -r requirements.lock.txt
+else
+  .venv/bin/pip install -r requirements.txt
+fi
 
 # ---------- 3. systemd 服务 ----------
 echo "[3/4] 安装 systemd 服务"
-SVC_BACKEND="/tmp/ec-backend.service"
-SVC_WEB="/tmp/ec-web.service"
+UNIT_DIR="$(mktemp -d)"
+SVC_BACKEND="${UNIT_DIR}/ec-backend.service"
+SVC_WEB="${UNIT_DIR}/ec-web.service"
 
 cat > "$SVC_BACKEND" <<EOF
 [Unit]
@@ -46,9 +51,11 @@ After=network.target
 [Service]
 User=${DEPLOY_USER}
 WorkingDirectory=${PROJECT_DIR}/backend
-ExecStart=${PROJECT_DIR}/backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+ExecStart="${PROJECT_DIR}/backend/.venv/bin/python" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -63,16 +70,19 @@ Requires=ec-backend.service
 [Service]
 User=${DEPLOY_USER}
 WorkingDirectory=${PROJECT_DIR}/frontend
-ExecStart=/usr/bin/python3 -m http.server 5173 --bind 0.0.0.0 --directory ${PROJECT_DIR}/frontend/dist
+ExecStart=/usr/bin/python3 -m http.server 5173 --bind 127.0.0.1 --directory "${PROJECT_DIR}/frontend/dist"
 Restart=always
 RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo cp "$SVC_BACKEND" /etc/systemd/system/ec-backend.service
-sudo cp "$SVC_WEB" /etc/systemd/system/ec-web.service
+sudo install -m 0644 "$SVC_BACKEND" /etc/systemd/system/ec-backend.service
+sudo install -m 0644 "$SVC_WEB" /etc/systemd/system/ec-web.service
+rm -rf "$UNIT_DIR"
 sudo systemctl daemon-reload
 sudo systemctl enable ec-backend ec-web
 sudo systemctl restart ec-backend
