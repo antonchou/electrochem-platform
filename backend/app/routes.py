@@ -274,6 +274,25 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
         if state.status == "running":
             return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
+        # 停止后续跑同一条实验（同样品）；改样品编号则开新实验。
+        resume_sample = body.sample_id or state.sample_id
+        if (
+            state.status == "stopped"
+            and state.experiment_db_id is not None
+            and resume_sample == state.sample_id
+        ):
+            exp_id = state.experiment_db_id
+            reopened = await persist.reopen_experiment(exp_id)
+            if reopened and await state.resume():
+                await broadcast({"status": "running", "experiment_id": exp_id})
+                return ControlResponse(
+                    ok=True,
+                    status="running",
+                    experiment_id=exp_id,
+                    sample_id=state.sample_id,
+                    resumed=True,
+                )
+
         sample_id = body.sample_id or DEFAULT_SAMPLE_ID
         sensor_path_id = body.sensor_path_id or DEFAULT_SENSOR_PATH_ID
         title = body.title or "不同溶液导电性相对比较"
@@ -311,12 +330,13 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
             await persist.finish_experiment(exp_id, "error")
             return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
-        await broadcast({"status": "running"})
+        await broadcast({"status": "running", "experiment_id": exp_id})
         return ControlResponse(
             ok=True,
             status="running",
             experiment_id=exp_id,
             sample_id=sample_id,
+            resumed=False,
         )
 
 

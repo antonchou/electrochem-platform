@@ -37,7 +37,7 @@ export function ExperimentPage() {
     setActionError,
     start,
     stop,
-    reset,
+    restart,
     canStart,
     canStop,
     canReset,
@@ -81,9 +81,10 @@ export function ExperimentPage() {
             canStart={canStart}
             canStop={canStop}
             canReset={canReset}
+            paused={status === 'stopped'}
             onStart={() => start({ sample_id: sampleIdInput.trim() || undefined })}
             onStop={stop}
-            onReset={reset}
+            onReset={() => restart({ sample_id: sampleIdInput.trim() || undefined })}
           />
           <label className={styles.sampleInputWrap}>
             <span className={styles.sampleLabel}>样品编号</span>

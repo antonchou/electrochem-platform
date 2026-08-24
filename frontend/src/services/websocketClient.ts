@@ -112,7 +112,11 @@ export class WebSocketClient implements DataClient {
         this.emit({ type: 'message', frame: parsed as ExperimentFrame });
       } else {
         this.running = parsed.status === 'running';
-        this.emit({ type: 'status', status: parsed.status });
+        this.emit({
+          type: 'status',
+          status: parsed.status,
+          experiment_id: 'experiment_id' in parsed ? parsed.experiment_id : undefined,
+        });
       }
     };
 

@@ -371,6 +371,20 @@ def create_experiment_with_sample(
         return exp_id
 
 
+def reopen_experiment(experiment_id: int) -> bool:
+    """Pause 后续跑：清 ended_at，状态改回 running。仅允许从 stopped 恢复。"""
+    with _conn() as conn:
+        cur = conn.execute(
+            """
+            UPDATE experiments
+               SET status = 'running', ended_at_utc = NULL
+             WHERE id = ? AND status = 'stopped'
+            """,
+            (experiment_id,),
+        )
+        return cur.rowcount > 0
+
+
 def finish_experiment(experiment_id: int, status: str = "stopped") -> None:
     import datetime
 

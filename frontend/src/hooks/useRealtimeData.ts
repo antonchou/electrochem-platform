@@ -14,6 +14,7 @@ export function useRealtimeData(bridge: ExperimentBridge) {
   const [count, setCount] = useState(0);
   const [latest, setLatest] = useState<DataPoint | null>(null);
   const runStartTRef = useRef<number | null>(null);
+  const experimentIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
@@ -43,13 +44,23 @@ export function useRealtimeData(bridge: ExperimentBridge) {
         setLatest(p);
         setCount(arr.length);
       }
-      // P1-2 修复：stopped/error 后直接开始，服务端会先广播 running 状态帧，
-      // 此时清空上一轮缓冲，避免新旧两轮数据混合进曲线/统计/拟合。
-      if (ev.type === 'status' && (ev.status === 'idle' || ev.status === 'running')) {
+      // idle = 复位；running 且换了 experiment_id = 新实验。续跑同一实验不清空曲线。
+      if (ev.type === 'status' && ev.status === 'idle') {
+        experimentIdRef.current = null;
         pointsRef.current = [];
         runStartTRef.current = null;
         setCount(0);
         setLatest(null);
+      }
+      if (ev.type === 'status' && ev.status === 'running' && ev.experiment_id !== undefined) {
+        const prev = experimentIdRef.current;
+        experimentIdRef.current = ev.experiment_id;
+        if (prev !== null && prev !== ev.experiment_id) {
+          pointsRef.current = [];
+          runStartTRef.current = null;
+          setCount(0);
+          setLatest(null);
+        }
       }
     });
     return unsub;

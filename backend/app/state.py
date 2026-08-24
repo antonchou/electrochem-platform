@@ -57,6 +57,16 @@ class ExperimentState:
                 self.status = "stopped"
             return changed
 
+    async def resume(self) -> bool:
+        """stopped → running，保留 t0 / seq_no / 实验上下文（暂停后续跑）。"""
+        async with self.lock:
+            if self.status != "stopped" or self.experiment_db_id is None:
+                return False
+            self.status = "running"
+            if self.t0 is None:
+                self.t0 = time.monotonic()
+            return True
+
     async def reset(self) -> None:
         async with self.lock:
             self.status = "idle"

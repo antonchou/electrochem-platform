@@ -76,7 +76,7 @@ export function useExperiment(bridge: ExperimentBridge) {
         }
         setStatus(res.status);
         if (action === 'start') {
-          setStartedAt(new Date());
+          if (!res.resumed) setStartedAt(new Date());
           if (res.experiment_id !== undefined && res.experiment_id !== null) {
             setExperimentId(res.experiment_id);
           }
@@ -108,6 +108,13 @@ export function useExperiment(bridge: ExperimentBridge) {
   );
   const stop = useCallback(() => run('stop'), [run]);
   const reset = useCallback(() => run('reset'), [run]);
+  const restart = useCallback(
+    async (options?: ExperimentStartOptions) => {
+      await run('reset');
+      return run('start', options);
+    },
+    [run],
+  );
 
   const canStart = !busy && status !== 'running';
   const canStop = !busy && status === 'running';
@@ -124,6 +131,7 @@ export function useExperiment(bridge: ExperimentBridge) {
     start,
     stop,
     reset,
+    restart,
     canStart,
     canStop,
     canReset,

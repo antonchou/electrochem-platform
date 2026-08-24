@@ -157,6 +157,9 @@ class PersistService:
     async def finish_experiment(self, experiment_id: int, status: str = "stopped") -> None:
         await asyncio.to_thread(storage.finish_experiment, experiment_id, status)
 
+    async def reopen_experiment(self, experiment_id: int) -> bool:
+        return await asyncio.to_thread(storage.reopen_experiment, experiment_id)
+
     async def upsert_sample(self, **kwargs: Any) -> None:
         await asyncio.to_thread(storage.upsert_sample, **kwargs)
 
