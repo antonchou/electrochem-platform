@@ -123,8 +123,9 @@ test('浓度轴：切到浓度→线性标定/Kohlrausch 模型可用', async ({
   // 跨轴隔离：时间轴专属模型（一阶指数饱和）不出现
   await expect(page.getByTestId('fit-model-first_order')).toHaveCount(0);
 
-  // 浓度轴占位提示可见（当前帧无浓度字段）
+  // 浓度轴占位提示可见（当前帧无浓度字段），且禁止用序号冒充浓度去拟合
   await expect(page.getByTestId('fit-concentration-note')).toBeVisible();
+  await expect(page.getByTestId('btn-fit')).toBeDisabled();
 });
 
 test('历史详情页：复用化学公式拟合', async ({ page }) => {

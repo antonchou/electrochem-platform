@@ -1,6 +1,7 @@
 import type {
   ControlAction,
   ControlResponse,
+  CurrentExperiment,
   ExperimentDetail,
   ExperimentStartOptions,
   ExperimentSummary,
@@ -27,6 +28,29 @@ export class ApiClient {
       throw new Error(`控制请求失败：HTTP ${res.status}`);
     }
     return (await res.json()) as ControlResponse;
+  }
+
+  /** 当前内存态实验（刷新/重连后恢复导出与样品号） */
+  async getCurrentExperiment(): Promise<CurrentExperiment> {
+    const res = await fetch(`${this.baseUrl}/api/experiment/current`);
+    if (!res.ok) throw new Error(`当前实验获取失败：HTTP ${res.status}`);
+    return (await res.json()) as CurrentExperiment;
+  }
+
+  /** 跨源也可触发下载：fetch blob，避免 <a download> 整页跳走 */
+  async downloadExport(url: string, filename: string): Promise<void> {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`导出失败：HTTP ${res.status}`);
+    const blob = await res.blob();
+    const href = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = filename;
+      a.click();
+    } finally {
+      URL.revokeObjectURL(href);
+    }
   }
 
   /** 历史实验列表 */

@@ -151,3 +151,23 @@ def test_lifespan_aborts_leaked_run_and_resets_state(tmp_path, monkeypatch):
 
     assert state.status == "idle"
     assert storage.get_experiment(exp_id)["status"] == "aborted"
+
+
+def test_persist_insert_failure_stops_accepting(monkeypatch):
+    async def scenario() -> None:
+        service = PersistService()
+        monkeypatch.setattr(storage, "init_db", lambda: None)
+
+        def boom(_batch: list[dict]) -> None:
+            raise sqlite3.OperationalError("injected persist failure")
+
+        monkeypatch.setattr(storage, "insert_frames", boom)
+        await service.start()
+        service.enqueue_frame({"seq": 1})
+        with pytest.raises(sqlite3.OperationalError, match="injected persist failure"):
+            await service.flush()
+        assert service._accepting is False
+        service.enqueue_frame({"seq": 2})
+        await service.stop()
+
+    asyncio.run(scenario())

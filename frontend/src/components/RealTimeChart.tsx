@@ -110,6 +110,7 @@ export function RealTimeChart({ pointsRef }: Props) {
     const includeInAxes = (points: DataPoint[]) => {
       for (const point of points) {
         maxTimeSeen = Math.max(maxTimeSeen, point.t);
+        if (point.ec === null || !Number.isFinite(point.ec)) continue;
         minEcSeen = Math.min(minEcSeen, point.ec);
         maxEcSeen = Math.max(maxEcSeen, point.ec);
       }
@@ -144,7 +145,9 @@ export function RealTimeChart({ pointsRef }: Props) {
     const replaceAll = (points: DataPoint[], resetAxes = false) => {
       if (resetAxes) resetAxisTracking();
       includeInAxes(points);
-      const data = points.map((point) => [point.t, point.ec] as [number, number]);
+      const data = points
+        .filter((point) => point.ec !== null && Number.isFinite(point.ec))
+        .map((point) => [point.t, point.ec as number] as [number, number]);
       chart.setOption({ ...axisOption(), series: [{ data }] });
       renderedCount = points.length;
       lastRenderedPoint = points.length > 0 ? points[points.length - 1] : null;
@@ -175,7 +178,9 @@ export function RealTimeChart({ pointsRef }: Props) {
         includeInAxes(newPoints);
         chart.appendData({
           seriesIndex: 0,
-          data: newPoints.map((point) => [point.t, point.ec]),
+          data: newPoints
+            .filter((point) => point.ec !== null && Number.isFinite(point.ec))
+            .map((point) => [point.t, point.ec as number]),
         });
         // appendData 不会可靠地重算 value 轴范围，必须显式同步坐标轴。
         chart.setOption(axisOption());

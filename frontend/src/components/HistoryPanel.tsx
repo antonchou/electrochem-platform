@@ -40,21 +40,22 @@ export function HistoryPanel({ api, onClose }: Props) {
   const [frames, setFrames] = useState<RawFrame[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
-  useEffect(() => {
+  const loadList = useCallback(() => {
     if (!api) return;
-    let cancelled = false;
+    setError(null);
+    setList(null);
     api
       .listExperiments()
-      .then((items) => {
-        if (!cancelled) setList(items);
-      })
+      .then((items) => setList(items))
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : '获取历史列表失败');
+        setList([]);
+        setError(err instanceof Error ? err.message : '获取历史列表失败');
       });
-    return () => {
-      cancelled = true;
-    };
   }, [api]);
+
+  useEffect(() => {
+    loadList();
+  }, [loadList]);
 
   const openDetail = useCallback(
     async (id: number) => {
@@ -81,7 +82,14 @@ export function HistoryPanel({ api, onClose }: Props) {
   // 注意：所有 Hook 必须位于任何 early return 之前，否则 api 变化时 React 会因
   // Hook 数量不一致直接崩溃（"Rendered more hooks than during the previous render"）。
   const chartData: [number, number][] = useMemo(
-    () => frames.map((f) => [f.t_seconds ?? 0, f.ec_raw]),
+    () =>
+      frames.flatMap((f) => {
+        const y = f.kappa_25_us_cm ?? f.k25 ?? f.ec_raw;
+        if (y === null || !Number.isFinite(y)) return [];
+        const x = f.t_seconds;
+        if (x === null || !Number.isFinite(x)) return [];
+        return [[x, y] as [number, number]];
+      }),
     [frames],
   );
 
@@ -102,7 +110,7 @@ export function HistoryPanel({ api, onClose }: Props) {
       frames.map((f) => ({
         t: f.t_seconds ?? 0,
         tc: f.temperature_raw,
-        ec: f.ec_raw,
+        ec: f.kappa_25_us_cm ?? f.k25 ?? f.ec_raw,
       })),
     [frames],
   );
@@ -155,6 +163,12 @@ export function HistoryPanel({ api, onClose }: Props) {
                   href={api.exportCsvUrl(selected.id)}
                   download
                   data-testid="btn-export-csv"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void api
+                      .downloadExport(api.exportCsvUrl(selected.id), `experiment_${selected.id}.csv`)
+                      .catch((err) => setError(err instanceof Error ? err.message : '导出 CSV 失败'));
+                  }}
                 >
                   导出 CSV
                 </a>
@@ -162,6 +176,16 @@ export function HistoryPanel({ api, onClose }: Props) {
                   className={styles.download}
                   href={api.exportJsonUrl(selected.id)}
                   download
+                  data-testid="btn-export-json"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void api
+                      .downloadExport(
+                        api.exportJsonUrl(selected.id),
+                        `experiment_${selected.id}.json`,
+                      )
+                      .catch((err) => setError(err instanceof Error ? err.message : '导出 JSON 失败'));
+                  }}
                 >
                   导出 JSON
                 </a>
@@ -179,6 +203,7 @@ export function HistoryPanel({ api, onClose }: Props) {
                     <th>链路</th>
                     <th>浓度 (mmol/L)</th>
                     <th>帧数</th>
+                    <th>QC</th>
                     <th>中位数 (μS/cm)</th>
                     <th>均值 (μS/cm)</th>
                     <th>SD</th>
@@ -191,6 +216,7 @@ export function HistoryPanel({ api, onClose }: Props) {
                       <td>{s.sensor_path_id ?? '--'}</td>
                       <td>{s.concentration_mmol_l ?? '--'}</td>
                       <td>{s.frame_count}</td>
+                      <td>{s.qc_status ?? '--'}</td>
                       <td>{s.k25_median?.toFixed(2) ?? '--'}</td>
                       <td>{s.k25_mean?.toFixed(2) ?? '--'}</td>
                       <td>{s.k25_sd?.toFixed(2) ?? '--'}</td>
@@ -231,7 +257,15 @@ export function HistoryPanel({ api, onClose }: Props) {
             ) : list === null ? (
               <div className={styles.hint}>加载中…</div>
             ) : list.length === 0 ? (
-              <div className={styles.hint}>暂无历史实验，先运行一轮实验吧。</div>
+              <div className={styles.hint}>
+                {error ? (
+                  <button type="button" className={styles.back} onClick={loadList}>
+                    重试
+                  </button>
+                ) : (
+                  '暂无历史实验，先运行一轮实验吧。'
+                )}
+              </div>
             ) : (
               list.map((item) => (
                 <button

@@ -11,8 +11,8 @@ export type ExperimentHistoryStatus = 'running' | 'stopped' | 'aborted' | 'error
 export interface ExperimentFrame {
   /** 实验开始后的时间，单位秒 */
   timestamp: number;
-  /** 电导率，单位 μS/cm（单位由后端协议固定，前端必须明确显示） */
-  ec: number;
+  /** 电导率，单位 μS/cm（兼容层 = κ25；COMPUTE_INVALID 时为 null） */
+  ec: number | null;
   /** 温度，单位 °C */
   temperature: number;
   /** 状态字段 */
@@ -50,6 +50,14 @@ export type ServerMessage = ExperimentFrame | StatusFrame;
 
 /** 前端下发的控制指令（REST API 通道） */
 export type ControlAction = 'start' | 'stop' | 'reset';
+
+/** 当前实验（重连恢复） */
+export interface CurrentExperiment {
+  status: ExperimentStatus;
+  experiment_id?: number | null;
+  sample_id?: string | null;
+  experiment_uid?: string | null;
+}
 
 /** 控制接口的响应 */
 export interface ControlResponse {
@@ -110,7 +118,7 @@ export interface RawFrame {
   timestamp_utc: string | null;
   monotonic_ms: number | null;
   t_seconds: number | null;
-  ec_raw: number;
+  ec_raw: number | null;
   temperature_raw: number;
   k25: number | null;
   quality_flags: string | null;
@@ -163,8 +171,8 @@ export type ConnectionStatus =
 export interface DataPoint {
   /** 秒 */
   t: number;
-  /** μS/cm */
-  ec: number;
+  /** μS/cm；计算链拒绝时为 null */
+  ec: number | null;
   /** °C */
   tc: number;
   /** 浓度 mmol/L（可选）。实时帧/历史帧暂无该字段；浓度轴拟合时缺省用序号 1..N 占位 */
@@ -224,18 +232,25 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
     return null;
   }
 
-  const measureKeys = ['timestamp', 'ec', 'temperature'] as const;
-  const measureFieldCount = measureKeys.filter((key) => raw[key] !== undefined).length;
+  const hasTimestamp = raw.timestamp !== undefined;
+  const hasTemperature = raw.temperature !== undefined;
+  const hasEc = raw.ec !== undefined;
 
-  if (measureFieldCount === 0) {
+  if (!hasTimestamp && !hasEc && !hasTemperature) {
     return { status: status as ExperimentStatus } as StatusFrame;
   }
-  if (measureFieldCount !== measureKeys.length) return null;
+  if (!hasTimestamp || !hasTemperature) return null;
 
   const timestamp = parseFiniteNumber(raw.timestamp);
-  const ec = parseFiniteNumber(raw.ec);
   const temperature = parseFiniteNumber(raw.temperature);
-  if (timestamp === null || ec === null || temperature === null) return null;
+  if (timestamp === null || temperature === null) return null;
+
+  // COMPUTE_INVALID / 缺 κ25：ec 允许为 null；非空则必须是有限数字。
+  let ec: number | null = null;
+  if (raw.ec !== null && raw.ec !== undefined) {
+    ec = parseFiniteNumber(raw.ec);
+    if (ec === null) return null;
+  }
 
   // I–V 测量链路扩展字段（REQ-M-001/REQ-U-001）：全部可选，缺字段也接受
   // （兼容旧后端/旧浏览器模拟）。后端 v2+ 才下发，前端拿不到时显示为空。

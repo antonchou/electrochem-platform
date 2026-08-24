@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -36,6 +37,10 @@ def compute_chain(
     - cell_constant_per_cm 必须为正
     - 温补分母 1 + α·(T-25) 不得为 0（α 或 T 导致分母归零时无法温补）
     """
+    if not math.isfinite(voltage_v) or not math.isfinite(current_a) or not math.isfinite(temperature_c):
+        raise ValueError("voltage_v, current_a and temperature_c must be finite")
+    if not math.isfinite(cell_constant_per_cm) or not math.isfinite(alpha_per_c):
+        raise ValueError("cell_constant_per_cm and alpha_per_c must be finite")
     if not voltage_v > 0:
         raise ValueError("voltage_v must be positive")
     if not cell_constant_per_cm > 0:

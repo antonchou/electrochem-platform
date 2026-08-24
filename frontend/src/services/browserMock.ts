@@ -24,6 +24,10 @@ export class BrowserMockSource implements DataClient {
   }
 
   connect(): void {
+    if (this.connectDelay) {
+      clearTimeout(this.connectDelay);
+      this.connectDelay = null;
+    }
     this.emit({ type: 'connection', status: 'connecting' });
     // 模拟连接耗时，并演示断线→重连状态变化
     this.connectDelay = setTimeout(() => {

@@ -24,14 +24,16 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
     let sum = 0;
     let min = Infinity;
     let max = -Infinity;
-    for (const p of pts) {
-      sum += p.ec;
-      if (p.ec < min) min = p.ec;
-      if (p.ec > max) max = p.ec;
+    const values = pts.map((p) => p.ec).filter((v): v is number => v !== null && Number.isFinite(v));
+    if (values.length === 0) return null;
+    for (const v of values) {
+      sum += v;
+      if (v < min) min = v;
+      if (v > max) max = v;
     }
-    const mean = sum / pts.length;
-    const last = pts[pts.length - 1].ec;
-    return { n: pts.length, mean, min, max, last };
+    const mean = sum / values.length;
+    const last = values[values.length - 1];
+    return { n: values.length, mean, min, max, last };
   }, [status, count, pointsRef]);
 
   if (status === 'running') return null;
@@ -50,6 +52,14 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
               href={api.exportCsvUrl(experimentId)}
               download
               data-testid="btn-export-current"
+              onClick={(event) => {
+                event.preventDefault();
+                void api
+                  .downloadExport(api.exportCsvUrl(experimentId), `experiment_${experimentId}.csv`)
+                  .catch((err) => {
+                    console.error(err);
+                  });
+              }}
             >
               导出 CSV
             </a>
@@ -74,7 +84,12 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
         <p className={styles.empty}>本轮实验暂无数据</p>
       )}
 
-      <FitPanel api={api} points={pointsRef.current} btnTestId="btn-fit" />
+      <FitPanel
+        key={experimentId ?? 'none'}
+        api={api}
+        points={pointsRef.current}
+        btnTestId="btn-fit"
+      />
     </section>
   );
 }
