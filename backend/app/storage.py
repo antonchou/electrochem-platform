@@ -663,6 +663,11 @@ def export_csv(experiment_id: int) -> str:
                 r["k25"],
                 r["quality_flags"],
                 r["status"],
+                r["voltage_raw_v"],
+                r["current_raw_a"],
+                r["conductance_s"],
+                r["kappa_t_us_cm"],
+                r["kappa_25_us_cm"],
             ]
         )
     return buf.getvalue()
