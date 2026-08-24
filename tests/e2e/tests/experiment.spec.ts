@@ -42,17 +42,16 @@ test('F02 开始实验：进入 Running 并接收数据', async ({ page }) => {
   await expect(page.getByTestId('btn-start')).toBeDisabled();
 });
 
-test('F03 实时数值：EC/温度持续更新且单位正确', async ({ page }) => {
+test('F03 实时数值：κ25/温度持续更新且单位正确', async ({ page }) => {
   await page.getByTestId('btn-start').click();
-  await expect(page.getByTestId('value-ec')).not.toContainText('--', { timeout: 8000 });
-  const ec = page.getByTestId('value-ec');
-  await expect(ec).toContainText('μS/cm');
+  await expect(page.getByTestId('value-kappa25-num')).not.toHaveText('--', { timeout: 8000 });
+  await expect(page.getByTestId('value-kappa25')).toContainText('μS/cm');
   await expect(page.getByTestId('value-temperature')).toContainText('°C');
 
-  const ecText = await ec.innerText();
-  const temperatureText = await page.getByTestId('value-temperature').innerText();
-  expect(Number.isFinite(Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]))).toBe(true);
-  expect(Number.isFinite(Number(temperatureText.match(/-?\d+(?:\.\d+)?/)?.[0]))).toBe(true);
+  const kappaText = await page.getByTestId('value-kappa25-num').innerText();
+  const temperatureText = await page.getByTestId('value-temperature-num').innerText();
+  expect(Number.isFinite(Number(kappaText))).toBe(true);
+  expect(Number.isFinite(Number(temperatureText))).toBe(true);
 
   // 稳定传感器连续两帧可能恰好显示同一舍入值；以采样点数增长证明数据仍在更新。
   const countBefore = Number(await page.getByTestId('stat-count').innerText());
@@ -86,11 +85,10 @@ test('F04b 实时曲线坐标：时间轴延伸且纵轴稳定覆盖读数', asy
 
   const yMin1 = Number(await chart.getAttribute('data-chart-y-min'));
   const yMax1 = Number(await chart.getAttribute('data-chart-y-max'));
-  const ecText = await page.getByTestId('value-ec').innerText();
-  const ec = Number(ecText.match(/-?\d+(?:\.\d+)?/)?.[0]);
-  expect(Number.isFinite(ec), '实时 EC 卡片应包含可解析的数值').toBe(true);
-  expect(ec).toBeGreaterThanOrEqual(yMin1);
-  expect(ec).toBeLessThanOrEqual(yMax1);
+  const kappa = Number(await page.getByTestId('value-kappa25-num').innerText());
+  expect(Number.isFinite(kappa), '实时 κ25 卡片应包含可解析的数值').toBe(true);
+  expect(kappa).toBeGreaterThanOrEqual(yMin1);
+  expect(kappa).toBeLessThanOrEqual(yMax1);
 
   await page.waitForTimeout(1200);
   const yMin2 = Number(await chart.getAttribute('data-chart-y-min'));
