@@ -29,8 +29,9 @@ FINAL_EXPERIMENT_STATUSES = frozenset({"stopped", "aborted", "error"})
 # - 新增迁移必须同时提供「旧库升级」测试（tests/test_migrations.py）
 # - SCHEMA 保持为 version 1（V1 baseline）结构；新库直建即 version 1
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULT_CALIBRATION_ID = "MOCK-KCELL-1.0"
+DEFAULT_DERIVED_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "derived"
 
 
 def _migrate_v2(conn: sqlite3.Connection) -> None:
@@ -141,12 +142,46 @@ def _migrate_v5(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE raw_frames ADD COLUMN compensation_model TEXT")
 
 
+def _migrate_v6(conn: sqlite3.Connection) -> None:
+    """v6：拟合报告入库（REQ-F-001/002 软件侧）。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fit_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            experiment_id INTEGER NOT NULL REFERENCES experiments(id),
+            sample_id TEXT,
+            x_axis TEXT NOT NULL,
+            model TEXT NOT NULL,
+            label TEXT,
+            params_json TEXT NOT NULL,
+            r2 REAL,
+            rmse REAL,
+            mae REAL,
+            aicc REAL,
+            loocv_rmse REAL,
+            n INTEGER,
+            x_min REAL,
+            x_max REAL,
+            extrapolation_forbidden INTEGER NOT NULL DEFAULT 1,
+            residual_max_abs REAL,
+            param_ci_json TEXT,
+            derived_path TEXT,
+            created_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fit_results_exp ON fit_results(experiment_id, id)"
+    )
+
+
 # 迁移注册表：{版本号: 迁移函数(conn)}，版本号单调递增、必须 <= SCHEMA_VERSION
 MIGRATIONS: Dict[int, Any] = {
     2: _migrate_v2,
     3: _migrate_v3,
     4: _migrate_v4,
     5: _migrate_v5,
+    6: _migrate_v6,
 }
 
 
@@ -794,3 +829,77 @@ def get_calibration_records(experiment_id: int) -> List[Dict[str, Any]]:
             (experiment_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---------------- 拟合报告（REQ-F-001/002） ----------------
+
+def insert_fit_results(
+    experiment_id: int,
+    x_axis: str,
+    models: List[Dict[str, Any]],
+    *,
+    sample_id: Optional[str] = None,
+    derived_path: Optional[str] = None,
+) -> List[int]:
+    """Persist one fit run (one row per model)."""
+    ids: List[int] = []
+    with _conn() as conn:
+        for item in models:
+            cur = conn.execute(
+                """
+                INSERT INTO fit_results
+                    (experiment_id, sample_id, x_axis, model, label, params_json,
+                     r2, rmse, mae, aicc, loocv_rmse, n, x_min, x_max,
+                     extrapolation_forbidden, residual_max_abs, param_ci_json, derived_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    experiment_id,
+                    sample_id,
+                    x_axis,
+                    item.get("model"),
+                    item.get("label"),
+                    json.dumps(item.get("params") or {}, ensure_ascii=False),
+                    item.get("r2"),
+                    item.get("rmse"),
+                    item.get("mae"),
+                    item.get("aicc"),
+                    item.get("loocv_rmse"),
+                    item.get("n"),
+                    item.get("x_min"),
+                    item.get("x_max"),
+                    1 if item.get("extrapolation_forbidden", True) else 0,
+                    item.get("residual_max_abs"),
+                    json.dumps(item.get("param_ci"), ensure_ascii=False)
+                    if item.get("param_ci") is not None
+                    else None,
+                    derived_path,
+                ),
+            )
+            ids.append(int(cur.lastrowid))
+    return ids
+
+
+def get_fit_results(experiment_id: int) -> List[Dict[str, Any]]:
+    with _conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM fit_results
+             WHERE experiment_id = ?
+             ORDER BY id
+            """,
+            (experiment_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def write_fit_report(experiment_id: int, payload: Dict[str, Any]) -> str:
+    """Write a derived JSON report under data/derived/ (gitignored)."""
+    import datetime
+
+    root = Path(os.environ.get("EC_DERIVED_DIR", str(DEFAULT_DERIVED_DIR)))
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    path = root / f"experiment_{experiment_id}_fit_{stamp}.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(path)

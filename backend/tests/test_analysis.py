@@ -167,6 +167,34 @@ def test_explicit_empty_model_list_runs_nothing():
     assert analysis.fit_all([1.0, 2.0, 3.0], [2.0, 4.0, 6.0], models=[]) == []
 
 
+def test_fit_report_metrics_and_interval():
+    """REQ-F：拟合输出 MAE/AICc/区间/禁止外推；线性模型含参数 CI。"""
+    from app import analysis
+
+    x = [float(i) for i in range(8)]
+    y = [2 + 3 * xi + (0.2 if i % 2 else -0.2) for i, xi in enumerate(x)]
+    res = analysis.fit_linear(x, y)
+    assert res is not None
+    assert res["mae"] > 0
+    assert res["aicc"] is not None
+    assert res["x_min"] == 0.0
+    assert res["x_max"] == 7.0
+    assert res["extrapolation_forbidden"] is True
+    assert res["param_ci"] is not None
+    assert res["param_ci"]["a"][0] < 2.0 < res["param_ci"]["a"][1]
+    assert res["param_ci"]["b"][0] < 3.0 < res["param_ci"]["b"][1]
+
+
+def test_fit_all_attaches_loocv():
+    from app import analysis
+
+    x = [float(i) for i in range(10)]
+    y = [1 + 2 * xi for xi in x]
+    results = analysis.fit_all(x, y, models=["linear"])
+    assert results[0]["loocv_rmse"] is not None
+    assert results[0]["loocv_rmse"] < 1e-6
+
+
 def test_fit_endpoint_ok(client):
     r = client.post(
         "/api/analysis/fit",
@@ -180,6 +208,10 @@ def test_fit_endpoint_ok(client):
     assert abs(linear["params"]["b"] - 3.0) < 1e-6
     assert linear["r2"] > 0.9999
     assert len(linear["fitted"]) == 150
+    assert linear["mae"] is not None
+    assert linear["extrapolation_forbidden"] is True
+    assert linear["x_min"] == 0
+    assert linear["x_max"] == 4
 
 
 def test_fit_endpoint_x_axis_kohlrausch(client):
@@ -197,6 +229,28 @@ def test_fit_endpoint_x_axis_kohlrausch(client):
     assert abs(kohl["params"]["a"] - 15.0) < 1e-6   # κblank
     assert abs(kohl["params"]["b"] - 120.0) < 1e-6  # Λ0
     assert abs(kohl["params"]["K"] - 8.0) < 1e-6    # K
+
+
+def test_fit_endpoint_persists_when_experiment_id_given(client, tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DERIVED_DIR", str(tmp_path / "derived"))
+    exp_id = client.post("/api/experiment/start").json()["experiment_id"]
+    client.post("/api/experiment/stop")
+    r = client.post(
+        "/api/analysis/fit",
+        json={
+            "x": [0, 1, 2, 3, 4],
+            "y": [2, 5, 8, 11, 14],
+            "models": ["linear"],
+            "experiment_id": exp_id,
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["derived_path"]
+    detail = client.get(f"/api/experiments/{exp_id}").json()
+    assert detail["fits"]
+    assert detail["fits"][0]["model"] == "linear"
+    assert detail["fits"][0]["x_axis"] == "time"
+    client.post("/api/experiment/reset")
 
 
 def test_fit_endpoint_bad_input(client):

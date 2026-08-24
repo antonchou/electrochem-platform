@@ -8,6 +8,8 @@ interface Props {
   api: ApiClient | null;
   /** 数据点（t 秒 / tc °C / ec μS·cm⁻¹），按 X 轴语义自动取 x */
   points: DataPoint[];
+  /** 当前实验 id：提供则拟合结果入库 */
+  experimentId?: number | null;
   /** data-testid 前缀，供多处使用互不冲突 */
   testIdPrefix?: string;
   /** 开始拟合按钮的 testid（ResultPanel 保持历史值 btn-fit） */
@@ -62,7 +64,7 @@ function fmtParams(params: Record<string, number>): string {
  * 化学公式拟合面板：X 轴语义（时间/温度/浓度）→ 模型池 → 拟合 → 结果表 + 曲线叠加。
  * 供结果区（ResultPanel）与历史详情（HistoryPanel）复用；后端走 /api/analysis/fit。
  */
-export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props) {
+export function FitPanel({ api, points, experimentId, testIdPrefix = 'fit', btnTestId }: Props) {
   const [xAxis, setXAxis] = useState<FitAxis>('time');
   const [selectedModels, setSelectedModels] = useState<string[]>(
     AXIS_MODELS.time.map((m) => m.key),
@@ -112,7 +114,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
     setFitLoading(true);
     setFitError(null);
     try {
-      const res = await api.fitPoints(fitPoints, selectedModels, xAxis);
+      const res = await api.fitPoints(fitPoints, selectedModels, xAxis, experimentId);
       if (requestId !== fitRequestIdRef.current) return;
       setFitResults(res.models);
     } catch (err) {
@@ -252,6 +254,8 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
                 <th>参数</th>
                 <th>R²</th>
                 <th>RMSE</th>
+                <th>MAE</th>
+                <th>AICc</th>
                 <th>点数</th>
               </tr>
             </thead>
@@ -272,6 +276,8 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
                   <td className={styles.params}>{fmtParams(r.params)}</td>
                   <td>{r.r2.toFixed(4)}</td>
                   <td>{r.rmse.toFixed(4)}</td>
+                  <td>{r.mae != null && Number.isFinite(r.mae) ? r.mae.toFixed(4) : '--'}</td>
+                  <td>{r.aicc != null && Number.isFinite(r.aicc) ? r.aicc.toFixed(2) : '--'}</td>
                   <td>{r.n}</td>
                 </tr>
               ))}
@@ -280,6 +286,13 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
           {fitResults[0] && (
             <div className={styles.bestHint}>
               最优：{fitResults[0].label}（R² = {fitResults[0].r2.toFixed(4)}）
+              {fitResults[0].x_min != null && fitResults[0].x_max != null
+                ? ` · 有效区间 [${fitResults[0].x_min.toFixed(4)}, ${fitResults[0].x_max.toFixed(4)}]`
+                : ''}
+              {fitResults[0].extrapolation_forbidden !== false ? ' · 禁止外推' : ''}
+              {fitResults[0].loocv_rmse != null && Number.isFinite(fitResults[0].loocv_rmse)
+                ? ` · LOOCV RMSE ${fitResults[0].loocv_rmse.toFixed(4)}`
+                : ''}
             </div>
           )}
           {fitResults.length > 4 && (
