@@ -160,6 +160,9 @@ export function HistoryPanel({ api, onClose }: Props) {
                 <div className={styles.meta}>
                   状态 {fmtStatus(selected.status)} · 原始帧 {selected.frame_count} · 结束{' '}
                   {fmtTime(selected.ended_at_utc)}
+                  {selected.calibrations?.[0]?.calibration_id
+                    ? ` · 校准 ${selected.calibrations[0].calibration_id}`
+                    : ''}
                 </div>
               </div>
               <div className={styles.actions}>

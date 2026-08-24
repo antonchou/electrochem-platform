@@ -4,7 +4,7 @@
 - 旧库升级路径必须被测试覆盖（本文件 `_legacy_v1_db` 构造真实 V1 历史库）
 - 迁移必须事务化：失败整体回滚，绝不出现半迁移状态
 - 新库直建 与 旧库升级到同一版本后，表结构必须完全一致（幂等可复现）
-- 框架机制用注入的演示迁移 v5 验证；真实 v2（I–V 列）、v3（QC 列）、v4（ec 可空）单独断言
+- 框架机制用注入的演示迁移（SCHEMA_VERSION+1）验证；真实 v2–v5 单独断言
 """
 
 import os
@@ -104,17 +104,19 @@ def _legacy_v1_db(tmp_path):
     return db
 
 
-def _inject_v5(monkeypatch, fail: bool = False):
-    """注入一个演示迁移 v5（不影响真实 v2/v3/v4），用于验证框架机制（回滚/幂等）。"""
+def _inject_demo_migration(monkeypatch, fail: bool = False) -> int:
+    """注入 SCHEMA_VERSION+1 的演示迁移，用于验证框架机制（回滚/幂等）。"""
+    next_version = storage.SCHEMA_VERSION + 1
 
-    def migrate_v5(conn):
+    def migrate_demo(conn):
         conn.execute("ALTER TABLE experiments ADD COLUMN operator_org TEXT")
         conn.execute("UPDATE experiments SET operator_org = 'lab'")
         if fail:
             raise RuntimeError("simulated migration failure")
 
-    monkeypatch.setitem(storage.MIGRATIONS, 5, migrate_v5)
-    monkeypatch.setattr(storage, "SCHEMA_VERSION", 5)
+    monkeypatch.setitem(storage.MIGRATIONS, next_version, migrate_demo)
+    monkeypatch.setattr(storage, "SCHEMA_VERSION", next_version)
+    return next_version
 
 
 def _versions(conn):
@@ -156,7 +158,7 @@ def test_v2_adds_iv_columns(tmp_path):
     try:
         storage.init_db()
         with storage._conn() as conn:
-            assert _versions(conn) == [1, 2, 3, 4]  # 含真实 v3+v4
+            assert _versions(conn) == list(range(1, storage.SCHEMA_VERSION + 1))
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(raw_frames)")}
             assert {
                 "voltage_raw_v",
@@ -185,7 +187,7 @@ def test_v3_adds_qc_columns(tmp_path):
     try:
         storage.init_db()
         with storage._conn() as conn:
-            assert _versions(conn) == [1, 2, 3, 4]
+            assert _versions(conn) == list(range(1, storage.SCHEMA_VERSION + 1))
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(samples)")}
             assert {
                 "qc_status",
@@ -211,7 +213,7 @@ def test_v4_makes_ec_nullable(tmp_path):
     try:
         storage.init_db()
         with storage._conn() as conn:
-            assert _versions(conn) == [1, 2, 3, 4]
+            assert _versions(conn) == list(range(1, storage.SCHEMA_VERSION + 1))
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(raw_frames)")}
             assert "ec_raw" in cols
             # 旧数据仍在
@@ -254,18 +256,49 @@ def test_legacy_v1_db_upgrade_preserves_data(tmp_path):
     assert {"block_raw_frames_update", "block_raw_frames_delete"} <= trig
 
 
-# ---------------- 迁移机制：成功 / 回滚（注入 v3） ----------------
+# ---------------- 真实 v5 迁移（协议溯源 / 校准 / 激励列） ----------------
 
-def test_migration_v5_applies_transactionally(tmp_path, monkeypatch):
-    """注入 v5 迁移：从当前版本升级到 v5，列新增、数据更新、版本记录。"""
+def test_v5_adds_trace_columns(tmp_path):
+    """真实 v5 迁移：raw_frames 增加 calibration_id 与协议/激励字段，数据与触发器保留。"""
     db = _legacy_v1_db(tmp_path)
     os.environ["EC_DB_PATH"] = str(db)
     try:
-        storage.init_db()  # 到 v4（真实 v2+v3+v4）
-        _inject_v5(monkeypatch, fail=False)
-        storage.init_db()  # 升级到 v5
+        storage.init_db()
         with storage._conn() as conn:
-            assert _versions(conn) == [1, 2, 3, 4, 5]
+            assert _versions(conn) == list(range(1, storage.SCHEMA_VERSION + 1))
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(raw_frames)")}
+            assert {
+                "schema_version",
+                "device_id",
+                "firmware_version",
+                "range_id",
+                "calibration_id",
+                "excitation_frequency_hz",
+                "excitation_amplitude_v",
+                "compensation_model",
+            } <= cols
+            assert conn.execute("SELECT ec_raw FROM raw_frames").fetchone()["ec_raw"] == 1413.0
+            trig = {
+                r["name"]
+                for r in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
+            }
+    finally:
+        os.environ.pop("EC_DB_PATH", None)
+    assert {"block_raw_frames_update", "block_raw_frames_delete"} <= trig
+
+
+# ---------------- 迁移机制：成功 / 回滚（注入 SCHEMA_VERSION+1） ----------------
+
+def test_demo_migration_applies_transactionally(tmp_path, monkeypatch):
+    """注入演示迁移：列新增、数据更新、版本记录。"""
+    db = _legacy_v1_db(tmp_path)
+    os.environ["EC_DB_PATH"] = str(db)
+    try:
+        storage.init_db()
+        nxt = _inject_demo_migration(monkeypatch, fail=False)
+        storage.init_db()
+        with storage._conn() as conn:
+            assert _versions(conn) == list(range(1, nxt + 1))
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(experiments)")}
             org = conn.execute("SELECT operator_org FROM experiments").fetchone()["operator_org"]
     finally:
@@ -280,11 +313,12 @@ def test_migration_failure_rolls_back(tmp_path, monkeypatch):
     os.environ["EC_DB_PATH"] = str(db)
     try:
         storage.init_db()
-        _inject_v5(monkeypatch, fail=True)
+        current = storage.SCHEMA_VERSION
+        _inject_demo_migration(monkeypatch, fail=True)
         with pytest.raises(RuntimeError):
             storage.init_db()
         with storage._conn() as conn:
-            assert _versions(conn) == [1, 2, 3, 4]  # v5 未记录
+            assert _versions(conn) == list(range(1, current + 1))
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(experiments)")}
             n = conn.execute("SELECT COUNT(*) AS n FROM raw_frames").fetchone()["n"]
     finally:
@@ -297,27 +331,24 @@ def test_migration_failure_rolls_back(tmp_path, monkeypatch):
 
 def test_fresh_and_upgraded_reach_same_schema(tmp_path, monkeypatch):
     """新库直建 vs 旧库升级到同一版本后，raw_frames 结构完全一致（V2 事故教训 #3）。"""
-    # 新库直建（含真实 v2+v3 + 注入 v4 后）
     fresh = tmp_path / "fresh_same.db"
     os.environ["EC_DB_PATH"] = str(fresh)
     storage.init_db()
-    _inject_v5(monkeypatch, fail=False)
+    nxt = _inject_demo_migration(monkeypatch, fail=False)
     storage.init_db()
     with storage._conn() as conn:
         fresh_cols = [tuple(r) for r in conn.execute("PRAGMA table_info(raw_frames)")]
         fresh_versions = _versions(conn)
     os.environ.pop("EC_DB_PATH", None)
 
-    # 旧库升级
     legacy = _legacy_v1_db(tmp_path)
     os.environ["EC_DB_PATH"] = str(legacy)
     storage.init_db()
-    _inject_v5(monkeypatch, fail=False)
     storage.init_db()
     with storage._conn() as conn:
         legacy_cols = [tuple(r) for r in conn.execute("PRAGMA table_info(raw_frames)")]
         legacy_versions = _versions(conn)
     os.environ.pop("EC_DB_PATH", None)
 
-    assert fresh_versions == legacy_versions == [1, 2, 3, 4, 5]
+    assert fresh_versions == legacy_versions == list(range(1, nxt + 1))
     assert fresh_cols == legacy_cols
