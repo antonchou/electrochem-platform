@@ -1,7 +1,7 @@
 """备选公式拟合（M4 自动拟合平台前置）。
 
-对已采集的数据用化学实验常见候选公式做最小二乘拟合，输出参数、R²、RMSE
-与拟合曲线采样点，供前端对比"哪个公式最贴合"。
+对已采集的数据用化学实验常见候选公式做最小二乘拟合，输出参数、R²、RMSE、
+MAE、AICc、残差峰值、有效区间（禁止外推）与可选 Wald CI / LOOCV RMSE。
 
 模型按 X 轴语义（x_axis）分组，化学意义优先：
 - time          时间序列：线性 / 二次 / 一阶指数饱和 / 指数 / 对数 / 幂
@@ -89,14 +89,154 @@ def _linfit_cols(cols: List[List[float]], y: List[float]) -> List[float]:
     return _solve_linear_system(a, b)
 
 
-def _metrics(y: List[float], y_hat: List[float]) -> tuple[float, float]:
+def _finite_or_none(value: float) -> Optional[float]:
+    return value if math.isfinite(value) else None
+
+
+def _invert(matrix: List[List[float]]) -> List[List[float]]:
+    n = len(matrix)
+    inverse_cols = [
+        _solve_linear_system(matrix, [1.0 if i == j else 0.0 for i in range(n)]) for j in range(n)
+    ]
+    return [[inverse_cols[j][i] for j in range(n)] for i in range(n)]
+
+
+def _wald_ci(
+    cols: List[List[float]],
+    y: List[float],
+    coeffs: List[float],
+    names: List[str],
+    z: float = 1.96,
+) -> Optional[Dict[str, List[float]]]:
+    """Approximate 95% Wald CI for linear-in-parameters models."""
     n = len(y)
-    mean = sum(y) / n
+    k = len(coeffs)
+    if n <= k or k == 0:
+        return None
+    y_hat = [sum(c * v for c, v in zip(coeffs, row)) for row in cols]
     ss_res = sum((yi - yh) ** 2 for yi, yh in zip(y, y_hat))
+    sigma2 = ss_res / (n - k)
+    xtx = [[sum(row[i] * row[j] for row in cols) for j in range(k)] for i in range(k)]
+    try:
+        inv = _invert(xtx)
+    except (ValueError, ZeroDivisionError):
+        return None
+    out: Dict[str, List[float]] = {}
+    for i, name in enumerate(names):
+        var = sigma2 * inv[i][i]
+        if var < 0 or not math.isfinite(var):
+            return None
+        se = math.sqrt(var)
+        out[name] = [coeffs[i] - z * se, coeffs[i] + z * se]
+    return out
+
+
+def _pack(
+    model: str,
+    axis: str,
+    params: Dict[str, float],
+    x: List[float],
+    y: List[float],
+    y_hat: List[float],
+    fn: Callable[[float], float],
+    param_ci: Optional[Dict[str, List[float]]] = None,
+) -> Dict[str, Any]:
+    n = len(y)
+    k = max(len(params), 1)
+    mean = sum(y) / n
+    residuals = [yi - yh for yi, yh in zip(y, y_hat)]
+    ss_res = sum(r * r for r in residuals)
     ss_tot = sum((yi - mean) ** 2 for yi in y)
     r2 = 1.0 if ss_tot < 1e-12 else 1.0 - ss_res / ss_tot
-    rmse = math.sqrt(ss_res / n)
-    return r2, rmse
+    rmse = math.sqrt(ss_res / n) if n else 0.0
+    mae = sum(abs(r) for r in residuals) / n if n else 0.0
+    aicc = None
+    dof = n - k - 1
+    if ss_res > 0 and dof > 0:
+        aic = n * math.log(ss_res / n) + 2 * k
+        aicc = _finite_or_none(aic + 2 * k * (k + 1) / dof)
+    return {
+        "model": model,
+        "label": _label(model, axis),
+        "params": params,
+        "r2": r2,
+        "rmse": rmse,
+        "mae": mae,
+        "aicc": aicc,
+        "n": n,
+        "fitted": _sample_curve(x, fn),
+        "x_min": min(x),
+        "x_max": max(x),
+        "extrapolation_forbidden": True,
+        "residual_max_abs": max((abs(r) for r in residuals), default=0.0),
+        "param_ci": param_ci,
+        "loocv_rmse": None,
+    }
+
+
+def _predict(model: str, params: Dict[str, float], x: List[float]) -> Optional[List[float]]:
+    try:
+        if model == "linear":
+            a, b = params["a"], params["b"]
+            return [a + b * xi for xi in x]
+        if model == "quadratic":
+            a, b = params["a"], params["b"]
+            c = params["q"] if "q" in params else params["c"]
+            return [a + b * xi + c * xi * xi for xi in x]
+        if model == "exponential":
+            a, b = params["a"], params["b"]
+            return [a * math.exp(b * xi) for xi in x]
+        if model == "logarithmic":
+            a, b = params["a"], params["b"]
+            return [a + b * math.log(xi) for xi in x]
+        if model == "power":
+            a, b = params["a"], params["b"]
+            return [a * (xi**b) for xi in x]
+        if model == "first_order":
+            a, b, k = params["a"], params["b"], params["k"]
+            return [a - b * math.exp(-k * xi) for xi in x]
+        if model == "arrhenius":
+            a, ea = params["a"], params["Ea_kJ_mol"] * 1000.0
+            return [a * math.exp(-ea / (GAS_CONST * (xi + 273.15))) for xi in x]
+        if model == "kohlrausch":
+            a, b, k = params["a"], params["b"], params["K"]
+            return [a + b * xi - k * (xi**1.5) for xi in x]
+    except (KeyError, OverflowError, ValueError, ZeroDivisionError):
+        return None
+    return None
+
+
+LOOCV_MAX_N = 60
+LOOCV_SKIP_MODELS = frozenset({"first_order"})
+
+
+def _loocv_rmse(model: str, x: List[float], y: List[float], axis: str) -> Optional[float]:
+    n = len(x)
+    if model in LOOCV_SKIP_MODELS or n < 4 or n > LOOCV_MAX_N:
+        return None
+    fitter = FITTERS.get(model)
+    if fitter is None:
+        return None
+    sq = 0.0
+    count = 0
+    for i in range(n):
+        x_tr = x[:i] + x[i + 1 :]
+        y_tr = y[:i] + y[i + 1 :]
+        try:
+            res = fitter(x_tr, y_tr, axis=axis)
+        except (ValueError, OverflowError, ZeroDivisionError):
+            res = None
+        if not res:
+            continue
+        pred = _predict(model, res["params"], [x[i]])
+        if pred is None:
+            continue
+        err = y[i] - pred[0]
+        sq += err * err
+        count += 1
+    if count == 0:
+        return None
+    return math.sqrt(sq / count)
 
 
 def _sample_curve(x: List[float], fn: Callable[[float], float]) -> List[List[float]]:
@@ -117,16 +257,17 @@ def fit_linear(x: List[float], y: List[float], axis: str = "time") -> Optional[D
     coeffs = _polyfit(x, y, 1)  # [a, b]
     a, b = coeffs
     y_hat = [a + b * xi for xi in x]
-    r2, rmse = _metrics(y, y_hat)
-    return {
-        "model": "linear",
-        "label": _label("linear", axis),
-        "params": {"a": a, "b": b},
-        "r2": r2,
-        "rmse": rmse,
-        "n": len(x),
-        "fitted": _sample_curve(x, lambda xi: a + b * xi),
-    }
+    cols = [[1.0, xi] for xi in x]
+    return _pack(
+        "linear",
+        axis,
+        {"a": a, "b": b},
+        x,
+        y,
+        y_hat,
+        lambda xi: a + b * xi,
+        param_ci=_wald_ci(cols, y, [a, b], ["a", "b"]),
+    )
 
 
 def fit_quadratic(x: List[float], y: List[float], axis: str = "time") -> Optional[Dict[str, Any]]:
@@ -134,16 +275,18 @@ def fit_quadratic(x: List[float], y: List[float], axis: str = "time") -> Optiona
         return None
     a, b, c = _polyfit(x, y, 2)
     y_hat = [a + b * xi + c * xi * xi for xi in x]
-    r2, rmse = _metrics(y, y_hat)
-    return {
-        "model": "quadratic",
-        "label": _label("quadratic", axis),
-        "params": {"a": a, "b": b, ("q" if axis == "concentration" else "c"): c},
-        "r2": r2,
-        "rmse": rmse,
-        "n": len(x),
-        "fitted": _sample_curve(x, lambda xi: a + b * xi + c * xi * xi),
-    }
+    cols = [[1.0, xi, xi * xi] for xi in x]
+    qname = "q" if axis == "concentration" else "c"
+    return _pack(
+        "quadratic",
+        axis,
+        {"a": a, "b": b, qname: c},
+        x,
+        y,
+        y_hat,
+        lambda xi: a + b * xi + c * xi * xi,
+        param_ci=_wald_ci(cols, y, [a, b, c], ["a", "b", qname]),
+    )
 
 
 def fit_exponential(x: List[float], y: List[float], axis: str = "time") -> Optional[Dict[str, Any]]:
@@ -154,16 +297,15 @@ def fit_exponential(x: List[float], y: List[float], axis: str = "time") -> Optio
     ln_a, b = _polyfit(x, ln_y, 1)
     a = math.exp(ln_a)
     y_hat = [a * math.exp(b * xi) for xi in x]
-    r2, rmse = _metrics(y, y_hat)
-    return {
-        "model": "exponential",
-        "label": _label("exponential", axis),
-        "params": {"a": a, "b": b},
-        "r2": r2,
-        "rmse": rmse,
-        "n": len(x),
-        "fitted": _sample_curve(x, lambda xi: a * math.exp(b * xi)),
-    }
+    return _pack(
+        "exponential",
+        axis,
+        {"a": a, "b": b},
+        x,
+        y,
+        y_hat,
+        lambda xi: a * math.exp(b * xi),
+    )
 
 
 def fit_logarithmic(x: List[float], y: List[float], axis: str = "time") -> Optional[Dict[str, Any]]:
@@ -173,16 +315,17 @@ def fit_logarithmic(x: List[float], y: List[float], axis: str = "time") -> Optio
     ln_x = [math.log(xi) for xi in x]
     a, b = _polyfit(ln_x, y, 1)
     y_hat = [a + b * math.log(xi) for xi in x]
-    r2, rmse = _metrics(y, y_hat)
-    return {
-        "model": "logarithmic",
-        "label": _label("logarithmic", axis),
-        "params": {"a": a, "b": b},
-        "r2": r2,
-        "rmse": rmse,
-        "n": len(x),
-        "fitted": _sample_curve(x, lambda xi: a + b * math.log(xi)),
-    }
+    cols = [[1.0, math.log(xi)] for xi in x]
+    return _pack(
+        "logarithmic",
+        axis,
+        {"a": a, "b": b},
+        x,
+        y,
+        y_hat,
+        lambda xi: a + b * math.log(xi),
+        param_ci=_wald_ci(cols, y, [a, b], ["a", "b"]),
+    )
 
 
 def fit_power(x: List[float], y: List[float], axis: str = "time") -> Optional[Dict[str, Any]]:
@@ -194,16 +337,15 @@ def fit_power(x: List[float], y: List[float], axis: str = "time") -> Optional[Di
     ln_a, b = _polyfit(ln_x, ln_y, 1)
     a = math.exp(ln_a)
     y_hat = [a * xi**b for xi in x]
-    r2, rmse = _metrics(y, y_hat)
-    return {
-        "model": "power",
-        "label": _label("power", axis),
-        "params": {"a": a, "b": b},
-        "r2": r2,
-        "rmse": rmse,
-        "n": len(x),
-        "fitted": _sample_curve(x, lambda xi: a * xi**b),
-    }
+    return _pack(
+        "power",
+        axis,
+        {"a": a, "b": b},
+        x,
+        y,
+        y_hat,
+        lambda xi: a * xi**b,
+    )
 
 
 def fit_first_order(x: List[float], y: List[float], axis: str = "time") -> Optional[Dict[str, Any]]:
@@ -228,21 +370,21 @@ def fit_first_order(x: List[float], y: List[float], axis: str = "time") -> Optio
         except ValueError:
             continue
         y_hat = [a + b * d for d in dec]
-        r2, rmse = _metrics(y, y_hat)
-        if best is None or rmse < best["_rmse"]:
-            best = {"a": a, "b": b, "k": k, "r2": r2, "rmse": rmse, "_rmse": rmse}
+        ss = sum((yi - yh) ** 2 for yi, yh in zip(y, y_hat))
+        if best is None or ss < best["_ss"]:
+            best = {"a": a, "b": b, "k": k, "y_hat": y_hat, "_ss": ss}
     if best is None:
         return None
     a, b, k = best["a"], best["b"], best["k"]
-    return {
-        "model": "first_order",
-        "label": _label("first_order", axis),
-        "params": {"a": a, "b": b, "k": k},
-        "r2": best["r2"],
-        "rmse": best["rmse"],
-        "n": len(x),
-        "fitted": _sample_curve(x, lambda xi: a - b * math.exp(-k * xi)),
-    }
+    return _pack(
+        "first_order",
+        axis,
+        {"a": a, "b": b, "k": k},
+        x,
+        y,
+        best["y_hat"],
+        lambda xi: a - b * math.exp(-k * xi),
+    )
 
 
 def fit_arrhenius(x: List[float], y: List[float], axis: str = "temperature") -> Optional[Dict[str, Any]]:
@@ -265,16 +407,15 @@ def fit_arrhenius(x: List[float], y: List[float], axis: str = "temperature") -> 
     a = math.exp(ln_a)
     ea = -slope * GAS_CONST  # J/mol
     y_hat = [a * math.exp(-ea / (GAS_CONST * ti)) for ti in t_k]
-    r2, rmse = _metrics(y, y_hat)
-    return {
-        "model": "arrhenius",
-        "label": _label("arrhenius", axis),
-        "params": {"a": a, "Ea_kJ_mol": ea / 1000.0},
-        "r2": r2,
-        "rmse": rmse,
-        "n": len(x),
-        "fitted": _sample_curve(x, lambda xi: a * math.exp(-ea / (GAS_CONST * (xi + 273.15)))),
-    }
+    return _pack(
+        "arrhenius",
+        axis,
+        {"a": a, "Ea_kJ_mol": ea / 1000.0},
+        x,
+        y,
+        y_hat,
+        lambda xi: a * math.exp(-ea / (GAS_CONST * (xi + 273.15))),
+    )
 
 
 def fit_kohlrausch(x: List[float], y: List[float], axis: str = "concentration") -> Optional[Dict[str, Any]]:
@@ -302,16 +443,17 @@ def fit_kohlrausch(x: List[float], y: List[float], axis: str = "concentration") 
     b = beta - gamma * c1
     k = -gamma
     y_hat = [a + b * xi - k * xi**1.5 for xi in x]
-    r2, rmse = _metrics(y, y_hat)
-    return {
-        "model": "kohlrausch",
-        "label": _label("kohlrausch", axis),
-        "params": {"a": a, "b": b, "K": k},
-        "r2": r2,
-        "rmse": rmse,
-        "n": len(x),
-        "fitted": _sample_curve(x, lambda xi: a + b * xi - k * xi**1.5),
-    }
+    cols = [[1.0, xi, -(xi**1.5)] for xi in x]
+    return _pack(
+        "kohlrausch",
+        axis,
+        {"a": a, "b": b, "K": k},
+        x,
+        y,
+        y_hat,
+        lambda xi: a + b * xi - k * xi**1.5,
+        param_ci=_wald_ci(cols, y, [a, b, k], ["a", "b", "K"]),
+    )
 
 
 FITTERS = {
@@ -351,6 +493,7 @@ def fit_all(
         except (ValueError, OverflowError, ZeroDivisionError):
             res = None
         if res is not None:
+            res["loocv_rmse"] = _loocv_rmse(name, x, y, x_axis)
             results.append(res)
     results.sort(key=lambda r: -r["r2"])
     return results

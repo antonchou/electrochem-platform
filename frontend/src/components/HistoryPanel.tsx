@@ -253,7 +253,13 @@ export function HistoryPanel({ api, onClose }: Props) {
             </div>
 
             {chartData.length > 0 && (
-              <FitPanel api={api} points={historyPoints} testIdPrefix="hist-fit" key={selected.id} />
+              <FitPanel
+                api={api}
+                points={historyPoints}
+                experimentId={selected.id}
+                testIdPrefix="hist-fit"
+                key={selected.id}
+              />
             )}
           </div>
         ) : (
