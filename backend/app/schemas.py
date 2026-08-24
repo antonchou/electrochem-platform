@@ -72,6 +72,7 @@ class FitRequest(BaseModel):
     y: list[float] = Field(..., min_length=3, max_length=20_000)
     models: Optional[list[str]] = None  # 缺省 = 该轴全部模型
     x_axis: Literal["time", "temperature", "concentration"] = "time"
+    experiment_id: Optional[int] = None  # 提供则把本轮拟合写入 fit_results / data/derived
 
 
 class FitResultItem(BaseModel):
@@ -82,8 +83,16 @@ class FitResultItem(BaseModel):
     params: dict
     r2: float
     rmse: float
+    mae: Optional[float] = None
+    aicc: Optional[float] = None
     n: int
     fitted: list[list[float]]  # 拟合曲线采样点 [[x, y], ...]
+    x_min: Optional[float] = None
+    x_max: Optional[float] = None
+    extrapolation_forbidden: bool = True
+    residual_max_abs: Optional[float] = None
+    param_ci: Optional[dict] = None
+    loocv_rmse: Optional[float] = None
 
 
 class FitResponse(BaseModel):
