@@ -124,6 +124,10 @@ test('F07 停止后续跑同一实验；重新开始才开新实验', async ({ p
   await expect(page.getByTestId('btn-start')).toHaveText('继续实验');
   await page.getByTestId('btn-start').click();
   await expect(page.getByTestId('experiment-status')).toHaveText('运行中');
+  // 续跑不得把已有曲线点数清零（只拟合最后一段的根因）
+  await expect
+    .poll(async () => Number(await page.getByTestId('stat-count').innerText()), { timeout: 3000 })
+    .toBeGreaterThanOrEqual(countAtStop);
   await expect
     .poll(async () => Number(await page.getByTestId('stat-count').innerText()), { timeout: 8000 })
     .toBeGreaterThan(countAtStop);

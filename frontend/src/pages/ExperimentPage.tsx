@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { getBridge } from '../services';
 import { useConnection } from '../hooks/useConnection';
 import { useExperiment } from '../hooks/useExperiment';
@@ -42,7 +42,27 @@ export function ExperimentPage() {
     canStop,
     canReset,
   } = useExperiment(bridge);
-  const { pointsRef, count, latest, runStartTRef } = useRealtimeData(bridge);
+  const { pointsRef, count, latest, runStartTRef, clearPoints, hydrateFromFrames } =
+    useRealtimeData(bridge);
+
+  const handleStart = useCallback(async () => {
+    const previousId = experimentId;
+    const res = await start({ sample_id: sampleIdInput.trim() || undefined });
+    if (!res || !('ok' in res) || !res.ok) return;
+    if (res.resumed && res.experiment_id != null && bridge.api) {
+      try {
+        const frames = await bridge.api.getFrames(res.experiment_id, 100_000);
+        hydrateFromFrames(frames);
+      } catch {
+        /* 续跑时灌入历史帧失败则继续用内存缓冲 */
+      }
+      return;
+    }
+    // 换样品开了新实验：没有 idle 复位，必须清掉上一轮曲线
+    if (previousId != null && res.experiment_id !== previousId) {
+      clearPoints();
+    }
+  }, [bridge.api, clearPoints, experimentId, hydrateFromFrames, sampleIdInput, start]);
 
   const duration =
     latest && runStartTRef.current !== null ? Math.max(0, latest.t - runStartTRef.current) : 0;
@@ -82,7 +102,7 @@ export function ExperimentPage() {
             canStop={canStop}
             canReset={canReset}
             paused={status === 'stopped'}
-            onStart={() => start({ sample_id: sampleIdInput.trim() || undefined })}
+            onStart={() => void handleStart()}
             onStop={stop}
             onReset={() => restart({ sample_id: sampleIdInput.trim() || undefined })}
           />
