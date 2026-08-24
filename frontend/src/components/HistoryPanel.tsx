@@ -104,16 +104,21 @@ export function HistoryPanel({ api, onClose }: Props) {
     [chartData],
   );
 
-  // 历史详情拟合用的数据点（复用 FitPanel 化学公式拟合，X 轴可切时间/温度）
-  const historyPoints: DataPoint[] = useMemo(
-    () =>
-      frames.map((f) => ({
-        t: f.t_seconds ?? 0,
-        tc: f.temperature_raw,
-        ec: f.kappa_25_us_cm ?? f.k25 ?? f.ec_raw,
-      })),
-    [frames],
-  );
+  // 历史详情拟合用的数据点（复用 FitPanel 化学公式拟合，X 轴可切时间/温度/浓度）
+  const historyPoints: DataPoint[] = useMemo(() => {
+    const concBySample = new Map<string, number>();
+    for (const s of selected?.samples ?? []) {
+      if (s.concentration_mmol_l != null && Number.isFinite(s.concentration_mmol_l)) {
+        concBySample.set(s.sample_id, s.concentration_mmol_l);
+      }
+    }
+    return frames.map((f) => ({
+      t: f.t_seconds ?? 0,
+      tc: f.temperature_raw,
+      ec: f.kappa_25_us_cm ?? f.k25 ?? f.ec_raw,
+      concentration: (f.sample_id && concBySample.get(f.sample_id)) || undefined,
+    }));
+  }, [frames, selected]);
 
   if (!api) {
     return (

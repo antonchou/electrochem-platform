@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import type { DataPoint, ExperimentStatus } from '../types/protocol';
+import { useEffect, useMemo, useState } from 'react';
+import type { DataPoint, ExperimentDetail, ExperimentStatus, SampleSummary } from '../types/protocol';
 import type { ApiClient } from '../services/apiClient';
 import { FitPanel } from './FitPanel';
 import styles from './ResultPanel.module.css';
@@ -14,10 +14,45 @@ interface Props {
   api: ApiClient | null;
 }
 
+function qcBadgeClass(status: string | null | undefined): string {
+  if (status === 'PASS') return `${styles.qcBadge} ${styles.qcPass}`;
+  if (status === 'WARN') return `${styles.qcBadge} ${styles.qcWarn}`;
+  if (status === 'FAIL') return `${styles.qcBadge} ${styles.qcFail}`;
+  return `${styles.qcBadge} ${styles.qcNone}`;
+}
+
+function fmtNum(value: number | null | undefined, digits = 2): string {
+  return value != null && Number.isFinite(value) ? value.toFixed(digits) : '--';
+}
+
 /**
- * 结果区域：基础统计 + 样品溯源/导出 + 化学公式拟合（复用 FitPanel）。
+ * 结果区域：QC/代表值 + 基础统计 + 样品溯源/导出 + 化学公式拟合。
  */
 export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, api }: Props) {
+  const [detail, setDetail] = useState<ExperimentDetail | null>(null);
+
+  useEffect(() => {
+    setDetail(null);
+  }, [experimentId]);
+
+  useEffect(() => {
+    if (!api || experimentId == null || status === 'running') return;
+    let cancelled = false;
+    api
+      .getExperiment(experimentId)
+      .then((d) => {
+        if (!cancelled) setDetail(d);
+      })
+      .catch(() => {
+        if (!cancelled) setDetail(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, experimentId, status, count]);
+
+  const sample: SampleSummary | undefined = detail?.samples?.[0];
+
   const stats = useMemo(() => {
     if (count === 0) return null;
     const pts = pointsRef.current;
@@ -36,7 +71,17 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
     return { n: values.length, mean, min, max, last };
   }, [status, count, pointsRef]);
 
+  const pointsForFit = useMemo(() => {
+    const pts = pointsRef.current.slice();
+    const c = sample?.concentration_mmol_l;
+    if (c == null || !Number.isFinite(c)) return pts;
+    return pts.map((p) => ({ ...p, concentration: p.concentration ?? c }));
+  }, [count, status, sample, pointsRef]);
+
   if (status === 'running') return null;
+
+  const qcStatus = sample?.qc_status ?? null;
+  const concentration = sample?.concentration_mmol_l;
 
   return (
     <section className={styles.panel} data-testid="result-panel">
@@ -45,7 +90,10 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
         {experimentId && api && (
           <div className={styles.actions}>
             <span className={styles.sampleTag} data-testid="result-sample">
-              样品：{sampleId || '--'}
+              样品：{sampleId || sample?.sample_id || '--'}
+            </span>
+            <span className={styles.sampleTag} data-testid="result-concentration">
+              浓度：{concentration != null ? `${concentration} mmol/L` : '--'}
             </span>
             <a
               className={styles.download}
@@ -65,6 +113,25 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
             </a>
           </div>
         )}
+      </div>
+
+      <div className={styles.qcRow} data-testid="result-qc">
+        <span className={styles.label}>QC</span>
+        <span className={qcBadgeClass(qcStatus)} data-testid="result-qc-status">
+          {qcStatus ?? '未判定'}
+        </span>
+        <span className={styles.label}>代表值</span>
+        <span data-testid="result-qc-value">
+          {sample?.representative_value != null
+            ? `${fmtNum(sample.representative_value)} μS/cm`
+            : '--'}
+        </span>
+        <span className={styles.label}>中位数</span>
+        <span>
+          {sample?.k25_median != null ? `${fmtNum(sample.k25_median)} μS/cm` : '--'}
+        </span>
+        <span className={styles.label}>原因</span>
+        <span data-testid="result-qc-reason">{sample?.qc_reason ?? '--'}</span>
       </div>
 
       {stats ? (
@@ -87,7 +154,7 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
       <FitPanel
         key={`${experimentId ?? 'none'}-${count}`}
         api={api}
-        points={pointsRef.current.slice()}
+        points={pointsForFit}
         btnTestId="btn-fit"
       />
     </section>

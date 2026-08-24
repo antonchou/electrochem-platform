@@ -63,7 +63,8 @@
   color: var(--text-sub);
 }
 
-.sampleInput {
+.sampleInput,
+.concentrationInput {
   width: 150px;
   padding: 8px 10px;
   font-size: 13px;
@@ -72,12 +73,18 @@
   background: var(--panel);
 }
 
-.sampleInput:focus {
+.concentrationInput {
+  width: 96px;
+}
+
+.sampleInput:focus,
+.concentrationInput:focus {
   outline: none;
   border-color: var(--primary);
 }
 
-.sampleInput:disabled {
+.sampleInput:disabled,
+.concentrationInput:disabled {
   opacity: 0.6;
   background: #f3f5f9;
 }
