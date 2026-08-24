@@ -72,6 +72,9 @@ cd tests/e2e && npm install && E2E_BROWSER=msedge npx playwright test
 
 ## 树莓派部署
 
+生产环境由 FastAPI 在 `http://localhost:8000` **同源托管** `frontend/dist`（页面 + API + WebSocket）。
+`npm ci` 只装依赖，还要 `npm run build`（或直接跑 `scripts/deploy/setup.sh`）。
+
 ```bash
 cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 # 详见 scripts/deploy/README.md
@@ -114,9 +117,9 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 
 | 需求编号 | 需求内容 | 现状 | 交付阶段 |
 |---|---|---|---|
-| REQ-M-001 | 帧需保存 U、I、T，并可追溯计算 G、κ(T)、κ25 | 当前 Mock 只给 ec/T，k25 恒为 NULL | 后续阶段（I/V 采集、校准/温补） |
+| REQ-M-001 | 帧需保存 U、I、T，并可追溯计算 G、κ(T)、κ25 | Mock/CSV 已走 I–V 计算链并落库；真实电极采集未接 | 后续阶段（真实 I/V 采集、Kcell 校准） |
 | REQ-F-001 / REQ-F-002 | 拟合需输出 CI/残差/RMSE/MAE/AICc/留一交叉验证，声明有效浓度区间、禁止外推 | 仅 R²/RMSE/params/fitted | 后续阶段（拟合报告） |
-| REQ-D-003 | 自动判稳（窗口/统计量/阈值/失败原因）与 QC PASS/WARN/FAIL | 未实现，samples.k25_* 恒 NULL | 后续阶段（判稳与 QC） |
+| REQ-D-003 | 自动判稳（窗口/统计量/阈值/失败原因）与 QC PASS/WARN/FAIL | 实验停止时已写入 samples.qc_* / k25_mean / k25_median | 后续：阈值台架标定 |
 | REQ-C-001 | 每次结果关联 calibration_id 与标准液批次 | calibration_records 表已建但未写入 | 后续阶段（校准 SOP） |
-| REQ-U-001 | UI 区分原始值/温补值/滤波值/最终代表值 | 仅显示 EC 与温度 | 后续阶段（分层显示） |
-| SRS 3.3 | 协议需含 schema_version/device_id/firmware_version/range_id/quality_flags | 实时帧为简化 4 字段 | 后续阶段（真实设备接入） |
+| REQ-U-001 | UI 区分原始值/温补值/滤波值/最终代表值 | 已显示 U/I/G/κ(T)/κ25；滤波值尚未分层 | 后续阶段（滤波层） |
+| SRS 3.3 | 协议需含 schema_version/device_id/firmware_version/range_id/quality_flags | v2 帧已含上述字段；COMPUTE_INVALID 时 `ec` 可为 null | 后续阶段（真实设备接入） |

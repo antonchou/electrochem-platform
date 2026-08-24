@@ -6,6 +6,9 @@ from typing import Optional
 
 from .schemas import ExperimentStatus
 
+DEFAULT_SAMPLE_ID = "SAMPLE"
+DEFAULT_SENSOR_PATH_ID = "MOCK_EC_IV"
+
 
 class ExperimentState:
     """实验运行状态（内存态）+ 当前实验持久化上下文。"""
@@ -17,15 +20,15 @@ class ExperimentState:
         # Phase 7：当前实验持久化上下文
         self.experiment_db_id: Optional[int] = None
         self.experiment_uid: Optional[str] = None
-        self.sample_id: str = "SAMPLE"
-        self.sensor_path_id: str = "CM2_WIDE"
+        self.sample_id: str = DEFAULT_SAMPLE_ID
+        self.sensor_path_id: str = DEFAULT_SENSOR_PATH_ID
         self.seq_no: int = 0
 
     async def start(
         self,
         *,
-        sample_id: str = "SAMPLE",
-        sensor_path_id: str = "CM2_WIDE",
+        sample_id: str = DEFAULT_SAMPLE_ID,
+        sensor_path_id: str = DEFAULT_SENSOR_PATH_ID,
         title: str = "不同溶液导电性相对比较",
         experiment_db_id: Optional[int] = None,
         experiment_uid: Optional[str] = None,

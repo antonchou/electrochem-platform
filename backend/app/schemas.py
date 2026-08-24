@@ -2,7 +2,7 @@
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 ExperimentStatus = Literal["idle", "running", "stopped", "error"]
 
@@ -16,7 +16,7 @@ class Frame(BaseModel):
     """
 
     timestamp: float  # 实验开始后的时间，单位秒
-    ec: float  # 电导率，μS/cm（兼容层 = κ25）
+    ec: Optional[float] = None  # 电导率，μS/cm（兼容层 = κ25；COMPUTE_INVALID 时为 null）
     temperature: float  # 温度，°C（兼容层 = temperature_raw_c）
     status: ExperimentStatus
     # I–V 链路（软件侧，真实硬件未接时由 Mock 仿真）
@@ -63,8 +63,8 @@ class FitRequest(BaseModel):
     - concentration：浓度（线性标定/二次/Kohlrausch）
     """
 
-    x: list[float]
-    y: list[float]
+    x: list[float] = Field(..., min_length=3, max_length=20_000)
+    y: list[float] = Field(..., min_length=3, max_length=20_000)
     models: Optional[list[str]] = None  # 缺省 = 该轴全部模型
     x_axis: Literal["time", "temperature", "concentration"] = "time"
 
@@ -84,3 +84,12 @@ class FitResultItem(BaseModel):
 class FitResponse(BaseModel):
     best: Optional[str] = None
     models: list[FitResultItem]
+
+
+class CurrentExperimentResponse(BaseModel):
+    """当前内存态实验（供前端重连后恢复 experiment_id / 样品号）。"""
+
+    status: ExperimentStatus
+    experiment_id: Optional[int] = None
+    sample_id: Optional[str] = None
+    experiment_uid: Optional[str] = None

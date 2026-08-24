@@ -18,23 +18,50 @@ export function useExperiment(bridge: ExperimentBridge) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const applyCurrent = useCallback(
+    (payload: {
+      status: ExperimentStatus;
+      experiment_id?: number | null;
+      sample_id?: string | null;
+    }) => {
+      setStatus(payload.status);
+      if (payload.status === 'idle') {
+        setStartedAt(null);
+        setExperimentId(null);
+        setSampleId('');
+        return;
+      }
+      if (payload.experiment_id !== undefined && payload.experiment_id !== null) {
+        setExperimentId(payload.experiment_id);
+      }
+      if (payload.sample_id) setSampleId(payload.sample_id);
+      if (payload.status === 'running') {
+        setStartedAt((prev) => prev ?? new Date());
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
       if (ev.type === 'status') {
-        setStatus(ev.status);
-        if (ev.status === 'idle') {
-          setStartedAt(null);
-          setExperimentId(null);
-          setSampleId('');
-          setActionError(null);
-        }
+        applyCurrent({ status: ev.status });
+        if (ev.status === 'idle') setActionError(null);
       }
       if (ev.type === 'message') {
         setStatus(ev.frame.status);
       }
+      if (ev.type === 'connection' && ev.status === 'connected' && bridge.api) {
+        bridge.api
+          .getCurrentExperiment()
+          .then((cur) => applyCurrent(cur))
+          .catch(() => {
+            /* 重连恢复失败不阻断实时流 */
+          });
+      }
     });
     return unsub;
-  }, [bridge]);
+  }, [bridge, applyCurrent]);
 
   const run = useCallback(
     async (action: 'start' | 'stop' | 'reset', options?: ExperimentStartOptions) => {
@@ -42,11 +69,21 @@ export function useExperiment(bridge: ExperimentBridge) {
       setActionError(null);
       try {
         const res = await bridge.control(action, options);
+        if (!res.ok) {
+          setActionError(res.message ?? '控制请求失败');
+          setStatus(res.status);
+          return res;
+        }
         setStatus(res.status);
         if (action === 'start') {
           setStartedAt(new Date());
-          if (res.experiment_id !== undefined) setExperimentId(res.experiment_id);
+          if (res.experiment_id !== undefined && res.experiment_id !== null) {
+            setExperimentId(res.experiment_id);
+          }
           if (res.sample_id !== undefined) setSampleId(res.sample_id);
+        }
+        if (action === 'stop' && res.experiment_id !== undefined && res.experiment_id !== null) {
+          setExperimentId(res.experiment_id);
         }
         if (action === 'reset') {
           setStartedAt(null);
