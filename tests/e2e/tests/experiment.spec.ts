@@ -102,6 +102,23 @@ test('F05 WebSocket：连接指定地址并解析约定 JSON', async ({ page }) 
   await expect(page.getByTestId('connection-panel')).toContainText('后端(WS)');
 });
 
+test('开始实验：浓度写入结果区，停止后显示 QC', async ({ page }) => {
+  await page.getByTestId('input-sample').fill('NACL_010');
+  await page.getByTestId('input-concentration').fill('10');
+  await page.getByTestId('btn-start').click();
+  await waitForPoints(page, 12);
+  await page.getByTestId('btn-stop').click();
+  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
+
+  await expect(page.getByTestId('result-panel')).toBeVisible();
+  await expect(page.getByTestId('result-sample')).toContainText('NACL_010');
+  await expect(page.getByTestId('result-concentration')).toContainText('10');
+  await expect(page.getByTestId('result-qc-status')).toHaveText(/PASS|WARN|FAIL/);
+  await expect
+    .poll(async () => page.getByTestId('result-qc-value').innerText(), { timeout: 5000 })
+    .not.toMatch(/^--\s*$/);
+});
+
 test('F06 停止实验：不再追加数据，保留当前曲线', async ({ page }) => {
   await page.getByTestId('btn-start').click();
   await waitForPoints(page, 3);

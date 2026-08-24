@@ -286,6 +286,28 @@ def test_debug_burst_count_is_bounded(client):
     assert client.post("/api/debug/burst?count=10001").status_code == 422
 
 
+# ---------------- 开始实验：浓度字段 ----------------
+
+def test_start_persists_concentration(client):
+    """开始实验时的浓度写入 samples，停止后结果区可从详情读取。"""
+    started = client.post(
+        "/api/experiment/start",
+        json={"sample_id": "NACL_010", "concentration_mmol_l": 10},
+    ).json()
+    exp_id = started["experiment_id"]
+    detail = client.get(f"/api/experiments/{exp_id}").json()
+    assert detail["samples"][0]["sample_id"] == "NACL_010"
+    assert detail["samples"][0]["concentration_mmol_l"] == 10
+    client.post("/api/experiment/reset")
+
+
+def test_start_rejects_negative_concentration(client):
+    r = client.post("/api/experiment/start", json={"concentration_mmol_l": -1})
+    assert r.status_code == 422
+    idle = client.get("/api/experiment/current").json()
+    assert idle["status"] == "idle"
+
+
 # ---------------- 判稳与 QC（REQ-D-003） ----------------
 
 def test_stop_writes_qc_to_samples(client):
