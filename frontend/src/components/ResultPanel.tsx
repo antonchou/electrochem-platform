@@ -85,9 +85,9 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
       )}
 
       <FitPanel
-        key={experimentId ?? 'none'}
+        key={`${experimentId ?? 'none'}-${count}`}
         api={api}
-        points={pointsRef.current}
+        points={pointsRef.current.slice()}
         btnTestId="btn-fit"
       />
     </section>
