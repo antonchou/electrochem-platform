@@ -105,6 +105,8 @@ def test_export_csv(store):
     lines = csv_text.strip().split("\n")
     assert len(lines) == 4  # 1 表头 + 3 数据行
     assert "sensor_path_id" in lines[0]
+    assert "kappa_25_us_cm" in lines[0]
+    assert "calibration_id" in lines[0]
     assert "NACL_006" in lines[1]
 
 
@@ -131,3 +133,52 @@ def test_get_recent_frames_returns_tail(store):
     )
     tail = store.get_recent_frames(eid, limit=3)
     assert [row["seq_no"] for row in tail] == [8, 9, 10]
+
+
+def test_calibration_and_frame_trace_columns(store):
+    eid = store.create_experiment("EXP-CAL", "t", sample_id="S", sensor_path_id="MOCK_EC_IV")
+    rid = store.insert_calibration_record(
+        experiment_id=eid,
+        calibration_id="MOCK-KCELL-1.0",
+        sensor_path_id="MOCK_EC_IV",
+        mode="cell_constant",
+        standard="KCl 1413",
+        lot="SIMULATED",
+        coeff_value=1.0,
+        coeff_json={"alpha_per_c": 0.02},
+    )
+    assert rid > 0
+    store.insert_frames(
+        [
+            {
+                "experiment_id": eid,
+                "sample_id": "S",
+                "sensor_path_id": "MOCK_EC_IV",
+                "seq_no": 1,
+                "timestamp_utc": "2026-08-19T00:00:00Z",
+                "monotonic_ms": 1000,
+                "t_seconds": 0.1,
+                "ec_raw": 1413.0,
+                "temperature_raw": 25.0,
+                "k25": 1413.0,
+                "quality_flags": "SIMULATED",
+                "status": "running",
+                "kappa_25_us_cm": 1413.0,
+                "schema_version": 2,
+                "device_id": "MOCK-IV-01",
+                "firmware_version": "0.1.0",
+                "range_id": "WIDE",
+                "calibration_id": "MOCK-KCELL-1.0",
+                "excitation_frequency_hz": 0.0,
+                "excitation_amplitude_v": 1.0,
+                "compensation_model": "linear_alpha",
+            }
+        ]
+    )
+    frame = store.get_frames(eid)[0]
+    assert frame["calibration_id"] == "MOCK-KCELL-1.0"
+    assert frame["device_id"] == "MOCK-IV-01"
+    assert frame["compensation_model"] == "linear_alpha"
+    recs = store.get_calibration_records(eid)
+    assert recs[0]["calibration_id"] == "MOCK-KCELL-1.0"
+    assert recs[0]["coeff_value"] == 1.0

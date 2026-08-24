@@ -22,6 +22,7 @@ class ExperimentState:
         self.experiment_uid: Optional[str] = None
         self.sample_id: str = DEFAULT_SAMPLE_ID
         self.sensor_path_id: str = DEFAULT_SENSOR_PATH_ID
+        self.calibration_id: Optional[str] = None
         self.seq_no: int = 0
 
     async def start(
@@ -32,6 +33,7 @@ class ExperimentState:
         title: str = "不同溶液导电性相对比较",
         experiment_db_id: Optional[int] = None,
         experiment_uid: Optional[str] = None,
+        calibration_id: Optional[str] = None,
     ) -> bool:
         """成功进入 running 返回 True；已在运行返回 False。
 
@@ -48,6 +50,7 @@ class ExperimentState:
             self.sensor_path_id = sensor_path_id
             self.experiment_db_id = experiment_db_id
             self.experiment_uid = experiment_uid
+            self.calibration_id = calibration_id
             return True
 
     async def stop(self) -> bool:
@@ -73,6 +76,7 @@ class ExperimentState:
             self.t0 = None
             self.experiment_db_id = None
             self.experiment_uid = None
+            self.calibration_id = None
 
     def next_seq(self) -> int:
         self.seq_no += 1
