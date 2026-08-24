@@ -155,6 +155,7 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
         key={`${experimentId ?? 'none'}-${count}`}
         api={api}
         points={pointsForFit}
+        experimentId={experimentId}
         btnTestId="btn-fit"
       />
     </section>

@@ -487,6 +487,7 @@ async def experiment_detail(exp_id: int) -> dict:
     exp["samples"] = await asyncio.to_thread(storage.get_samples, exp_id)
     exp["frame_count"] = await asyncio.to_thread(storage.count_frames, exp_id)
     exp["calibrations"] = await asyncio.to_thread(storage.get_calibration_records, exp_id)
+    exp["fits"] = await asyncio.to_thread(storage.get_fit_results, exp_id)
     return exp
 
 
@@ -544,7 +545,33 @@ async def fit(body: FitRequest) -> dict:
         raise HTTPException(status_code=400, detail="数据点含非有限数值")
 
     results = await asyncio.to_thread(analysis.fit_all, x, y, body.models, body.x_axis)
-    return {"best": results[0]["model"] if results else None, "models": results}
+    derived_path = None
+    if body.experiment_id is not None:
+        exp = await asyncio.to_thread(storage.get_experiment, body.experiment_id)
+        if exp is None:
+            raise HTTPException(status_code=404, detail="experiment not found")
+        payload = {
+            "experiment_id": body.experiment_id,
+            "x_axis": body.x_axis,
+            "best": results[0]["model"] if results else None,
+            "models": results,
+        }
+        derived_path = await asyncio.to_thread(
+            storage.write_fit_report, body.experiment_id, payload
+        )
+        sample_id = exp.get("sample_id")
+        await persist.insert_fit_results(
+            experiment_id=body.experiment_id,
+            x_axis=body.x_axis,
+            models=results,
+            sample_id=sample_id,
+            derived_path=derived_path,
+        )
+    return {
+        "best": results[0]["model"] if results else None,
+        "models": results,
+        "derived_path": derived_path,
+    }
 
 
 # ---------- 调试接口（仅模拟源使用；用于验收 F08/F09/F10/P04） ----------

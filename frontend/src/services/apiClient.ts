@@ -80,6 +80,7 @@ export class ApiClient {
     points: [number, number][],
     models: string[],
     xAxis: FitAxis = 'time',
+    experimentId?: number | null,
   ): Promise<FitResponse> {
     const res = await fetch(`${this.baseUrl}/api/analysis/fit`, {
       method: 'POST',
@@ -89,6 +90,7 @@ export class ApiClient {
         y: points.map((p) => p[1]),
         models,
         x_axis: xAxis,
+        experiment_id: experimentId ?? undefined,
       }),
     });
     if (!res.ok) throw new Error(`拟合请求失败：HTTP ${res.status}`);

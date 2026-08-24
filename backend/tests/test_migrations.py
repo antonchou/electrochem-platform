@@ -133,7 +133,14 @@ def test_fresh_db_reaches_schema_version(fresh_db):
             r["name"]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-    assert {"experiments", "samples", "raw_frames", "calibration_records", "schema_migrations"} <= tables
+    assert {
+        "experiments",
+        "samples",
+        "raw_frames",
+        "calibration_records",
+        "schema_migrations",
+        "fit_results",
+    } <= tables
 
 
 def test_idempotent_init_no_duplicate_versions(tmp_path):
@@ -278,6 +285,28 @@ def test_v5_adds_trace_columns(tmp_path):
                 "compensation_model",
             } <= cols
             assert conn.execute("SELECT ec_raw FROM raw_frames").fetchone()["ec_raw"] == 1413.0
+            trig = {
+                r["name"]
+                for r in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
+            }
+    finally:
+        os.environ.pop("EC_DB_PATH", None)
+    assert {"block_raw_frames_update", "block_raw_frames_delete"} <= trig
+
+
+def test_v6_creates_fit_results(tmp_path):
+    """真实 v6 迁移：fit_results 表存在，旧数据与触发器保留。"""
+    db = _legacy_v1_db(tmp_path)
+    os.environ["EC_DB_PATH"] = str(db)
+    try:
+        storage.init_db()
+        with storage._conn() as conn:
+            assert _versions(conn) == list(range(1, storage.SCHEMA_VERSION + 1))
+            tables = {
+                r["name"]
+                for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            assert "fit_results" in tables
             trig = {
                 r["name"]
                 for r in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
