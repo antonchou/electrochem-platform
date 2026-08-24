@@ -57,7 +57,14 @@ def _build_driver() -> tuple[DeviceDriver, float]:
         path = os.environ.get("EC_CSV_PATH", "")
         if not path:
             raise ValueError("EC_CSV_PATH is required when EC_DRIVER=csv")
-        cfg = CsvPlaybackConfig(path=path)
+        kwargs: dict = {"path": path}
+        cell = os.environ.get("EC_CELL_CONSTANT", "").strip()
+        if cell:
+            kwargs["cell_constant_per_cm"] = float(cell)
+        rate = os.environ.get("EC_CSV_SAMPLE_RATE_HZ", "").strip()
+        if rate:
+            kwargs["sample_rate_hz"] = float(rate)
+        cfg = CsvPlaybackConfig(**kwargs)
         return CsvPlaybackDriver(cfg), 1.0 / cfg.sample_rate_hz
     config = load_mock_config()
     return MockDevice(config), 1.0 / config.sample_rate_hz
