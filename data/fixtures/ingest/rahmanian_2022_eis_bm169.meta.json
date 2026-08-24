@@ -1,0 +1,6 @@
+{
+  "experiment_id": "PYA_25082021_BM169_1",
+  "cell_constant_per_cm": 4.72026,
+  "excitation_voltage_v": 1.0,
+  "note": "U/I reconstructed from EIS_conductivity and published Kcell so compute_chain can run; not a measured I\u2013V waveform."
+}
