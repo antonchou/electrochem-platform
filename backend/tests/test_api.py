@@ -197,6 +197,13 @@ def test_frames_persist_and_export(client):
     csv_text = csv_resp.text
     assert "ec_raw_us_cm" in csv_text
     assert "BA121S_LOW" in csv_text
+    # I–V 列（v2 起）：表头与数据行都必须包含电压/电流/电导/κ(T)/κ25
+    header = csv_text.splitlines()[0].split(",")
+    for col in ("voltage_raw_v", "current_raw_a", "conductance_s", "kappa_t_us_cm", "kappa_25_us_cm"):
+        assert col in header, f"表头缺 {col}"
+        idx = header.index(col)
+        values = [ln.split(",")[idx] for ln in csv_text.splitlines()[1:] if ln.strip()]
+        assert any(v not in ("", "None") for v in values), f"{col} 列全空"
 
     json_resp = client.get(f"/api/experiments/{exp_id}/export.json").json()
     assert len(json_resp["frames"]) >= 3
