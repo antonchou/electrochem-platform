@@ -17,6 +17,16 @@ import styles from './ExperimentPage.module.css';
 
 const EXPERIMENT_TITLE = '溶液导电性相对比较实验';
 
+function parseConcentrationMmolL(raw: string): { value?: number; error?: string } {
+  const trimmed = raw.trim();
+  if (trimmed === '') return {};
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0) {
+    return { error: '浓度须为 ≥0 的数字（mmol/L）' };
+  }
+  return { value: n };
+}
+
 /**
  * 主实验页：实验信息 + 实时数值 + 实时曲线 + 控制 + 连接状态 + 结果区 + 历史实验（Phase 7）。
  * 本页只做组合编排，业务逻辑都在 hooks/services 中。
@@ -24,6 +34,7 @@ const EXPERIMENT_TITLE = '溶液导电性相对比较实验';
 export function ExperimentPage() {
   const bridge = useMemo(() => getBridge(), []);
   const [sampleIdInput, setSampleIdInput] = useState('BLANK');
+  const [concentrationInput, setConcentrationInput] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const { connStatus, error, setError, manualReconnect } = useConnection(bridge);
@@ -45,9 +56,23 @@ export function ExperimentPage() {
   const { pointsRef, count, latest, runStartTRef, clearPoints, hydrateFromFrames } =
     useRealtimeData(bridge);
 
+  const startOptions = useCallback(() => {
+    const parsed = parseConcentrationMmolL(concentrationInput);
+    if (parsed.error) {
+      setActionError(parsed.error);
+      return null;
+    }
+    return {
+      sample_id: sampleIdInput.trim() || undefined,
+      concentration_mmol_l: parsed.value,
+    };
+  }, [concentrationInput, sampleIdInput, setActionError]);
+
   const handleStart = useCallback(async () => {
+    const options = startOptions();
+    if (!options) return;
     const previousId = experimentId;
-    const res = await start({ sample_id: sampleIdInput.trim() || undefined });
+    const res = await start(options);
     if (!res || !('ok' in res) || !res.ok) return;
     if (res.resumed && res.experiment_id != null && bridge.api) {
       try {
@@ -62,7 +87,7 @@ export function ExperimentPage() {
     if (previousId != null && res.experiment_id !== previousId) {
       clearPoints();
     }
-  }, [bridge.api, clearPoints, experimentId, hydrateFromFrames, sampleIdInput, start]);
+  }, [bridge.api, clearPoints, experimentId, hydrateFromFrames, start, startOptions]);
 
   const duration =
     latest && runStartTRef.current !== null ? Math.max(0, latest.t - runStartTRef.current) : 0;
@@ -104,7 +129,10 @@ export function ExperimentPage() {
             paused={status === 'stopped'}
             onStart={() => void handleStart()}
             onStop={stop}
-            onReset={() => restart({ sample_id: sampleIdInput.trim() || undefined })}
+            onReset={() => {
+              const options = startOptions();
+              if (options) void restart(options);
+            }}
           />
           <label className={styles.sampleInputWrap}>
             <span className={styles.sampleLabel}>样品编号</span>
@@ -115,6 +143,21 @@ export function ExperimentPage() {
               placeholder="如 NACL_004 / BLANK"
               disabled={status === 'running'}
               data-testid="input-sample"
+            />
+          </label>
+          <label className={styles.sampleInputWrap}>
+            <span className={styles.sampleLabel}>浓度 mmol/L</span>
+            <input
+              className={styles.concentrationInput}
+              type="number"
+              min="0"
+              step="any"
+              inputMode="decimal"
+              value={concentrationInput}
+              onChange={(e) => setConcentrationInput(e.target.value)}
+              placeholder="可选"
+              disabled={status === 'running'}
+              data-testid="input-concentration"
             />
           </label>
         </div>
