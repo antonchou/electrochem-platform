@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import json
 import logging
 import math
 import os
@@ -21,8 +22,8 @@ from .drivers import (
     load_mock_config,
 )
 from .persistence import persist
-from .schemas import ControlResponse, ExperimentStartRequest, FitRequest
-from .state import state
+from .schemas import ControlResponse, CurrentExperimentResponse, ExperimentStartRequest, FitRequest
+from .state import DEFAULT_SAMPLE_ID, DEFAULT_SENSOR_PATH_ID, state
 from .stream import generate_frame
 
 router = APIRouter()
@@ -37,7 +38,7 @@ _hub = BroadcastHub(queue_size=20_000)
 _acquisition_task: Optional[asyncio.Task] = None
 _driver: Optional[DeviceDriver] = None
 _sample_period_seconds = 0.1
-_start_lock = asyncio.Lock()
+_lifecycle_lock = asyncio.Lock()
 
 
 async def broadcast(payload: dict) -> int:
@@ -262,12 +263,12 @@ async def ws_stream(ws: WebSocket) -> None:
 @router.post("/api/experiment/start")
 async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
     body = body or ExperimentStartRequest()
-    async with _start_lock:
+    async with _lifecycle_lock:
         if state.status == "running":
             return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
-        sample_id = body.sample_id or "SAMPLE"
-        sensor_path_id = body.sensor_path_id or "CM2_WIDE"
+        sample_id = body.sample_id or DEFAULT_SAMPLE_ID
+        sensor_path_id = body.sensor_path_id or DEFAULT_SENSOR_PATH_ID
         title = body.title or "不同溶液导电性相对比较"
         uid = f"EXP-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:4]}"
 
@@ -303,31 +304,33 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
             await persist.finish_experiment(exp_id, "error")
             return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
-    await broadcast({"status": "running"})
-    return ControlResponse(
-        ok=True,
-        status="running",
-        experiment_id=exp_id,
-        sample_id=sample_id,
-    )
+        await broadcast({"status": "running"})
+        return ControlResponse(
+            ok=True,
+            status="running",
+            experiment_id=exp_id,
+            sample_id=sample_id,
+        )
 
 
 @router.post("/api/experiment/stop")
 async def stop() -> ControlResponse:
-    changed = await state.stop()
-    exp_id = state.experiment_db_id
-    if changed and exp_id is not None:
-        # 仅在 running→stopped 时结束实验：重复 stop 不再刷新 ended_at_utc
-        await persist.flush()  # 确保在途帧先落库
-        await _compute_and_store_qc(exp_id)
-        await persist.finish_experiment(exp_id, "stopped")
-        await broadcast({"status": state.status})
-    return ControlResponse(
-        ok=True,
-        status=state.status,
-        experiment_id=exp_id,
-        message=None if changed else "当前没有运行中的实验",
-    )
+    async with _lifecycle_lock:
+        changed = await state.stop()
+        exp_id = state.experiment_db_id
+        status = state.status
+        if changed and exp_id is not None:
+            # 仅在 running→stopped 时结束实验：重复 stop 不再刷新 ended_at_utc
+            await persist.flush()  # 确保在途帧先落库
+            await _compute_and_store_qc(exp_id)
+            await persist.finish_experiment(exp_id, "stopped")
+            await broadcast({"status": status})
+        return ControlResponse(
+            ok=True,
+            status=status,
+            experiment_id=exp_id,
+            message=None if changed else "当前没有运行中的实验",
+        )
 
 
 async def _compute_and_store_qc(exp_id: int) -> None:
@@ -336,13 +339,10 @@ async def _compute_and_store_qc(exp_id: int) -> None:
     纯增量：帧不足或计算异常时跳过写 QC，不影响 stop 主流程。
     """
     try:
-        rows = await asyncio.to_thread(
-            storage.get_frames, exp_id, limit=100_000
-        )
+        rows = await asyncio.to_thread(storage.get_recent_frames, exp_id, limit=500)
         if not rows:
             return
-        kappa25 = [r["kappa_25_us_cm"] for r in rows if r.get("kappa_25_us_cm") is not None]
-        flags = [r.get("quality_flags") or "" for r in rows]
+        kappa25, flags = stability.qc_series_from_frames(rows)
         if len(kappa25) < 3:
             return
         result = stability.check_stability(kappa25, quality_flags=flags)
@@ -355,7 +355,8 @@ async def _compute_and_store_qc(exp_id: int) -> None:
             qc_status=result.status,
             qc_reason=result.reason,
             representative_value=result.representative_value,
-            k25_median=result.mean,
+            k25_median=result.median,
+            k25_mean=result.mean,
             k25_sd=result.std,
         )
     except Exception:
@@ -364,15 +365,28 @@ async def _compute_and_store_qc(exp_id: int) -> None:
 
 @router.post("/api/experiment/reset")
 async def reset() -> ControlResponse:
-    exp_id = state.experiment_db_id
-    if exp_id is not None:
-        await persist.flush()
-        if state.status == "running":
-            # 运行中被打断 → aborted（与 SRS 状态机语义一致），而非 idle
-            await persist.finish_experiment(exp_id, "aborted")
-    await state.reset()
-    await broadcast({"status": "idle"})
-    return ControlResponse(ok=True, status="idle")
+    async with _lifecycle_lock:
+        exp_id = state.experiment_db_id
+        was_running = state.status == "running"
+        if exp_id is not None:
+            await persist.flush()
+            if was_running:
+                # 运行中被打断 → aborted（与 SRS 状态机语义一致），而非 idle
+                await persist.finish_experiment(exp_id, "aborted")
+        await state.reset()
+        await broadcast({"status": "idle"})
+        return ControlResponse(ok=True, status="idle")
+
+
+@router.get("/api/experiment/current")
+async def current_experiment() -> CurrentExperimentResponse:
+    """前端重连后用来恢复 experiment_id / 样品号，避免导出按钮消失。"""
+    return CurrentExperimentResponse(
+        status=state.status,
+        experiment_id=state.experiment_db_id,
+        sample_id=state.sample_id if state.experiment_db_id is not None else None,
+        experiment_uid=state.experiment_uid,
+    )
 
 
 @router.get("/health")
@@ -426,13 +440,19 @@ async def export_csv(exp_id: int) -> Response:
 
 
 @router.get("/api/experiments/{exp_id}/export.json")
-async def export_json(exp_id: int) -> dict:
+async def export_json(exp_id: int) -> Response:
     """导出完整实验（元信息 + 全部帧）为 JSON。"""
     exp = await asyncio.to_thread(storage.get_experiment, exp_id)
     if exp is None:
         raise HTTPException(status_code=404, detail="experiment not found")
     exp["frames"] = await asyncio.to_thread(storage.get_frames, exp_id, limit=1_000_000)
-    return exp
+    return Response(
+        content=json.dumps(exp, ensure_ascii=False),
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="experiment_{exp_id}.json"'
+        },
+    )
 
 
 # ---------- 备选公式拟合（M4 前置） ----------

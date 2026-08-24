@@ -26,8 +26,8 @@ chmod +x scripts/deploy/setup.sh
 1. 构建前端（`frontend/dist`，默认连接 `ws://localhost:8000`）
 2. 创建 `backend/` 虚拟环境并安装依赖
 3. 生成并安装两个 systemd 服务：
-   - `ec-backend`：FastAPI 后端（8000 端口，开机自启 + 崩溃自动重启）
-   - `ec-web`：静态托管前端产物（5173 端口）
+   - `ec-backend`：FastAPI 后端（仅绑定 127.0.0.1:8000，开机自启 + 崩溃自动重启）
+   - `ec-web`：静态托管前端产物（仅绑定 127.0.0.1:5173）
 4. 自动识别 `chromium` / `chromium-browser`，设置桌面自动登录并安装 Kiosk 自启动：
    - 新版 Raspberry Pi OS（Labwc）：`~/.config/labwc/autostart`
    - 旧版 LXDE/X11：`~/.config/autostart/ec-kiosk.desktop`
@@ -62,4 +62,4 @@ curl -I http://127.0.0.1:5173/
 ## 说明
 
 - 真实后端就绪后，`backend/` 内部替换为真实设备驱动与采集进程即可；协议对齐见 `docs/接口说明.md`。
-- 本项目为 MVP 教学演示用途，未配置鉴权与 HTTPS。
+- 本项目为 MVP 教学演示用途，未配置鉴权与 HTTPS。服务默认只监听本机，Kiosk 通过 `http://localhost:5173` 访问；若需局域网访问，请自行加防火墙与反向代理，不要把控制面裸绑到 `0.0.0.0`。
