@@ -23,6 +23,7 @@ export class WebSocketClient implements DataClient {
   private reconnectAttempts = 0;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private lastMessageAt = 0;
+  private staleAlerted = false;
   private manualClosed = false;
   /** 最近收到消息所反映的实验是否运行中（看门狗只在 running 时检查，P2-5） */
   private running = false;
@@ -99,6 +100,7 @@ export class WebSocketClient implements DataClient {
 
     ws.onmessage = (event: MessageEvent) => {
       this.lastMessageAt = Date.now();
+      this.staleAlerted = false;
       const parsed: ServerMessage | null = parseServerMessage(event.data);
       if (!parsed) {
         // 坏数据：丢弃该帧并提示，页面不崩溃（F10）
@@ -147,7 +149,10 @@ export class WebSocketClient implements DataClient {
       if (this.status !== 'connected') return;
       if (!this.running) return;
       if (Date.now() - this.lastMessageAt > config.chart.staleThresholdMs) {
-        this.emit({ type: 'error', message: `数据流超时（${config.chart.staleThresholdMs / 1000} 秒无数据）` });
+        if (!this.staleAlerted) {
+          this.staleAlerted = true;
+          this.emit({ type: 'error', message: `数据流超时（${config.chart.staleThresholdMs / 1000} 秒无数据）` });
+        }
       }
     }, 1000);
   }
