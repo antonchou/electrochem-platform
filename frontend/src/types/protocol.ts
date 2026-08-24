@@ -37,6 +37,10 @@ export interface ExperimentFrame {
   kappa_25_us_cm?: number;
   /** 质量标志（| 分隔） */
   quality_flags?: string | null;
+  calibration_id?: string;
+  excitation_frequency_hz?: number;
+  excitation_amplitude_v?: number;
+  compensation_model?: string;
 }
 
 /** 纯状态帧（后端在某些时刻只下发状态，如 stopped） */
@@ -104,11 +108,25 @@ export interface SampleSummary {
 }
 
 /** 实验详情 */
+export interface CalibrationRecord {
+  id: number;
+  experiment_id: number | null;
+  calibration_id: string;
+  sensor_path_id: string | null;
+  mode: string | null;
+  standard: string | null;
+  lot: string | null;
+  coeff_value: number | null;
+  coeff_json: string | null;
+  created_at_utc: string;
+}
+
 export interface ExperimentDetail extends ExperimentSummary {
   samples: SampleSummary[];
   operator?: string | null;
   objective?: string | null;
   metadata_json?: string | null;
+  calibrations?: CalibrationRecord[];
 }
 
 /** 原始帧记录（历史查询/导出用） */
@@ -131,6 +149,14 @@ export interface RawFrame {
   conductance_s?: number | null;
   kappa_t_us_cm?: number | null;
   kappa_25_us_cm?: number | null;
+  schema_version?: number | null;
+  device_id?: string | null;
+  firmware_version?: string | null;
+  range_id?: string | null;
+  calibration_id?: string | null;
+  excitation_frequency_hz?: number | null;
+  excitation_amplitude_v?: number | null;
+  compensation_model?: string | null;
 }
 
 /** 开始实验的可选参数 */
@@ -281,5 +307,10 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
       typeof raw.quality_flags === 'string' && raw.quality_flags.length > 0
         ? raw.quality_flags
         : undefined,
+    calibration_id: typeof raw.calibration_id === 'string' ? raw.calibration_id : undefined,
+    excitation_frequency_hz: parseFiniteNumber(raw.excitation_frequency_hz) ?? undefined,
+    excitation_amplitude_v: parseFiniteNumber(raw.excitation_amplitude_v) ?? undefined,
+    compensation_model:
+      typeof raw.compensation_model === 'string' ? raw.compensation_model : undefined,
   };
 }

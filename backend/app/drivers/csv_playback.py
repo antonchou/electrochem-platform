@@ -26,6 +26,9 @@ class CsvPlaybackConfig:
     range_id: str = "CSV"
     cell_constant_per_cm: float = 1.0
     alpha_per_c: float = 0.02
+    excitation_frequency_hz: float = 0.0
+    excitation_amplitude_v: float = 1.0
+    compensation_model: str = "linear_alpha"
 
 
 class CsvPlaybackDriver(DeviceDriver):

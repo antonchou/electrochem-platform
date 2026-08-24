@@ -166,5 +166,8 @@ class PersistService:
     async def update_sample_qc(self, **kwargs: Any) -> None:
         await asyncio.to_thread(storage.update_sample_qc, **kwargs)
 
+    async def insert_calibration_record(self, **kwargs: Any) -> int:
+        return await asyncio.to_thread(storage.insert_calibration_record, **kwargs)
+
 
 persist = PersistService()
