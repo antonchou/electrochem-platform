@@ -1,7 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
-import type { DataPoint } from '../types/protocol';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { DataPoint, RawFrame } from '../types/protocol';
 import { config } from '../config/config';
 import type { ExperimentBridge } from '../services';
+
+function rawFrameToPoint(frame: RawFrame): DataPoint {
+  return {
+    t: frame.t_seconds ?? 0,
+    ec: frame.kappa_25_us_cm ?? frame.k25 ?? frame.ec_raw,
+    tc: frame.temperature_raw,
+    voltage_raw_v: frame.voltage_raw_v ?? undefined,
+    current_raw_a: frame.current_raw_a ?? undefined,
+    conductance_s: frame.conductance_s ?? undefined,
+    kappa_t_us_cm: frame.kappa_t_us_cm ?? undefined,
+    kappa_25_us_cm: frame.kappa_25_us_cm ?? undefined,
+    quality_flags: frame.quality_flags ?? undefined,
+  };
+}
 
 /**
  * 实时数据缓冲。
@@ -14,7 +28,24 @@ export function useRealtimeData(bridge: ExperimentBridge) {
   const [count, setCount] = useState(0);
   const [latest, setLatest] = useState<DataPoint | null>(null);
   const runStartTRef = useRef<number | null>(null);
-  const experimentIdRef = useRef<number | null>(null);
+
+  const clearPoints = useCallback(() => {
+    pointsRef.current = [];
+    runStartTRef.current = null;
+    setCount(0);
+    setLatest(null);
+  }, []);
+
+  const hydrateFromFrames = useCallback((frames: RawFrame[]) => {
+    const converted = frames.map(rawFrameToPoint);
+    const lastT = converted.length > 0 ? converted[converted.length - 1].t : Number.NEGATIVE_INFINITY;
+    const extra = pointsRef.current.filter((p) => p.t > lastT);
+    const merged = converted.concat(extra);
+    pointsRef.current = merged;
+    runStartTRef.current = merged.length > 0 ? merged[0].t : null;
+    setCount(merged.length);
+    setLatest(merged.length > 0 ? merged[merged.length - 1] : null);
+  }, []);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
@@ -24,7 +55,6 @@ export function useRealtimeData(bridge: ExperimentBridge) {
           t: frame.timestamp,
           ec: frame.ec ?? frame.kappa_25_us_cm ?? null,
           tc: frame.temperature,
-          // I–V 链路扩展（REQ-U-001 分层显示）：后端 v2+ 才下发，缺省为 undefined
           voltage_raw_v: frame.voltage_raw_v,
           current_raw_a: frame.current_raw_a,
           conductance_s: frame.conductance_s,
@@ -34,7 +64,6 @@ export function useRealtimeData(bridge: ExperimentBridge) {
         };
         const arr = pointsRef.current;
         arr.push(p);
-        // 超出上限丢最旧点，防止长时间运行内存/渲染失控（P03/P04）
         if (arr.length > config.chart.maxPoints) {
           arr.splice(0, arr.length - config.chart.maxPoints);
         }
@@ -44,27 +73,16 @@ export function useRealtimeData(bridge: ExperimentBridge) {
         setLatest(p);
         setCount(arr.length);
       }
-      // idle = 复位；running 且换了 experiment_id = 新实验。续跑同一实验不清空曲线。
+      // 只在复位到 idle 时清空。续跑同一实验绝不能因 running 状态帧把曲线清掉。
       if (ev.type === 'status' && ev.status === 'idle') {
-        experimentIdRef.current = null;
         pointsRef.current = [];
         runStartTRef.current = null;
         setCount(0);
         setLatest(null);
       }
-      if (ev.type === 'status' && ev.status === 'running' && ev.experiment_id !== undefined) {
-        const prev = experimentIdRef.current;
-        experimentIdRef.current = ev.experiment_id;
-        if (prev !== null && prev !== ev.experiment_id) {
-          pointsRef.current = [];
-          runStartTRef.current = null;
-          setCount(0);
-          setLatest(null);
-        }
-      }
     });
     return unsub;
   }, [bridge]);
 
-  return { pointsRef, count, latest, runStartTRef };
+  return { pointsRef, count, latest, runStartTRef, clearPoints, hydrateFromFrames };
 }
