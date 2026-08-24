@@ -71,6 +71,32 @@ def test_current_experiment_and_default_sensor_path(client):
     assert client.get("/api/experiment/current").json()["experiment_id"] is None
 
 
+def test_start_after_stop_resumes_same_experiment(client):
+    first = client.post("/api/experiment/start", json={"sample_id": "BLANK"}).json()
+    exp_id = first["experiment_id"]
+    client.post("/api/experiment/stop")
+    again = client.post("/api/experiment/start", json={"sample_id": "BLANK"}).json()
+    assert again["ok"] is True
+    assert again["resumed"] is True
+    assert again["experiment_id"] == exp_id
+    assert client.get("/api/experiment/current").json()["status"] == "running"
+    detail = client.get(f"/api/experiments/{exp_id}").json()
+    assert detail["status"] == "running"
+    assert detail["ended_at_utc"] is None
+    client.post("/api/experiment/reset")
+
+
+def test_new_sample_after_stop_starts_new_experiment(client):
+    first = client.post("/api/experiment/start", json={"sample_id": "BLANK"}).json()["experiment_id"]
+    client.post("/api/experiment/stop")
+    second = client.post("/api/experiment/start", json={"sample_id": "NACL_004"}).json()
+    assert second["ok"] is True
+    assert second["resumed"] is False
+    assert second["experiment_id"] != first
+    assert client.get(f"/api/experiments/{first}").json()["status"] == "stopped"
+    client.post("/api/experiment/reset")
+
+
 def test_control_state_machine(client):
     # idle -> running
     r = client.post("/api/experiment/start")

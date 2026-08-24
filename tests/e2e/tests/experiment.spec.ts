@@ -113,19 +113,32 @@ test('F06 停止实验：不再追加数据，保留当前曲线', async ({ page
   expect(c2).toBe(c1); // 停止后点数不再增加
 });
 
-test('F07 重新开始：清空上一轮数据并启动新实验', async ({ page }) => {
+test('F07 停止后续跑同一实验；重新开始才开新实验', async ({ page }) => {
   await page.getByTestId('btn-start').click();
   await waitForPoints(page, 3);
   await page.getByTestId('btn-stop').click();
   await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
+  const href1 = await page.getByTestId('btn-export-current').getAttribute('href');
+  const countAtStop = Number(await page.getByTestId('stat-count').innerText());
 
-  await page.getByTestId('btn-reset').click();
-  await expect(page.getByTestId('experiment-status')).toHaveText('空闲');
-  await expect(page.getByTestId('stat-count')).toHaveText('0');
-
+  await expect(page.getByTestId('btn-start')).toHaveText('继续实验');
   await page.getByTestId('btn-start').click();
   await expect(page.getByTestId('experiment-status')).toHaveText('运行中');
+  await expect
+    .poll(async () => Number(await page.getByTestId('stat-count').innerText()), { timeout: 8000 })
+    .toBeGreaterThan(countAtStop);
+
+  await page.getByTestId('btn-stop').click();
+  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
+  const href2 = await page.getByTestId('btn-export-current').getAttribute('href');
+  expect(href2).toBe(href1);
+
+  await page.getByTestId('btn-reset').click();
+  await expect(page.getByTestId('experiment-status')).toHaveText('运行中');
   await waitForPoints(page, 1);
+  await page.getByTestId('btn-stop').click();
+  const href3 = await page.getByTestId('btn-export-current').getAttribute('href');
+  expect(href3).not.toBe(href1);
 });
 
 test('F08 断线检测：断开后 3 秒内出现明确异常状态', async ({ page }) => {

@@ -41,6 +41,7 @@ class ControlResponse(BaseModel):
     message: Optional[str] = None
     experiment_id: Optional[int] = None
     sample_id: Optional[str] = None
+    resumed: Optional[bool] = None
 
 
 class ExperimentStartRequest(BaseModel):
