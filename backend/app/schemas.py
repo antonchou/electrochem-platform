@@ -52,7 +52,7 @@ class ExperimentStartRequest(BaseModel):
     title: Optional[str] = None
     operator: Optional[str] = None
     objective: Optional[str] = None
-    concentration_mmol_l: Optional[float] = None
+    concentration_mmol_l: Optional[float] = Field(default=None, ge=0)
 
 
 class FitRequest(BaseModel):

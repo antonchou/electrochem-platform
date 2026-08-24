@@ -138,6 +138,10 @@ export interface ExperimentStartOptions {
   sample_id?: string;
   sensor_path_id?: string;
   title?: string;
+  operator?: string;
+  objective?: string;
+  /** 标称浓度 mmol/L，写入 samples；Kohlrausch 需要多个不同浓度点 */
+  concentration_mmol_l?: number;
 }
 
 /** 拟合 X 轴物理含义（决定化学模型池） */
