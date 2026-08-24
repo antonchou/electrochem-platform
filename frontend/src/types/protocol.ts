@@ -180,9 +180,17 @@ export interface FitResultItem {
   params: Record<string, number>;
   r2: number;
   rmse: number;
+  mae?: number | null;
+  aicc?: number | null;
   n: number;
   /** 拟合曲线采样点 [x, y] */
   fitted: [number, number][];
+  x_min?: number;
+  x_max?: number;
+  extrapolation_forbidden?: boolean;
+  residual_max_abs?: number | null;
+  param_ci?: Record<string, [number, number]>;
+  loocv_rmse?: number | null;
 }
 
 /** 拟合接口响应 */
