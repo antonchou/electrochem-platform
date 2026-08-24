@@ -31,6 +31,10 @@ class Frame(BaseModel):
     kappa_t_us_cm: Optional[float] = None
     kappa_25_us_cm: Optional[float] = None
     quality_flags: Optional[str] = None
+    calibration_id: Optional[str] = None
+    excitation_frequency_hz: Optional[float] = None
+    excitation_amplitude_v: Optional[float] = None
+    compensation_model: Optional[str] = None
 
 
 class ControlResponse(BaseModel):

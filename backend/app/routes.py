@@ -104,12 +104,19 @@ def _measurement_params() -> dict:
     config = getattr(_driver, "config", None)
     cell = getattr(config, "cell_constant_per_cm", 1.0)
     alpha = getattr(config, "alpha_per_c", 0.02)
+    amplitude = getattr(config, "excitation_amplitude_v", None)
+    if amplitude is None:
+        amplitude = getattr(config, "excitation_voltage_v", 1.0)
     return {
         "cell_constant_per_cm": cell,
         "alpha_per_c": alpha,
         "device_id": getattr(config, "device_id", "MOCK-IV-01"),
         "firmware_version": getattr(config, "firmware_version", "0.1.0"),
         "range_id": getattr(config, "range_id", "WIDE"),
+        "excitation_frequency_hz": getattr(config, "excitation_frequency_hz", 0.0),
+        "excitation_amplitude_v": amplitude,
+        "compensation_model": getattr(config, "compensation_model", "linear_alpha"),
+        "calibration_id": state.calibration_id or storage.DEFAULT_CALIBRATION_ID,
     }
 
 
@@ -191,6 +198,10 @@ def _build_frame(elapsed: float, reading) -> dict:
                 "device_id": params["device_id"],
                 "firmware_version": params["firmware_version"],
                 "range_id": params["range_id"],
+                "calibration_id": params["calibration_id"],
+                "excitation_frequency_hz": params["excitation_frequency_hz"],
+                "excitation_amplitude_v": params["excitation_amplitude_v"],
+                "compensation_model": params["compensation_model"],
                 "voltage_raw_v": reading.voltage_v,
                 "current_raw_a": reading.current_a,
                 "temperature_raw_c": reading.temperature,
@@ -206,6 +217,10 @@ def _build_frame(elapsed: float, reading) -> dict:
             "device_id": params["device_id"],
             "firmware_version": params["firmware_version"],
             "range_id": params["range_id"],
+            "calibration_id": params["calibration_id"],
+            "excitation_frequency_hz": params["excitation_frequency_hz"],
+            "excitation_amplitude_v": params["excitation_amplitude_v"],
+            "compensation_model": params["compensation_model"],
             "voltage_raw_v": reading.voltage_v,
             "current_raw_a": reading.current_a,
             "temperature_raw_c": reading.temperature,
@@ -240,6 +255,14 @@ def _frame_to_row(frame: dict) -> dict:
         "conductance_s": frame.get("conductance_s"),
         "kappa_t_us_cm": frame.get("kappa_t_us_cm"),
         "kappa_25_us_cm": frame.get("kappa_25_us_cm"),
+        "schema_version": frame.get("schema_version"),
+        "device_id": frame.get("device_id"),
+        "firmware_version": frame.get("firmware_version"),
+        "range_id": frame.get("range_id"),
+        "calibration_id": frame.get("calibration_id") or state.calibration_id,
+        "excitation_frequency_hz": frame.get("excitation_frequency_hz"),
+        "excitation_amplitude_v": frame.get("excitation_amplitude_v"),
+        "compensation_model": frame.get("compensation_model"),
     }
 
 
@@ -297,6 +320,9 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
         sensor_path_id = body.sensor_path_id or DEFAULT_SENSOR_PATH_ID
         title = body.title or "不同溶液导电性相对比较"
         uid = f"EXP-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:4]}"
+        cal_id = os.environ.get("EC_CALIBRATION_ID", storage.DEFAULT_CALIBRATION_ID).strip() or (
+            storage.DEFAULT_CALIBRATION_ID
+        )
 
         # 实验与样品在一个 SQLite 事务中创建。数据库失败时内存态不会进入 running，
         # 并发 start 也由本锁串行化，避免遗留空的 running/idle 历史记录。
@@ -312,16 +338,38 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
                 "sample_id": sample_id,
                 "sensor_path_id": sensor_path_id,
                 "concentration_mmol_l": body.concentration_mmol_l,
+                "calibration_id": cal_id,
             },
         )
 
+        params = _measurement_params()
         try:
+            await persist.insert_calibration_record(
+                experiment_id=exp_id,
+                calibration_id=cal_id,
+                sensor_path_id=sensor_path_id,
+                mode="cell_constant",
+                standard="KCl 1413 uS/cm @ 25C (simulated)",
+                lot="SIMULATED",
+                coeff_value=params["cell_constant_per_cm"],
+                coeff_json={
+                    "cell_constant_per_cm": params["cell_constant_per_cm"],
+                    "alpha_per_c": params["alpha_per_c"],
+                    "compensation_model": params["compensation_model"],
+                    "excitation_frequency_hz": params["excitation_frequency_hz"],
+                    "excitation_amplitude_v": params["excitation_amplitude_v"],
+                    "device_id": params["device_id"],
+                    "firmware_version": params["firmware_version"],
+                    "range_id": params["range_id"],
+                },
+            )
             ok = await state.start(
                 sample_id=sample_id,
                 sensor_path_id=sensor_path_id,
                 title=title,
                 experiment_db_id=exp_id,
                 experiment_uid=uid,
+                calibration_id=cal_id,
             )
         except Exception:
             await persist.finish_experiment(exp_id, "error")
@@ -438,6 +486,7 @@ async def experiment_detail(exp_id: int) -> dict:
         raise HTTPException(status_code=404, detail="experiment not found")
     exp["samples"] = await asyncio.to_thread(storage.get_samples, exp_id)
     exp["frame_count"] = await asyncio.to_thread(storage.count_frames, exp_id)
+    exp["calibrations"] = await asyncio.to_thread(storage.get_calibration_records, exp_id)
     return exp
 
 

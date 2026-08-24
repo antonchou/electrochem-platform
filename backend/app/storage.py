@@ -29,7 +29,8 @@ FINAL_EXPERIMENT_STATUSES = frozenset({"stopped", "aborted", "error"})
 # - 新增迁移必须同时提供「旧库升级」测试（tests/test_migrations.py）
 # - SCHEMA 保持为 version 1（V1 baseline）结构；新库直建即 version 1
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+DEFAULT_CALIBRATION_ID = "MOCK-KCELL-1.0"
 
 
 def _migrate_v2(conn: sqlite3.Connection) -> None:
@@ -121,11 +122,31 @@ def _migrate_v4(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v5(conn: sqlite3.Connection) -> None:
+    """v5：raw_frames 落协议溯源与激励/校准元数据（REQ-C-001 软件侧）。
+
+    - schema_version / device_id / firmware_version / range_id：设备协议
+    - calibration_id：关联 calibration_records
+    - excitation_frequency_hz / excitation_amplitude_v：激励设置
+    - compensation_model：温补模型标识（当前 linear_alpha）
+    - 仅加可空列，不重建表、不触碰 append-only 触发器。
+    """
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN schema_version INTEGER")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN device_id TEXT")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN firmware_version TEXT")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN range_id TEXT")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN calibration_id TEXT")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN excitation_frequency_hz REAL")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN excitation_amplitude_v REAL")
+    conn.execute("ALTER TABLE raw_frames ADD COLUMN compensation_model TEXT")
+
+
 # 迁移注册表：{版本号: 迁移函数(conn)}，版本号单调递增、必须 <= SCHEMA_VERSION
 MIGRATIONS: Dict[int, Any] = {
     2: _migrate_v2,
     3: _migrate_v3,
     4: _migrate_v4,
+    5: _migrate_v5,
 }
 
 
@@ -494,7 +515,7 @@ def update_sample_qc(
 
 # ---------------- 原始帧 ----------------
 
-# raw_frames 全列（含 v2 迁移新增的 I–V 计算链列）。
+# raw_frames 全列（v2 I–V 计算链 + v5 协议/校准/激励元数据）。
 # insert_frames 用命名参数；旧帧缺字段时自动补 None，避免 sqlite3 报错。
 _FRAME_COLUMNS = [
     "experiment_id",
@@ -514,7 +535,23 @@ _FRAME_COLUMNS = [
     "conductance_s",
     "kappa_t_us_cm",
     "kappa_25_us_cm",
+    "schema_version",
+    "device_id",
+    "firmware_version",
+    "range_id",
+    "calibration_id",
+    "excitation_frequency_hz",
+    "excitation_amplitude_v",
+    "compensation_model",
 ]
+_INSERT_FRAMES_SQL = (
+    "INSERT INTO raw_frames ("
+    + ", ".join(_FRAME_COLUMNS)
+    + ") VALUES ("
+    + ", ".join(f":{col}" for col in _FRAME_COLUMNS)
+    + ")"
+)
+_FRAME_READ_SQL = "id, " + ", ".join(_FRAME_COLUMNS)
 
 
 def insert_frames(frames: List[Dict[str, Any]]) -> None:
@@ -527,18 +564,7 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
         return
     rows = [{col: f.get(col) for col in _FRAME_COLUMNS} for f in frames]
     with _conn() as conn:
-        conn.executemany(
-            """
-            INSERT INTO raw_frames
-                (experiment_id, sample_id, sensor_path_id, seq_no, timestamp_utc,
-                 monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status,
-                 voltage_raw_v, current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm)
-            VALUES (:experiment_id, :sample_id, :sensor_path_id, :seq_no, :timestamp_utc,
-                    :monotonic_ms, :t_seconds, :ec_raw, :temperature_raw, :k25, :quality_flags, :status,
-                    :voltage_raw_v, :current_raw_a, :conductance_s, :kappa_t_us_cm, :kappa_25_us_cm)
-            """,
-            rows,
-        )
+        conn.executemany(_INSERT_FRAMES_SQL, rows)
         # 必须按完整样品链路聚合；同一样品编号可能同时走 WIDE/NARROW 等不同通道。
         counts: Dict[tuple[int, str, str], int] = {}
         for f in frames:
@@ -598,10 +624,8 @@ def get_recent_frames(experiment_id: int, *, limit: int = 500) -> List[Dict[str,
         raise ValueError("limit must be between 1 and 1000000")
     with _conn() as conn:
         rows = conn.execute(
-            """
-            SELECT id, sample_id, sensor_path_id, seq_no, timestamp_utc,
-                   monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status,
-                   voltage_raw_v, current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm
+            f"""
+            SELECT {_FRAME_READ_SQL}
             FROM raw_frames
             WHERE experiment_id = ?
             ORDER BY id DESC
@@ -624,10 +648,8 @@ def get_frames(
         raise ValueError("offset must be non-negative")
     with _conn() as conn:
         rows = conn.execute(
-            """
-            SELECT id, sample_id, sensor_path_id, seq_no, timestamp_utc,
-                   monotonic_ms, t_seconds, ec_raw, temperature_raw, k25, quality_flags, status,
-                   voltage_raw_v, current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm
+            f"""
+            SELECT {_FRAME_READ_SQL}
             FROM raw_frames
             WHERE experiment_id = ?
             ORDER BY id ASC
@@ -649,15 +671,12 @@ def count_frames(experiment_id: int) -> int:
 def export_csv(experiment_id: int) -> str:
     """导出该实验全部原始帧为 CSV 文本（Excel 可直接打开）。
 
-    v2 之后含 I–V 计算链列（voltage_raw_v / current_raw_a / conductance_s /
-    kappa_t_us_cm / kappa_25_us_cm），旧列名 ec_raw_us_cm / temperature_raw_c 保留。
+    κ25 规范列名为 kappa_25_us_cm；k25_us_cm 为兼容别名。v5 起含协议溯源与激励/校准列。
     """
     with _conn() as conn:
         rows = conn.execute(
-            """
-            SELECT seq_no, timestamp_utc, monotonic_ms, t_seconds,
-                   sensor_path_id, sample_id, ec_raw, temperature_raw, k25, quality_flags, status,
-                   voltage_raw_v, current_raw_a, conductance_s, kappa_t_us_cm, kappa_25_us_cm
+            f"""
+            SELECT {_FRAME_READ_SQL}
             FROM raw_frames
             WHERE experiment_id = ?
             ORDER BY id ASC
@@ -667,6 +686,7 @@ def export_csv(experiment_id: int) -> str:
 
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
+    # 规范名 kappa_25_us_cm；k25_us_cm 为兼容别名（与库内 k25 列对应）。
     writer.writerow(
         [
             "seq_no",
@@ -685,6 +705,14 @@ def export_csv(experiment_id: int) -> str:
             "conductance_s",
             "kappa_t_us_cm",
             "kappa_25_us_cm",
+            "schema_version",
+            "device_id",
+            "firmware_version",
+            "range_id",
+            "calibration_id",
+            "excitation_frequency_hz",
+            "excitation_amplitude_v",
+            "compensation_model",
         ]
     )
     for r in rows:
@@ -706,6 +734,63 @@ def export_csv(experiment_id: int) -> str:
                 r["conductance_s"],
                 r["kappa_t_us_cm"],
                 r["kappa_25_us_cm"],
+                r["schema_version"],
+                r["device_id"],
+                r["firmware_version"],
+                r["range_id"],
+                r["calibration_id"],
+                r["excitation_frequency_hz"],
+                r["excitation_amplitude_v"],
+                r["compensation_model"],
             ]
         )
     return buf.getvalue()
+
+
+# ---------------- 校准记录（REQ-C-001 软件侧） ----------------
+
+def insert_calibration_record(
+    *,
+    calibration_id: str,
+    experiment_id: Optional[int] = None,
+    sensor_path_id: Optional[str] = None,
+    mode: Optional[str] = None,
+    standard: Optional[str] = None,
+    lot: Optional[str] = None,
+    coeff_value: Optional[float] = None,
+    coeff_json: Optional[Dict[str, Any]] = None,
+) -> int:
+    """写入一条校准记录；同一 calibration_id 可被多条实验引用。"""
+    with _conn() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO calibration_records
+                (experiment_id, calibration_id, sensor_path_id, mode, standard, lot,
+                 coeff_value, coeff_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                experiment_id,
+                calibration_id,
+                sensor_path_id,
+                mode,
+                standard,
+                lot,
+                coeff_value,
+                json.dumps(coeff_json, ensure_ascii=False) if coeff_json is not None else None,
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def get_calibration_records(experiment_id: int) -> List[Dict[str, Any]]:
+    with _conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM calibration_records
+             WHERE experiment_id = ?
+             ORDER BY id
+            """,
+            (experiment_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
