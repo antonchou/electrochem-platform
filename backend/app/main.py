@@ -3,9 +3,11 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .persistence import persist
 from .routes import router, start_acquisition, stop_acquisition
@@ -63,3 +65,21 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+
+def _frontend_dist() -> Path | None:
+    """生产托管目录：默认仓库 `frontend/dist`，可用 EC_FRONTEND_DIST 覆盖。"""
+    override = os.environ.get("EC_FRONTEND_DIST", "").strip()
+    path = Path(override) if override else Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+    return path if path.is_dir() and (path / "index.html").is_file() else None
+
+
+_dist = _frontend_dist()
+if _dist is not None:
+    # 必须挂在 API/WS 路由之后，避免吃掉 /api /ws /health。
+    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="frontend")
+    logging.getLogger("app.main").info("serving frontend from %s", _dist)
+else:
+    logging.getLogger("app.main").info(
+        "frontend dist not found; API-only mode (dev: run Vite on :5173)"
+    )

@@ -47,6 +47,8 @@ def test_health(client):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+    # 即使挂了 frontend/dist，API 路径也不能被静态文件吃掉
+    assert r.headers.get("content-type", "").startswith("application/json")
 
 
 def test_current_experiment_and_default_sensor_path(client):
