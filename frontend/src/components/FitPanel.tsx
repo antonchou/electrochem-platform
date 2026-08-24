@@ -73,10 +73,16 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
   const fitRequestIdRef = useRef(0);
 
   // 按 X 轴语义构造 (x, y)：时间轴取 t，温度轴取帧内温度 tc；
-  // 浓度轴取 p.concentration，缺省用序号 1..N 占位（当前帧无浓度字段）
-  const hasRealConcentration = points.some(
-    (p) => p.concentration != null && Number.isFinite(p.concentration),
-  );
+  // 浓度轴取 p.concentration。单次实验通常只有一种浓度，Kohlrausch 需要 ≥3 个不同 c。
+  const uniqueConcentrations = useMemo(() => {
+    const values = new Set<number>();
+    for (const p of points) {
+      if (p.concentration != null && Number.isFinite(p.concentration)) values.add(p.concentration);
+    }
+    return values;
+  }, [points]);
+  const hasRealConcentration = uniqueConcentrations.size > 0;
+  const hasUsableConcentrationAxis = uniqueConcentrations.size >= 3;
 
   const fitPoints: [number, number][] = useMemo(
     () =>
@@ -101,7 +107,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
 
   const runFit = async () => {
     if (!api || fitPoints.length < 3 || selectedModels.length === 0) return;
-    if (xAxis === 'concentration' && !hasRealConcentration) return;
+    if (xAxis === 'concentration' && !hasUsableConcentrationAxis) return;
     const requestId = ++fitRequestIdRef.current;
     setFitLoading(true);
     setFitError(null);
@@ -144,7 +150,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
     fitPoints.length >= 3 &&
     selectedModels.length > 0 &&
     !fitLoading &&
-    !(xAxis === 'concentration' && !hasRealConcentration);
+    !(xAxis === 'concentration' && !hasUsableConcentrationAxis);
 
   // 叠加到曲线图上的拟合曲线（按 R² 从高到低，最多展示前 4 条）
   const overlays: ChartOverlay[] = useMemo(() => {
@@ -178,9 +184,15 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
         ))}
       </div>
 
-      {xAxis === 'concentration' && (
+      {xAxis === 'concentration' && !hasRealConcentration && (
         <div className={styles.axisNote} data-testid={`${testIdPrefix}-concentration-note`}>
-          浓度轴需真实浓度数据：当前数据帧无浓度字段，「开始拟合」已禁用，避免用序号冒充浓度
+          浓度轴需真实浓度数据：开始实验时填写浓度 mmol/L；当前数据无浓度字段，「开始拟合」已禁用
+        </div>
+      )}
+      {xAxis === 'concentration' && hasRealConcentration && !hasUsableConcentrationAxis && (
+        <div className={styles.axisNote} data-testid={`${testIdPrefix}-concentration-note`}>
+          本实验浓度为 {Array.from(uniqueConcentrations).join(', ')} mmol/L，仅{' '}
+          {uniqueConcentrations.size} 种浓度。Kohlrausch / 线性标定需要 ≥3 个不同浓度点
         </div>
       )}
 

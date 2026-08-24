@@ -65,4 +65,43 @@
   font-size: 14px;
 }
 
+.qcRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: baseline;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.qcBadge {
+  display: inline-block;
+  min-width: 3.5em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+}
+
+.qcPass {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.qcWarn {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.qcFail {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.qcNone {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
 /* 拟合区样式统一由 FitPanel.module.css 提供，此处不再保留重复副本 */
