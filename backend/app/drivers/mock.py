@@ -38,6 +38,11 @@ class MockDeviceConfig:
     cell_constant_per_cm: float = 1.0
     alpha_per_c: float = 0.02
     excitation_voltage_v: float = 1.0
+    excitation_frequency_hz: float = 0.0  # 0 = 仿真直流 I–V；真实硬件填交流频率
+    compensation_model: str = "linear_alpha"
+    device_id: str = "MOCK-IV-01"
+    firmware_version: str = "0.1.0"
+    range_id: str = "WIDE"
 
     def __post_init__(self) -> None:
         if self.sample_rate_hz <= 0:
@@ -72,6 +77,11 @@ class MockDeviceConfig:
             "cell_constant_per_cm",
             "alpha_per_c",
             "excitation_voltage_v",
+            "excitation_frequency_hz",
+            "compensation_model",
+            "device_id",
+            "firmware_version",
+            "range_id",
         }
         unknown = set(raw) - allowed - {"schema_version", "driver"}
         if unknown:
