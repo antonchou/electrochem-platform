@@ -200,10 +200,12 @@ def test_fit_endpoint_x_axis_kohlrausch(client):
 
 
 def test_fit_endpoint_bad_input(client):
-    # 点数不足
-    assert client.post("/api/analysis/fit", json={"x": [1, 2], "y": [1, 2]}).status_code == 400
-    # 长度不等
-    assert client.post("/api/analysis/fit", json={"x": [1, 2, 3], "y": [1, 2]}).status_code == 400
+    # 点数不足：schema min_length=3 → 422
+    assert client.post("/api/analysis/fit", json={"x": [1, 2], "y": [1, 2]}).status_code == 422
+    # 长度不等（两边都过 min_length）
+    assert client.post("/api/analysis/fit", json={"x": [1, 2, 3], "y": [1, 2, 3, 4]}).status_code == 400
+    # 过短的 y 同样被 schema 拒绝
+    assert client.post("/api/analysis/fit", json={"x": [1, 2, 3], "y": [1, 2]}).status_code == 422
     # 非法 x_axis
     assert (
         client.post(

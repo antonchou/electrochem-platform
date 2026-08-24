@@ -46,6 +46,15 @@ def test_cell_constant_scales_kappa():
     assert r2.kappa_25_us_cm == pytest.approx(2 * r1.kappa_25_us_cm, rel=1e-9)
 
 
+def test_nonfinite_inputs_rejected():
+    with pytest.raises(ValueError, match="finite"):
+        compute_chain(float("nan"), 1e-3, 25.0, KCELL, ALPHA)
+    with pytest.raises(ValueError, match="finite"):
+        compute_chain(float("inf"), 1e-3, 25.0, KCELL, ALPHA)
+    with pytest.raises(ValueError, match="finite"):
+        compute_chain(1.0, float("nan"), 25.0, KCELL, ALPHA)
+
+
 def test_invalid_voltage_rejected():
     with pytest.raises(ValueError, match="voltage_v"):
         compute_chain(0.0, 1e-3, 25.0, KCELL, ALPHA)

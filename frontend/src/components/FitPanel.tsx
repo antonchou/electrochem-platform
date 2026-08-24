@@ -74,14 +74,20 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
 
   // 按 X 轴语义构造 (x, y)：时间轴取 t，温度轴取帧内温度 tc；
   // 浓度轴取 p.concentration，缺省用序号 1..N 占位（当前帧无浓度字段）
+  const hasRealConcentration = points.some(
+    (p) => p.concentration != null && Number.isFinite(p.concentration),
+  );
+
   const fitPoints: [number, number][] = useMemo(
     () =>
-      points.map((p, i) => {
-        if (xAxis === 'temperature') return [p.tc, p.ec] as [number, number];
-        if (xAxis === 'concentration')
-          return [p.concentration ?? i + 1, p.ec] as [number, number];
-        return [p.t, p.ec] as [number, number];
-      }),
+      points
+        .filter((p) => p.ec !== null && Number.isFinite(p.ec) && Number.isFinite(p.t) && Number.isFinite(p.tc))
+        .map((p, i) => {
+          if (xAxis === 'temperature') return [p.tc, p.ec as number] as [number, number];
+          if (xAxis === 'concentration')
+            return [p.concentration ?? i + 1, p.ec as number] as [number, number];
+          return [p.t, p.ec as number] as [number, number];
+        }),
     [points, xAxis],
   );
   const arrheniusUnavailable = useMemo(() => {
@@ -95,6 +101,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
 
   const runFit = async () => {
     if (!api || fitPoints.length < 3 || selectedModels.length === 0) return;
+    if (xAxis === 'concentration' && !hasRealConcentration) return;
     const requestId = ++fitRequestIdRef.current;
     setFitLoading(true);
     setFitError(null);
@@ -132,7 +139,12 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
     invalidateFit();
   };
 
-  const canFit = api !== null && fitPoints.length >= 3 && selectedModels.length > 0 && !fitLoading;
+  const canFit =
+    api !== null &&
+    fitPoints.length >= 3 &&
+    selectedModels.length > 0 &&
+    !fitLoading &&
+    !(xAxis === 'concentration' && !hasRealConcentration);
 
   // 叠加到曲线图上的拟合曲线（按 R² 从高到低，最多展示前 4 条）
   const overlays: ChartOverlay[] = useMemo(() => {
@@ -168,7 +180,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
 
       {xAxis === 'concentration' && (
         <div className={styles.axisNote} data-testid={`${testIdPrefix}-concentration-note`}>
-          浓度轴需真实浓度数据：当前数据帧无浓度字段，x 暂用序号 1..N 占位
+          浓度轴需真实浓度数据：当前数据帧无浓度字段，「开始拟合」已禁用，避免用序号冒充浓度
         </div>
       )}
 
@@ -215,7 +227,7 @@ export function FitPanel({ api, points, testIdPrefix = 'fit', btnTestId }: Props
 
       {fitResults && fitResults.length === 0 && (
         <div className={styles.axisNote} data-testid={`${testIdPrefix}-empty`}>
-          所选模型均未产生有效拟合结果：数据点不足或不满足模型约束（如对数/幂函数要求 x&gt;0）。
+          所选模型均未产生有效拟合结果：数据点不足或不满足模型约束（如对数/幂函数要求 x{'>'}0）。
         </div>
       )}
 
