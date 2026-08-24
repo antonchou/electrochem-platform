@@ -46,6 +46,7 @@ if [ -f requirements.lock.txt ]; then
 else
   .venv/bin/pip install -r requirements.txt
 fi
+# 生产环境不安装 pytest/httpx；开发机另装 requirements-dev.txt
 
 # ---------- 3. systemd：只保留 ec-backend ----------
 echo "[3/3] 安装 systemd 服务（页面 + API + WebSocket 都在 :8000）"
