@@ -52,13 +52,12 @@ export class BrowserMockSource implements DataClient {
       if (this.status === 'running') {
         return { ok: false, status: this.status, message: '实验已在进行中' };
       }
+      const resumed = this.status === 'stopped';
       this.status = 'running';
-      this.t0 = Date.now() / 1000;
-      // 与 server 模式一致：start 时先广播 running 状态帧，
-      // 触发 useRealtimeData 清空上一轮缓冲，避免 stop→start 新旧数据混合
+      if (!resumed) this.t0 = Date.now() / 1000;
       this.emit({ type: 'status', status: 'running' });
       this.startStream();
-      return { ok: true, status: this.status };
+      return { ok: true, status: this.status, resumed };
     }
     if (action === 'stop') {
       this.stopStream();

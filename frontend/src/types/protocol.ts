@@ -43,6 +43,7 @@ export interface ExperimentFrame {
 export interface StatusFrame {
   status: ExperimentStatus;
   timestamp?: number;
+  experiment_id?: number;
 }
 
 /** 服务端可能下发的所有消息 */
@@ -67,6 +68,7 @@ export interface ControlResponse {
   /** Phase 7：当前实验在数据库中的 id（用于导出/历史） */
   experiment_id?: number;
   sample_id?: string;
+  resumed?: boolean;
 }
 
 /** 历史实验摘要（列表项） */
@@ -195,7 +197,7 @@ export interface DataPoint {
 /** 客户端事件总线（供 hooks 订阅） */
 export type ClientEvent =
   | { type: 'message'; frame: ExperimentFrame }
-  | { type: 'status'; status: ExperimentStatus }
+  | { type: 'status'; status: ExperimentStatus; experiment_id?: number }
   | { type: 'connection'; status: ConnectionStatus }
   | { type: 'error'; message: string };
 
@@ -237,7 +239,9 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
   const hasEc = raw.ec !== undefined;
 
   if (!hasTimestamp && !hasEc && !hasTemperature) {
-    return { status: status as ExperimentStatus } as StatusFrame;
+    const frame: StatusFrame = { status: status as ExperimentStatus };
+    if (typeof raw.experiment_id === 'number') frame.experiment_id = raw.experiment_id;
+    return frame;
   }
   if (!hasTimestamp || !hasTemperature) return null;
 
