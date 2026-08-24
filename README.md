@@ -41,8 +41,9 @@ electrochem-platform/
 ```bash
 cd backend
 python3 -m venv .venv
-.venv/Scripts/pip install -r requirements.txt      # Windows
+.venv/Scripts/pip install -r requirements.txt      # Windows（生产）
 # Linux/RPi: source .venv/bin/activate && pip install -r requirements.txt
+# 跑测试再装：pip install -r requirements-dev.txt
 .venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -63,7 +64,7 @@ npm run dev            # 打开 http://localhost:5173
 ## 运行测试
 
 ```bash
-# backend 单元/协议测试（pytest + TestClient，含 SQLite append-only 约束）
+# backend 单元/协议测试（先装 requirements-dev.txt：pytest + TestClient）
 cd backend && .venv/Scripts/python -m pytest tests -q
 
 # E2E 验收（Playwright；Windows 无自带 Chromium 时用系统浏览器：E2E_BROWSER=msedge）

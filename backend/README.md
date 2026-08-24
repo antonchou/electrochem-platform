@@ -18,7 +18,8 @@ backend/
 │   ├── storage.py       # SQLite 存储（append-only 约束）
 │   └── persistence.py   # 后台异步落库
 ├── tests/               # pytest（存储/协议/API）
-├── requirements.txt
+├── requirements.txt       # 生产
+├── requirements-dev.txt   # 生产 + pytest/httpx
 └── README.md
 ```
 
@@ -26,8 +27,9 @@ backend/
 
 ```bash
 python3 -m venv .venv
-.venv/Scripts/pip install -r requirements.txt    # Windows
+.venv/Scripts/pip install -r requirements.txt    # Windows（生产）
 # Linux/RPi: source .venv/bin/activate && pip install -r requirements.txt
+# 开发/测试：pip install -r requirements-dev.txt
 .venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -89,6 +91,7 @@ EC 与温度，避免破坏已交付前端。真实设备后续实现同一个 `
 ## 测试
 
 ```bash
+pip install -r requirements-dev.txt
 .venv/Scripts/python -m pytest tests -q
 ```
 
