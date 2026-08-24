@@ -14,7 +14,9 @@ export function ValueDisplay({ label, value, unit, precision = 1, testId }: Prop
   return (
     <div className={styles.box} data-testid={testId}>
       <span className={styles.label}>{label}</span>
-      <span className={styles.value}>{value === null ? '--' : value.toFixed(precision)}</span>
+      <span className={styles.value} data-testid={testId ? `${testId}-num` : undefined}>
+        {value === null ? '--' : value.toFixed(precision)}
+      </span>
       <span className={styles.unit}>{unit}</span>
     </div>
   );

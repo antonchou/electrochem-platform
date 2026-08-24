@@ -101,7 +101,6 @@ export function ExperimentPage() {
       </section>
 
       <section className={styles.values}>
-        <ValueDisplay label="电导率 EC" value={latest?.ec ?? null} unit="μS/cm" precision={1} testId="value-ec" />
         <ValueDisplay
           label="电极温度"
           value={latest?.tc ?? null}
@@ -145,8 +144,6 @@ export function ExperimentPage() {
           precision={1}
           testId="value-kappa25"
         />
-        {/* 传感器扩展位：后续接入 pH / ORP 等 */}
-        <ValueDisplay label="pH（扩展）" value={null} unit="—" testId="value-ph" />
       </section>
 
       <section className={styles.chartCard}>
