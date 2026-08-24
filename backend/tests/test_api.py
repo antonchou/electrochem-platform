@@ -147,7 +147,13 @@ def test_ws_stream_protocol(client):
             "kappa_t_us_cm",
             "kappa_25_us_cm",
             "quality_flags",
+            "calibration_id",
+            "excitation_frequency_hz",
+            "excitation_amplitude_v",
+            "compensation_model",
         } <= set(data)
+        assert data["calibration_id"] == "MOCK-KCELL-1.0"
+        assert data["compensation_model"] == "linear_alpha"
         assert data["status"] == "running"
         assert data["ec"] is not None
         assert data["kappa_25_us_cm"] is not None
@@ -298,6 +304,38 @@ def test_start_persists_concentration(client):
     detail = client.get(f"/api/experiments/{exp_id}").json()
     assert detail["samples"][0]["sample_id"] == "NACL_010"
     assert detail["samples"][0]["concentration_mmol_l"] == 10
+    client.post("/api/experiment/reset")
+
+
+def test_start_writes_calibration_and_frame_metadata(client):
+    """v5：开始实验写入 calibration_records，帧落库带 calibration_id 与协议元数据。"""
+    import time as _time
+
+    exp_id = client.post("/api/experiment/start").json()["experiment_id"]
+    _time.sleep(0.4)
+    client.post("/api/experiment/stop")
+
+    detail = client.get(f"/api/experiments/{exp_id}").json()
+    assert detail["calibrations"]
+    cal = detail["calibrations"][0]
+    assert cal["calibration_id"] == "MOCK-KCELL-1.0"
+    assert cal["lot"] == "SIMULATED"
+    assert cal["coeff_value"] == 1.0
+
+    frames = client.get(f"/api/experiments/{exp_id}/frames").json()["frames"]
+    assert frames
+    frame = frames[0]
+    assert frame["calibration_id"] == "MOCK-KCELL-1.0"
+    assert frame["device_id"] == "MOCK-IV-01"
+    assert frame["firmware_version"] == "0.1.0"
+    assert frame["range_id"] == "WIDE"
+    assert frame["compensation_model"] == "linear_alpha"
+    assert frame["schema_version"] == 2
+    assert frame["kappa_25_us_cm"] is not None
+
+    header = client.get(f"/api/experiments/{exp_id}/export.csv").text.splitlines()[0]
+    assert "kappa_25_us_cm" in header
+    assert "calibration_id" in header
     client.post("/api/experiment/reset")
 
 
