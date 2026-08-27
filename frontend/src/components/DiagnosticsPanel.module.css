@@ -1,0 +1,43 @@
+.wrap {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 20px 16px;
+}
+
+.wrap > summary {
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.wrap > summary::-webkit-details-marker {
+  display: none;
+}
+
+.wrap > summary::before {
+  content: '▸ ';
+  color: var(--text-sub);
+}
+
+.wrap[open] > summary::before {
+  content: '▾ ';
+}
+
+.hint {
+  margin: 8px 0 12px;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+.extras {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.chart {
+  height: 320px;
+}

@@ -27,15 +27,21 @@ src/
 │   ├── apiClient.ts        # REST 控制 + 历史查询/导出（Phase 7）
 │   ├── browserMock.ts      # 纯浏览器模拟源（可选模式）
 │   └── index.ts            # ExperimentBridge 工厂（server / browser 二选一）
+├── lib/                # 纯函数：I–V 分析、单位换算（不碰 React）
 ├── hooks/              # 业务逻辑
 │   ├── useConnection.ts    # 连接状态 + 错误 + 手动重连
 │   ├── useExperiment.ts    # 实验状态机 + 控制 + experimentId 溯源（Phase 7）
-│   └── useRealtimeData.ts  # 实时数据缓冲（ref 数组 + 增量 setState）
+│   ├── useRealtimeData.ts  # 实时数据缓冲（ref 数组 + 增量 setState）
+│   └── useIVAnalysis.ts    # 由缓冲计算 I–V 拟合摘要
 ├── components/         # 纯 UI 组件（不感知数据来源）
+│   ├── WaveformChart.tsx   # 实时 V(t)/I(t)
+│   ├── IVChart.tsx         # I–V 散点 + 线性拟合（仅线性成立时画线）
+│   ├── SolutionCompare.tsx # 溶液 κ 柱状图 + 结果表（只用后端/本次数据）
+│   ├── DiagnosticsPanel.tsx# 折叠的 EC-t 诊断
 │   ├── HistoryPanel.tsx    # 历史实验：列表→详情（样品/静态曲线/导出）Phase 7
 │   ├── StaticChart.tsx     # 历史数据静态曲线
 │   └── ...
-├── pages/ExperimentPage.tsx  # 主实验页（样品输入 + 历史入口）
+├── pages/ExperimentPage.tsx  # 主实验页（实时测量 → I–V → 溶液比较）
 └── main.tsx
 ```
 
@@ -63,6 +69,7 @@ npm install        # 安装依赖
 npm run dev        # 开发服务器（端口 5173）
 npm run build      # 类型检查 + 产物构建（dist/）
 npm run typecheck  # 仅类型检查
+npm test           # 协议解析 + I–V/单位纯函数
 npm run preview    # 预览构建产物
 ```
 

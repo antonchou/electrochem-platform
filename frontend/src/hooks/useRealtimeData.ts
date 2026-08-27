@@ -2,20 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DataPoint, RawFrame } from '../types/protocol';
 import { config } from '../config/config';
 import type { ExperimentBridge } from '../services';
-
-function rawFrameToPoint(frame: RawFrame): DataPoint {
-  return {
-    t: frame.t_seconds ?? 0,
-    ec: frame.kappa_25_us_cm ?? frame.k25 ?? frame.ec_raw,
-    tc: frame.temperature_raw,
-    voltage_raw_v: frame.voltage_raw_v ?? undefined,
-    current_raw_a: frame.current_raw_a ?? undefined,
-    conductance_s: frame.conductance_s ?? undefined,
-    kappa_t_us_cm: frame.kappa_t_us_cm ?? undefined,
-    kappa_25_us_cm: frame.kappa_25_us_cm ?? undefined,
-    quality_flags: frame.quality_flags ?? undefined,
-  };
-}
+import { rawFrameToPoint } from '../lib/ivAnalysis';
 
 /**
  * 实时数据缓冲。
@@ -61,6 +48,9 @@ export function useRealtimeData(bridge: ExperimentBridge) {
           kappa_t_us_cm: frame.kappa_t_us_cm,
           kappa_25_us_cm: frame.kappa_25_us_cm,
           quality_flags: frame.quality_flags ?? undefined,
+          excitation_frequency_hz: frame.excitation_frequency_hz,
+          excitation_amplitude_v: frame.excitation_amplitude_v,
+          calibration_id: frame.calibration_id,
         };
         const arr = pointsRef.current;
         arr.push(p);

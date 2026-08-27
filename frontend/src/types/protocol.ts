@@ -230,6 +230,9 @@ export interface DataPoint {
   kappa_25_us_cm?: number;
   /** 质量标志 */
   quality_flags?: string;
+  excitation_frequency_hz?: number;
+  excitation_amplitude_v?: number;
+  calibration_id?: string;
 }
 
 /** 客户端事件总线（供 hooks 订阅） */

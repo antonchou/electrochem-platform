@@ -117,6 +117,36 @@
   font-weight: 700;
 }
 
+.chartHint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
 .chartBody {
   height: 380px;
+}
+
+.chartBodyWaveform {
+  height: 280px;
+}
+
+.chartBodyIV {
+  height: 360px;
+}
+
+.story {
+  margin: -4px 0 0;
+  font-size: 14px;
+  color: var(--text-sub);
+}
+
+.metaRow {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+.resultCardWrap {
+  margin-bottom: 12px;
 }
