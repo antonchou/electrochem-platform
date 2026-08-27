@@ -150,3 +150,16 @@ def test_csv_driver_start_and_persist(client):
     invalid = [f for f in frames if f["voltage_raw_v"] and f["voltage_raw_v"] < 0]
     for f in invalid:
         assert "COMPUTE_INVALID" in (f.get("quality_flags") or "")
+        assert "UNCALIBRATED" in (f.get("quality_flags") or "")
+    for f in frames:
+        assert f.get("calibration_id") == "UNCALIBRATED"
+        assert "UNCALIBRATED" in (f.get("quality_flags") or "")
+
+    detail = client.get(f"/api/experiments/{exp_id}").json()
+    assert detail["calibrations"]
+    cal = detail["calibrations"][0]
+    assert cal["calibration_id"] == "UNCALIBRATED"
+    assert "KCl" not in (cal.get("standard") or "")
+    assert "playback" in (cal.get("standard") or "").lower()
+    assert cal.get("coeff_value") is None
+    assert cal.get("lot") in (None, "")
