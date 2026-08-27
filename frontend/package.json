@@ -12,7 +12,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:protocol": "node --experimental-strip-types --test src/types/protocol.test.ts"
+    "test": "node --experimental-strip-types --test src/types/protocol.test.ts src/lib/*.test.ts",
+    "test:protocol": "node --experimental-strip-types --test src/types/protocol.test.ts src/lib/*.test.ts"
   },
   "dependencies": {
     "echarts": "^6.1.0",

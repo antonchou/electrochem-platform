@@ -71,7 +71,7 @@ test('F04 实时曲线：数据自动追加，无需刷新页面', async ({ page
   await expect(page.getByTestId('connection-status')).toHaveText('已连接');
 });
 
-test('F04b 实时曲线坐标：时间轴延伸且纵轴稳定覆盖读数', async ({ page }) => {
+test('F04b 实时波形坐标：时间轴延伸且电压轴稳定覆盖读数', async ({ page }) => {
   await page.getByTestId('btn-start').click();
   await waitForPoints(page, 5);
 
@@ -83,18 +83,18 @@ test('F04b 实时曲线坐标：时间轴延伸且纵轴稳定覆盖读数', asy
     })
     .toBeGreaterThan(1);
 
-  const yMin1 = Number(await chart.getAttribute('data-chart-y-min'));
-  const yMax1 = Number(await chart.getAttribute('data-chart-y-max'));
-  const kappa = Number(await page.getByTestId('value-kappa25-num').innerText());
-  expect(Number.isFinite(kappa), '实时 κ25 卡片应包含可解析的数值').toBe(true);
-  expect(kappa).toBeGreaterThanOrEqual(yMin1);
-  expect(kappa).toBeLessThanOrEqual(yMax1);
+  const vMin1 = Number(await chart.getAttribute('data-chart-v-min'));
+  const vMax1 = Number(await chart.getAttribute('data-chart-v-max'));
+  const voltage = Number(await page.getByTestId('value-voltage-num').innerText());
+  expect(Number.isFinite(voltage), '实时电压卡片应包含可解析的数值').toBe(true);
+  expect(voltage).toBeGreaterThanOrEqual(vMin1);
+  expect(voltage).toBeLessThanOrEqual(vMax1);
 
   await page.waitForTimeout(1200);
-  const yMin2 = Number(await chart.getAttribute('data-chart-y-min'));
-  const yMax2 = Number(await chart.getAttribute('data-chart-y-max'));
-  expect(yMin2, '同一轮实验中纵轴下限不应向上跳动').toBeLessThanOrEqual(yMin1);
-  expect(yMax2, '同一轮实验中纵轴上限不应向下跳动').toBeGreaterThanOrEqual(yMax1);
+  const vMin2 = Number(await chart.getAttribute('data-chart-v-min'));
+  const vMax2 = Number(await chart.getAttribute('data-chart-v-max'));
+  expect(vMin2, '同一轮实验中电压轴下限不应向上跳动').toBeLessThanOrEqual(vMin1);
+  expect(vMax2, '同一轮实验中电压轴上限不应向下跳动').toBeGreaterThanOrEqual(vMax1);
 });
 
 test('F05 WebSocket：连接指定地址并解析约定 JSON', async ({ page }) => {
@@ -198,6 +198,37 @@ test('P02 持续数据流：10Hz 连续输入', async ({ page }) => {
   const c2 = Number(await page.getByTestId('stat-count').innerText());
   // 10Hz×1.5s ≈ 15 点；留出网络/渲染余量，至少 10 点
   expect(c2 - c1).toBeGreaterThanOrEqual(10);
+});
+
+test('I-V 主图：恒压模拟不强制给出线性结论，仍给出平均电导', async ({ page }) => {
+  await page.getByTestId('btn-start').click();
+  await waitForPoints(page, 8);
+  await expect(page.getByTestId('iv-chart')).toBeVisible();
+  await page.getByTestId('btn-stop').click();
+  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
+  await expect(page.getByTestId('iv-note')).toContainText('不是电压扫描');
+  await expect(page.getByTestId('iv-equation')).toHaveText('暂无线性方程');
+  await expect(page.getByTestId('iv-r2')).toHaveText('R² = --');
+  await expect(page.getByTestId('iv-g')).not.toHaveText('--');
+  await expect(page.getByTestId('iv-kappa')).not.toHaveText('--');
+});
+
+test('溶液比较：使用本次样品名，不插入虚构蒸馏水', async ({ page }) => {
+  await page.getByTestId('input-sample').fill('NACL_010');
+  await page.getByTestId('btn-start').click();
+  await waitForPoints(page, 8);
+  await page.getByTestId('btn-stop').click();
+  await expect(page.getByTestId('solution-compare')).toBeVisible();
+  await expect(page.getByTestId('compare-table')).toContainText('NACL_010');
+  await expect(page.getByTestId('compare-table')).not.toContainText('蒸馏水');
+  await expect(page.getByTestId('compare-simulated-note')).toBeVisible();
+});
+
+test('诊断区仍保留 EC-t，默认不是主图', async ({ page }) => {
+  await expect(page.getByTestId('realtime-chart')).toBeVisible();
+  await expect(page.getByTestId('ec-t-chart')).toBeHidden();
+  await page.getByTestId('diagnostics-panel').locator('summary').click();
+  await expect(page.getByTestId('ec-t-chart')).toBeVisible();
 });
 
 test('P04 数据规模：承载 10000 点不卡死', async ({ page }) => {

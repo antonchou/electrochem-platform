@@ -1,0 +1,49 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+.warn {
+  margin: 0;
+  font-size: 13px;
+  color: #92400e;
+}
+
+.chart {
+  width: 100%;
+  height: 260px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  color: var(--text-sub);
+  font-weight: 600;
+}
+
+.current {
+  background: #f4f7ff;
+}
