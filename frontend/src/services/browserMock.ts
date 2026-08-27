@@ -106,6 +106,8 @@ export class BrowserMockSource implements DataClient {
           conductance_s: g,
           kappa_t_us_cm: kappaT,
           kappa_25_us_cm: kappa25,
+          excitation_frequency_hz: 1000,
+          excitation_amplitude_v: excitation,
           quality_flags: 'SIMULATED',
         },
       });

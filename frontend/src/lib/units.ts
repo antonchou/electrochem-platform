@@ -35,6 +35,19 @@ export function formatCurrentA(amperes: number): { value: number; unit: 'μA' | 
   return { value: amperes * 1e6, unit: 'μA', scale: 1e6 };
 }
 
+/** 激励频率：0 为直流，其余显示为交流。 */
+export function formatExcitationHz(hz: number): string {
+  if (!Number.isFinite(hz)) return '--';
+  if (hz === 0) return '直流';
+  if (Math.abs(hz) >= 1000) {
+    const kHz = hz / 1000;
+    const digits = Number.isInteger(kHz) ? 0 : 1;
+    return `交流 ${kHz.toFixed(digits)} kHz`;
+  }
+  const digits = Math.abs(hz) >= 10 ? 0 : 1;
+  return `交流 ${hz.toFixed(digits)} Hz`;
+}
+
 export function formatOhms(ohm: number): string {
   if (!Number.isFinite(ohm)) return '--';
   if (Math.abs(ohm) >= 1e6) return `${(ohm / 1e6).toFixed(3)} MΩ`;

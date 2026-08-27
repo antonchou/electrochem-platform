@@ -38,7 +38,7 @@ class MockDeviceConfig:
     cell_constant_per_cm: float = 1.0
     alpha_per_c: float = 0.02
     excitation_voltage_v: float = 1.0
-    excitation_frequency_hz: float = 0.0  # 0 = 仿真直流 I–V；真实硬件填交流频率
+    excitation_frequency_hz: float = 1000.0  # 交流激励频率 Hz；0 = 直流（仅调试）
     compensation_model: str = "linear_alpha"
     device_id: str = "MOCK-IV-01"
     firmware_version: str = "0.1.0"
