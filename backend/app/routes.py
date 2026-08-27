@@ -648,7 +648,11 @@ async def export_json(exp_id: int) -> Response:
     exp = await asyncio.to_thread(storage.get_experiment, exp_id)
     if exp is None:
         raise HTTPException(status_code=404, detail="experiment not found")
-    exp["frames"] = await asyncio.to_thread(storage.get_frames, exp_id, limit=1_000_000)
+    frames = await asyncio.to_thread(storage.get_frames, exp_id, limit=1_000_000)
+    total = await asyncio.to_thread(storage.count_frames, exp_id)
+    exp["frames"] = frames
+    exp["truncated"] = total > len(frames)
+    exp["frame_count_total"] = total
     return Response(
         content=json.dumps(exp, ensure_ascii=False),
         media_type="application/json; charset=utf-8",
