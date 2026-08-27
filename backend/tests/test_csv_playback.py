@@ -85,6 +85,18 @@ def test_playback_rejects_nonpositive_speed():
         CsvPlaybackConfig(path="x.csv", speed=0.0)
 
 
+def test_incomplete_eof_logs_once(caplog):
+    from app.routes import _log_incomplete_reading, _quiet_incomplete_flags
+
+    _quiet_incomplete_flags.clear()
+    with caplog.at_level("INFO"):
+        _log_incomplete_reading(("CSV", "EOF"))
+        _log_incomplete_reading(("CSV", "EOF"))
+    messages = [r.message for r in caplog.records if "回放结束" in r.message]
+    assert len(messages) == 1
+    _quiet_incomplete_flags.clear()
+
+
 def test_playback_eof_marks_quality(tmp_path):
     path = _write_csv(tmp_path, [(0.0, 1.0, 1e-3, 27.0), (0.1, 1.1, 1.1e-3, 27.0)])
     cfg = CsvPlaybackConfig(path=path)
@@ -130,6 +142,28 @@ def client(tmp_path, monkeypatch):
         yield c
     for k in ("EC_DB_PATH", "EC_ENABLE_DEBUG_ENDPOINTS", "EC_DRIVER", "EC_CSV_PATH"):
         monkeypatch.delenv(k, raising=False)
+
+
+def test_csv_resume_continues_timeline(client):
+    """暂停墙钟不得让 CSV 跳到后段。"""
+    from app import storage
+
+    exp_id = client.post("/api/experiment/start").json()["experiment_id"]
+    time.sleep(0.25)
+    client.post("/api/experiment/stop")
+    first = storage.get_frames(exp_id, limit=500)
+    assert first
+    last_t = first[-1]["t_seconds"] or 0.0
+    time.sleep(0.35)
+    resumed = client.post("/api/experiment/start").json()
+    assert resumed["resumed"] is True
+    time.sleep(0.25)
+    client.post("/api/experiment/stop")
+    all_frames = storage.get_frames(exp_id, limit=500)
+    newer = [f for f in all_frames if (f["t_seconds"] or 0) > last_t + 1e-6]
+    assert newer, "续跑应追加帧"
+    assert newer[0]["t_seconds"] < last_t + 0.25
+    client.post("/api/experiment/reset")
 
 
 def test_csv_driver_start_and_persist(client):
