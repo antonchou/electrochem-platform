@@ -3,6 +3,7 @@ import { getBridge } from '../services';
 import { useConnection } from '../hooks/useConnection';
 import { useExperiment } from '../hooks/useExperiment';
 import { useRealtimeData } from '../hooks/useRealtimeData';
+import { useIVAnalysis } from '../hooks/useIVAnalysis';
 import { ExperimentInfo } from '../components/ExperimentInfo';
 import { StatusBadge } from '../components/StatusBadge';
 import { ConnectionPanel } from '../components/ConnectionPanel';
@@ -10,9 +11,14 @@ import { ErrorBanner } from '../components/ErrorBanner';
 import { ControlBar } from '../components/ControlBar';
 import { ValueDisplay } from '../components/ValueDisplay';
 import { DataStats } from '../components/DataStats';
-import { RealTimeChart } from '../components/RealTimeChart';
+import { WaveformChart } from '../components/WaveformChart';
+import { IVChart } from '../components/IVChart';
+import { ExperimentResultCard } from '../components/ExperimentResultCard';
+import { SolutionCompare } from '../components/SolutionCompare';
+import { DiagnosticsPanel } from '../components/DiagnosticsPanel';
 import { ResultPanel } from '../components/ResultPanel';
 import { HistoryPanel } from '../components/HistoryPanel';
+import { formatCurrentA } from '../lib/units';
 import styles from './ExperimentPage.module.css';
 
 const EXPERIMENT_TITLE = '溶液导电性相对比较实验';
@@ -28,8 +34,8 @@ function parseConcentrationMmolL(raw: string): { value?: number; error?: string 
 }
 
 /**
- * 主实验页：实验信息 + 实时数值 + 实时曲线 + 控制 + 连接状态 + 结果区 + 历史实验（Phase 7）。
- * 本页只做组合编排，业务逻辑都在 hooks/services 中。
+ * 主实验页：实时 V/I → I–V 特性 → 溶液比较。
+ * EC-t 与化学拟合放在诊断/结果区，不再作为核心图。
  */
 export function ExperimentPage() {
   const bridge = useMemo(() => getBridge(), []);
@@ -48,6 +54,7 @@ export function ExperimentPage() {
     setActionError,
     start,
     stop,
+    reset,
     restart,
     canStart,
     canStop,
@@ -55,6 +62,7 @@ export function ExperimentPage() {
   } = useExperiment(bridge);
   const { pointsRef, count, latest, runStartTRef, clearPoints, hydrateFromFrames } =
     useRealtimeData(bridge);
+  const ivAnalysis = useIVAnalysis(pointsRef, count);
 
   const startOptions = useCallback(() => {
     const parsed = parseConcentrationMmolL(concentrationInput);
@@ -83,16 +91,23 @@ export function ExperimentPage() {
       }
       return;
     }
-    // 换样品开了新实验：没有 idle 复位，必须清掉上一轮曲线
     if (previousId != null && res.experiment_id !== previousId) {
       clearPoints();
     }
   }, [bridge.api, clearPoints, experimentId, hydrateFromFrames, start, startOptions]);
 
+  const handleClear = useCallback(() => {
+    void reset();
+    clearPoints();
+  }, [clearPoints, reset]);
+
   const duration =
     latest && runStartTRef.current !== null ? Math.max(0, latest.t - runStartTRef.current) : 0;
-
+  const sampleRateHz = count > 1 && duration > 0.2 ? (count - 1) / duration : null;
   const shownError = actionError ?? error;
+  const currentDisplay = latest?.current_raw_a != null ? formatCurrentA(latest.current_raw_a) : null;
+  const simulated = latest?.quality_flags?.includes('SIMULATED') ?? false;
+  const displayedSample = sampleId || sampleIdInput;
 
   return (
     <div className={styles.page}>
@@ -111,6 +126,10 @@ export function ExperimentPage() {
         </div>
       </header>
 
+      <p className={styles.story}>
+        施加电压 → 测量电流 → 得到 I–V 曲线 → 判断导电能力 → 比较不同溶液
+      </p>
+
       <ErrorBanner
         message={shownError}
         onDismiss={() => {
@@ -126,6 +145,7 @@ export function ExperimentPage() {
             canStart={canStart}
             canStop={canStop}
             canReset={canReset}
+            canClear={status !== 'running' && (count > 0 || status === 'stopped')}
             paused={status === 'stopped'}
             onStart={() => void handleStart()}
             onStop={stop}
@@ -133,9 +153,10 @@ export function ExperimentPage() {
               const options = startOptions();
               if (options) void restart(options);
             }}
+            onClear={handleClear}
           />
           <label className={styles.sampleInputWrap}>
-            <span className={styles.sampleLabel}>样品编号</span>
+            <span className={styles.sampleLabel}>溶液 / 样品</span>
             <input
               className={styles.sampleInput}
               value={sampleIdInput}
@@ -164,6 +185,12 @@ export function ExperimentPage() {
         <ConnectionPanel status={connStatus} mode={bridge.mode} onReconnect={manualReconnect} />
       </section>
 
+      <p className={styles.metaRow} data-testid="experiment-meta">
+        实验编号 {experimentId ?? '--'}
+        {displayedSample ? ` · 溶液 ${displayedSample}` : ''}
+        {simulated ? ' · 模拟设备' : ''}
+      </p>
+
       <section className={styles.values}>
         <ValueDisplay
           label="电极温度"
@@ -172,38 +199,23 @@ export function ExperimentPage() {
           precision={2}
           testId="value-temperature"
         />
-        {/* REQ-U-001 分层显示：原始量 / 计算量 / 温补量（后端 v2+ 才下发，缺省显示 --） */}
         <ValueDisplay
-          label="原始电压 U"
+          label="当前电压"
           value={latest?.voltage_raw_v ?? null}
           unit="V"
-          precision={6}
+          precision={4}
           testId="value-voltage"
         />
         <ValueDisplay
-          label="原始电流 I"
-          value={latest?.current_raw_a != null ? latest.current_raw_a * 1e6 : null}
-          unit="μA"
+          label="当前电流"
+          value={currentDisplay ? currentDisplay.value : null}
+          unit={currentDisplay?.unit ?? 'μA'}
           precision={3}
           testId="value-current"
         />
         <ValueDisplay
-          label="电导 G"
-          value={latest?.conductance_s != null ? latest.conductance_s * 1e6 : null}
-          unit="μS"
-          precision={3}
-          testId="value-conductance"
-        />
-        <ValueDisplay
-          label="κ(T)"
-          value={latest?.kappa_t_us_cm ?? null}
-          unit="μS/cm"
-          precision={1}
-          testId="value-kappa-t"
-        />
-        <ValueDisplay
-          label="κ25"
-          value={latest?.kappa_25_us_cm ?? null}
+          label="电导率 κ25"
+          value={latest?.kappa_25_us_cm ?? latest?.ec ?? null}
           unit="μS/cm"
           precision={1}
           testId="value-kappa25"
@@ -212,12 +224,57 @@ export function ExperimentPage() {
 
       <section className={styles.chartCard}>
         <div className={styles.chartHead}>
-          <h2 className={styles.chartTitle}>实时曲线 · EC-时间</h2>
-          <DataStats pointCount={count} durationSec={duration} />
+          <div>
+            <h2 className={styles.chartTitle}>实时测量</h2>
+            <p className={styles.chartHint}>观察电压、电流、噪声和是否稳定。这不是最终比较图。</p>
+          </div>
+          <DataStats
+            pointCount={count}
+            durationSec={duration}
+            sampleRateHz={sampleRateHz}
+            excitationFreqHz={latest?.excitation_frequency_hz}
+            excitationAmpV={latest?.excitation_amplitude_v}
+          />
         </div>
-        <div className={styles.chartBody}>
-          <RealTimeChart pointsRef={pointsRef} />
+        <div className={styles.chartBodyWaveform}>
+          <WaveformChart pointsRef={pointsRef} />
         </div>
+      </section>
+
+      <section className={styles.chartCard}>
+        <div className={styles.chartHead}>
+          <div>
+            <h2 className={styles.chartTitle}>I–V 特性</h2>
+            <p className={styles.chartHint}>
+              这是本实验的核心图。只有电压真正扫开、且近似直线时，才用斜率当电导。
+            </p>
+          </div>
+        </div>
+        {ivAnalysis.n > 0 && (
+          <div className={styles.resultCardWrap}>
+            <ExperimentResultCard analysis={ivAnalysis} sampleId={displayedSample} />
+          </div>
+        )}
+        <div className={styles.chartBodyIV}>
+          <IVChart pointsRef={pointsRef} analysis={ivAnalysis} status={status} />
+        </div>
+      </section>
+
+      <section className={styles.chartCard}>
+        <div className={styles.chartHead}>
+          <div>
+            <h2 className={styles.chartTitle}>不同溶液电导率比较</h2>
+            <p className={styles.chartHint}>每根柱是一次已完成实验的 κ。换溶液名称再测，就会多一根柱。</p>
+          </div>
+        </div>
+        <SolutionCompare
+          api={bridge.api}
+          status={status}
+          experimentId={experimentId}
+          sampleId={displayedSample}
+          live={ivAnalysis}
+          simulated={simulated}
+        />
       </section>
 
       <ResultPanel
@@ -227,6 +284,28 @@ export function ExperimentPage() {
         experimentId={experimentId}
         sampleId={sampleId}
         api={bridge.api}
+      />
+
+      <DiagnosticsPanel
+        pointsRef={pointsRef}
+        extras={
+          <>
+            <ValueDisplay
+              label="电导 G"
+              value={latest?.conductance_s != null ? latest.conductance_s * 1e6 : null}
+              unit="μS"
+              precision={3}
+              testId="value-conductance"
+            />
+            <ValueDisplay
+              label="κ(T)"
+              value={latest?.kappa_t_us_cm ?? null}
+              unit="μS/cm"
+              precision={1}
+              testId="value-kappa-t"
+            />
+          </>
+        }
       />
 
       {historyOpen && <HistoryPanel api={bridge.api} onClose={() => setHistoryOpen(false)} />}
