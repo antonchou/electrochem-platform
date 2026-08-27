@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0.0",
+  "driver": "simulator",
+  "simulated": true,
+  "mode": "realistic",
+  "seed": 2026,
+  "sample_rate_hz": 10.0,
+  "solution_id": "DEMO_NACL_ROUGH_SIMULATED",
+  "nominal_conductance_s": 0.001413,
+  "base_temperature": 25.0,
+  "alpha_per_c": 0.02,
+  "cell_constant_per_cm": 1.0,
+  "sweep_start_v": 0.2,
+  "sweep_end_v": 1.0,
+  "settle_seconds": 0.5,
+  "sweep_seconds": 8.0,
+  "sweep_repeat": false,
+  "excitation_frequency_hz": 1000.0,
+  "excitation_amplitude_v": 1.0,
+  "device_id": "SIM-IV-01",
+  "firmware_version": "0.1.0",
+  "range_id": "SIM"
+}

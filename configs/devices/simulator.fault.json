@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "driver": "simulator",
+  "simulated": true,
+  "mode": "fault",
+  "fault_kind": "dropout",
+  "dropout_every_n": 8,
+  "fault_start_s": 0.3,
+  "seed": 2026,
+  "sample_rate_hz": 10.0,
+  "solution_id": "DEMO_FAULT_SIMULATED",
+  "nominal_conductance_s": 0.001413,
+  "sweep_start_v": 0.2,
+  "sweep_end_v": 1.0,
+  "settle_seconds": 0.3,
+  "sweep_seconds": 6.0,
+  "excitation_frequency_hz": 1000.0,
+  "excitation_amplitude_v": 1.0,
+  "device_id": "SIM-IV-01",
+  "firmware_version": "0.1.0",
+  "range_id": "SIM"
+}

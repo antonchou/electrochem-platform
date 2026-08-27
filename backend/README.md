@@ -36,6 +36,18 @@ python3 -m venv .venv
 原始数据默认落库到 `data/raw/ec.db`（仓库约定 11.1：原始数据不可变，只追加）。
 可用环境变量 `EC_DB_PATH` 覆盖（测试用临时库）。
 
+## 采集驱动（EC_DRIVER）
+
+业务层只认 `DeviceDriver.read() → DriverReading`。换数据源只改环境变量，不改 WebSocket / 计算链 / 前端。
+
+| `EC_DRIVER` | 适配器 | 何时用 |
+|---|---|---|
+| `mock`（缺省） | `MockDevice` | 生产 kiosk、原有联调 |
+| `simulator` | `SimulatorDriver` | 无硬件时做电压扫描与 I–V 算法验收 |
+| `csv` | `CsvPlaybackDriver` | 回放 4 列历史 CSV |
+
+未来 ADS1256 实现同一个 `DeviceDriver`，在 `_build_driver()` 再加一个分支即可。
+
 ## Mock 驱动配置
 
 默认使用固定随机种子的 `stable` 场景，以 10 Hz 生成可复现的 EC/温度数据。
@@ -50,6 +62,33 @@ EC_MOCK_SCENARIO=drift       # stable / noisy / drift / dropout
 EC_SAMPLE_RATE_HZ=10
 EC_MOCK_SEED=2026
 ```
+
+## Simulator（实验模拟器）
+
+默认**不影响** mock 生产行为。输出原始 V/I/T（带 `SIMULATED`），G/κ 仍由 `measurement.compute_chain` 计算。
+
+```bash
+# 仓库根目录
+chmod +x scripts/run_simulator.sh
+./scripts/run_simulator.sh
+# 前端：开发用 npm run dev（:5173），或打开 http://127.0.0.1:8000
+```
+
+| 变量 | 说明 |
+|---|---|
+| `EC_DRIVER=simulator` | 启用模拟器 |
+| `EC_SIM_CONFIG` | JSON，见 `configs/devices/simulator*.json` |
+| `EC_SIM_MODE` | `stable` / `realistic` / `fault` |
+| `EC_SIM_G` | 标称电导 G（S），用于 I = G·V |
+| `EC_CSV_SPEED` | CSV 回放倍速（1 / 2 / 10）；暂停 = 实验 stop |
+
+- **stable**：低噪声、线性扫描 0.2→1.0 V
+- **realistic**：ADC 噪声、偏置、温漂、弱非线性、极化滞后
+- **fault**：`fault_kind`（dropout / disconnected / voltage_oor / current_zero / adc_sat / temp_abnormal / unstable）
+
+## CSV 回放
+
+`EC_DRIVER=csv EC_CSV_PATH=../data/fixtures/ingest/braun_2022_lib_cell.csv EC_CSV_SPEED=1`
 
 调试注入接口默认关闭；仅在本地验收时显式设置 `EC_ENABLE_DEBUG_ENDPOINTS=1`。
 跨域来源默认只允许 localhost、私有网段和 `.local` 主机；如需额外来源，可用逗号分隔的
