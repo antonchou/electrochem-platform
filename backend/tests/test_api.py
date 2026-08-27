@@ -322,6 +322,8 @@ def test_start_writes_calibration_and_frame_metadata(client):
     cal = detail["calibrations"][0]
     assert cal["calibration_id"] == "MOCK-KCELL-1.0"
     assert cal["lot"] == "SIMULATED"
+    assert "KCl 1413" in (cal["standard"] or "")
+    assert "(simulated)" in (cal["standard"] or "")
     assert cal["coeff_value"] == 1.0
 
     frames = client.get(f"/api/experiments/{exp_id}/frames").json()["frames"]
