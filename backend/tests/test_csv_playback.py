@@ -57,6 +57,34 @@ def test_playback_reads_csv_and_replays(tmp_path):
     asyncio.run(scenario())
 
 
+def test_playback_speed_scales_elapsed(tmp_path):
+    path = _write_csv(
+        tmp_path,
+        [
+            (0.0, 1.0, 1.0e-3, 27.0),
+            (0.5, 1.5, 1.5e-3, 27.0),
+            (1.0, 2.0, 2.0e-3, 27.0),
+        ],
+    )
+    cfg = CsvPlaybackConfig(path=path, speed=10.0)
+
+    async def scenario():
+        d = CsvPlaybackDriver(cfg)
+        await d.connect()
+        r = await d.read(0.05)
+        assert r.voltage_v == 1.5
+        eof = await d.read(0.2)
+        assert eof.quality_flags == ("CSV", "EOF")
+        await d.close()
+
+    asyncio.run(scenario())
+
+
+def test_playback_rejects_nonpositive_speed():
+    with pytest.raises(ValueError, match="speed"):
+        CsvPlaybackConfig(path="x.csv", speed=0.0)
+
+
 def test_playback_eof_marks_quality(tmp_path):
     path = _write_csv(tmp_path, [(0.0, 1.0, 1e-3, 27.0), (0.1, 1.1, 1.1e-3, 27.0)])
     cfg = CsvPlaybackConfig(path=path)
