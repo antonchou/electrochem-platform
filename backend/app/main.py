@@ -32,11 +32,19 @@ async def lifespan(app: FastAPI):
         if was_running:
             await state.stop()
         await stop_acquisition()
-        if was_running and active_exp_id is not None:
-            await persist.flush()
-            await persist.finish_experiment(active_exp_id, "aborted")
-        await persist.stop()
-        await state.reset()
+        try:
+            if was_running and active_exp_id is not None:
+                try:
+                    await persist.flush()
+                except Exception:
+                    logging.getLogger("app.main").exception("lifespan flush failed")
+                try:
+                    await persist.finish_experiment(active_exp_id, "aborted")
+                except Exception:
+                    logging.getLogger("app.main").exception("lifespan finish_experiment failed")
+        finally:
+            await persist.stop()
+            await state.reset()
 
 
 app = FastAPI(
