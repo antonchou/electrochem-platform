@@ -35,3 +35,14 @@ configs/
 
 Mock 后端可通过 `EC_MOCK_CONFIG=configs/devices/mock.example.json` 加载完整配置；
 `EC_MOCK_SCENARIO`、`EC_SAMPLE_RATE_HZ`、`EC_MOCK_SEED` 可覆盖常用运行参数。
+
+实验模拟器（电压扫描、stable/realistic/fault）是独立驱动，**默认不启用**（生产仍是 mock）：
+
+```bash
+EC_DRIVER=simulator
+EC_SIM_CONFIG=configs/devices/simulator.example.json
+# 可选：EC_SIM_MODE=realistic|fault   EC_SIM_G=0.001413
+```
+
+示例：`simulator.example.json`（stable）、`simulator.realistic.json`、`simulator.fault.json`。
+CSV 回放：`EC_DRIVER=csv`、`EC_CSV_PATH=...`、可选 `EC_CSV_SPEED=10`（10×；暂停仍用实验 stop）。

@@ -19,7 +19,9 @@ from .drivers import (
     CsvPlaybackDriver,
     DeviceDriver,
     MockDevice,
+    SimulatorDriver,
     load_mock_config,
+    load_simulator_config,
 )
 from .persistence import persist
 from .schemas import ControlResponse, CurrentExperimentResponse, ExperimentStartRequest, FitRequest
@@ -47,10 +49,11 @@ async def broadcast(payload: dict) -> int:
 
 
 def _build_driver() -> tuple[DeviceDriver, float]:
-    """按环境变量选择采集驱动（真实数据接入测试用）。
+    """按环境变量选择采集驱动。业务层只依赖 DeviceDriver，不分支模拟/真机。
 
-    - EC_DRIVER=csv + EC_CSV_PATH=... → CsvPlaybackDriver（回放 echemdb 数据）
-    - 缺省 → MockDevice（仿真）
+    - EC_DRIVER=mock（缺省）→ MockDevice，生产 kiosk 行为不变
+    - EC_DRIVER=simulator → SimulatorDriver（电压扫描 + stable/realistic/fault）
+    - EC_DRIVER=csv + EC_CSV_PATH → CsvPlaybackDriver（历史 4 列 CSV 回放）
     """
     kind = os.environ.get("EC_DRIVER", "mock").strip().lower()
     if kind == "csv":
@@ -64,10 +67,21 @@ def _build_driver() -> tuple[DeviceDriver, float]:
         rate = os.environ.get("EC_CSV_SAMPLE_RATE_HZ", "").strip()
         if rate:
             kwargs["sample_rate_hz"] = float(rate)
+        speed = os.environ.get("EC_CSV_SPEED", "").strip()
+        if speed:
+            kwargs["speed"] = float(speed)
         cfg = CsvPlaybackConfig(**kwargs)
         return CsvPlaybackDriver(cfg), 1.0 / cfg.sample_rate_hz
-    config = load_mock_config()
-    return MockDevice(config), 1.0 / config.sample_rate_hz
+    if kind == "simulator":
+        config = load_simulator_config()
+        return SimulatorDriver(config), 1.0 / config.sample_rate_hz
+    if kind in ("mock", ""):
+        config = load_mock_config()
+        return MockDevice(config), 1.0 / config.sample_rate_hz
+    raise ValueError(
+        f"unknown EC_DRIVER={kind!r}; expected mock, simulator, or csv "
+        "(future ADS1256 adapter should register here without changing routes/WS)"
+    )
 
 
 async def start_acquisition() -> None:

@@ -21,6 +21,7 @@ class CsvPlaybackConfig:
     path: str
     sample_rate_hz: float = 10.0
     loop: bool = False
+    speed: float = 1.0  # 1× realtime; 2 / 10 = accelerated. Pause = experiment stop.
     device_id: str = "CSV-PLAYBACK-01"
     firmware_version: str = "0.1.0"
     range_id: str = "CSV"
@@ -29,6 +30,12 @@ class CsvPlaybackConfig:
     excitation_frequency_hz: float = 0.0
     excitation_amplitude_v: float = 1.0
     compensation_model: str = "linear_alpha"
+
+    def __post_init__(self) -> None:
+        if self.sample_rate_hz <= 0:
+            raise ValueError("sample_rate_hz must be positive")
+        if self.speed <= 0:
+            raise ValueError("speed must be positive")
 
 
 class CsvPlaybackDriver(DeviceDriver):
@@ -79,12 +86,11 @@ class CsvPlaybackDriver(DeviceDriver):
         rows = self._rows
         if not rows:
             return DriverReading(ec=None, temperature=None, quality_flags=("CSV", "EMPTY"))
-        if elapsed_seconds > self._max_t:
+        t_eff = elapsed_seconds * self.config.speed
+        if t_eff > self._max_t:
             if not self.config.loop:
                 return DriverReading(ec=None, temperature=None, quality_flags=("CSV", "EOF"))
-            t_eff = elapsed_seconds % (self._max_t + 1e-9)
-        else:
-            t_eff = elapsed_seconds
+            t_eff = t_eff % (self._max_t + 1e-9)
         # 取时间戳 ≤ t_eff 的最近一行（线性外推需求简单，直接取最近）
         chosen = rows[0]
         for r in rows:
