@@ -1,7 +1,8 @@
 .stats {
   display: flex;
-  gap: 24px;
+  gap: 16px 24px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .item {

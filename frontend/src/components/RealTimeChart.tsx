@@ -207,5 +207,5 @@ export function RealTimeChart({ pointsRef }: Props) {
     };
   }, [pointsRef]);
 
-  return <div ref={containerRef} className={styles.chart} data-testid="realtime-chart" />;
+  return <div ref={containerRef} className={styles.chart} data-testid="ec-t-chart" />;
 }

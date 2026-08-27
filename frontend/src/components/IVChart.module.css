@@ -1,0 +1,44 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: baseline;
+  font-size: 14px;
+}
+
+.equation {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.r2 {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.note {
+  font-size: 13px;
+  color: var(--text-sub);
+  margin: 0;
+}
+
+.warn {
+  color: #92400e;
+}
+
+.ok {
+  color: #166534;
+}
+
+.chart {
+  width: 100%;
+  flex: 1;
+  min-height: 280px;
+}
