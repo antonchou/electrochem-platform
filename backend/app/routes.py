@@ -41,6 +41,9 @@ _acquisition_task: Optional[asyncio.Task] = None
 _driver: Optional[DeviceDriver] = None
 _sample_period_seconds = 0.1
 _lifecycle_lock = asyncio.Lock()
+_persist_notice_sent = False
+
+PERSIST_DEGRADED_MESSAGE = "落库失败：实时曲线仍在更新，但历史和导出将缺帧。"
 
 
 async def broadcast(payload: dict) -> int:
@@ -165,8 +168,14 @@ async def _acquisition_loop() -> None:
                     await asyncio.sleep(_sample_period_seconds)
                     continue
                 frame = _build_frame(elapsed, reading)
-                # 先落库再推送：客户端收到帧时，该帧必然已进入持久化队列（避免停止时丢帧）
-                _enqueue_frame(frame)
+                # 先入队再推送。入队失败（持久化已降级）仍广播，并打 PERSIST_DROPPED。
+                accepted = _enqueue_frame(frame)
+                if not accepted:
+                    flags = frame.get("quality_flags") or ""
+                    frame["quality_flags"] = (
+                        f"{flags}|PERSIST_DROPPED" if flags else "PERSIST_DROPPED"
+                    )
+                    await _notify_persist_degraded()
                 await broadcast(frame)
             await asyncio.sleep(_sample_period_seconds)
         except asyncio.CancelledError:
@@ -280,10 +289,52 @@ def _frame_to_row(frame: dict) -> dict:
     }
 
 
-def _enqueue_frame(frame: dict) -> None:
-    """后台异步落库（仅当前有实验上下文时）。"""
-    if state.experiment_db_id is not None:
-        persist.enqueue_frame(_frame_to_row(frame))
+def _enqueue_frame(frame: dict) -> bool:
+    """后台异步落库。无实验上下文视为无需落库（True）；拒收返回 False。"""
+    if state.experiment_db_id is None:
+        return True
+    return persist.enqueue_frame(_frame_to_row(frame))
+
+
+async def _notify_persist_degraded() -> None:
+    """WS 告警只发一次，避免 10Hz 刷屏。"""
+    global _persist_notice_sent
+    if _persist_notice_sent:
+        return
+    _persist_notice_sent = True
+    snap = persist.snapshot()
+    await broadcast(
+        {
+            "status": state.status,
+            "experiment_id": state.experiment_db_id,
+            "message": PERSIST_DEGRADED_MESSAGE,
+            "persistence": snap["persistence"],
+        }
+    )
+
+
+def _reset_persist_notice() -> None:
+    global _persist_notice_sent
+    _persist_notice_sent = False
+
+
+async def _flush_frames_best_effort() -> bool:
+    """Flush queued frames. False if persistence already failed or flush raises."""
+    if persist.degraded:
+        return False
+    try:
+        await persist.flush()
+        return not persist.degraded
+    except Exception:
+        logger.exception("持久化 flush 失败")
+        return False
+
+
+async def _finish_experiment_best_effort(exp_id: int, status: str) -> None:
+    try:
+        await persist.finish_experiment(exp_id, status)
+    except Exception:
+        logger.exception("finish_experiment(%s) 失败", status)
 
 
 @router.websocket("/ws/stream")
@@ -392,6 +443,7 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
             await persist.finish_experiment(exp_id, "error")
             return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
+        _reset_persist_notice()
         await broadcast({"status": "running", "experiment_id": exp_id})
         return ControlResponse(
             ok=True,
@@ -408,17 +460,26 @@ async def stop() -> ControlResponse:
         changed = await state.stop()
         exp_id = state.experiment_db_id
         status = state.status
+        persist_ok = True
         if changed and exp_id is not None:
             # 仅在 running→stopped 时结束实验：重复 stop 不再刷新 ended_at_utc
-            await persist.flush()  # 确保在途帧先落库
-            await _compute_and_store_qc(exp_id)
-            await persist.finish_experiment(exp_id, "stopped")
-            await broadcast({"status": status})
+            persist_ok = await _flush_frames_best_effort()
+            if persist_ok:
+                await _compute_and_store_qc(exp_id)
+            await _finish_experiment_best_effort(exp_id, "stopped")
+            payload: dict = {"status": status, "experiment_id": exp_id}
+            if not persist_ok:
+                payload["message"] = PERSIST_DEGRADED_MESSAGE
+                payload["persistence"] = "degraded"
+            await broadcast(payload)
+        message = None if changed else "当前没有运行中的实验"
+        if changed and not persist_ok:
+            message = PERSIST_DEGRADED_MESSAGE
         return ControlResponse(
             ok=True,
             status=status,
             experiment_id=exp_id,
-            message=None if changed else "当前没有运行中的实验",
+            message=message,
         )
 
 
@@ -457,14 +518,22 @@ async def reset() -> ControlResponse:
     async with _lifecycle_lock:
         exp_id = state.experiment_db_id
         was_running = state.status == "running"
+        persist_ok = True
         if exp_id is not None:
-            await persist.flush()
+            persist_ok = await _flush_frames_best_effort()
             if was_running:
                 # 运行中被打断 → aborted（与 SRS 状态机语义一致），而非 idle
-                await persist.finish_experiment(exp_id, "aborted")
+                await _finish_experiment_best_effort(exp_id, "aborted")
         await state.reset()
-        await broadcast({"status": "idle"})
-        return ControlResponse(ok=True, status="idle")
+        _reset_persist_notice()
+        payload: dict = {"status": "idle"}
+        message = None
+        if not persist_ok:
+            payload["message"] = PERSIST_DEGRADED_MESSAGE
+            payload["persistence"] = "degraded"
+            message = PERSIST_DEGRADED_MESSAGE
+        await broadcast(payload)
+        return ControlResponse(ok=True, status="idle", message=message)
 
 
 @router.get("/api/experiment/current")
@@ -480,7 +549,13 @@ async def current_experiment() -> CurrentExperimentResponse:
 
 @router.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "experiment": state.status}
+    snap = persist.snapshot()
+    return {
+        "status": "ok",
+        "experiment": state.status,
+        "persistence": snap["persistence"],
+        "persistence_error": snap["persistence_error"],
+    }
 
 
 # ---------- Phase 7：历史查询与导出 ----------

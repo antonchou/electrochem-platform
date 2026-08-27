@@ -48,6 +48,8 @@ export interface StatusFrame {
   status: ExperimentStatus;
   timestamp?: number;
   experiment_id?: number;
+  message?: string;
+  persistence?: string;
 }
 
 /** 服务端可能下发的所有消息 */
@@ -238,7 +240,7 @@ export interface DataPoint {
 /** 客户端事件总线（供 hooks 订阅） */
 export type ClientEvent =
   | { type: 'message'; frame: ExperimentFrame }
-  | { type: 'status'; status: ExperimentStatus; experiment_id?: number }
+  | { type: 'status'; status: ExperimentStatus; experiment_id?: number; message?: string }
   | { type: 'connection'; status: ConnectionStatus }
   | { type: 'error'; message: string };
 
@@ -282,6 +284,10 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
   if (!hasTimestamp && !hasEc && !hasTemperature) {
     const frame: StatusFrame = { status: status as ExperimentStatus };
     if (typeof raw.experiment_id === 'number') frame.experiment_id = raw.experiment_id;
+    if (typeof raw.message === 'string' && raw.message.length > 0) frame.message = raw.message;
+    if (typeof raw.persistence === 'string' && raw.persistence.length > 0) {
+      frame.persistence = raw.persistence;
+    }
     return frame;
   }
   if (!hasTimestamp || !hasTemperature) return null;

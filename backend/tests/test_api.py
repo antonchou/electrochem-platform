@@ -47,6 +47,7 @@ def test_health(client):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+    assert r.json()["persistence"] == "ok"
     # 即使挂了 frontend/dist，API 路径也不能被静态文件吃掉
     assert r.headers.get("content-type", "").startswith("application/json")
 
