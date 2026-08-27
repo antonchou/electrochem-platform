@@ -37,8 +37,8 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
-      - name: Protocol unit tests
-        run: npm run test:protocol
+      - name: Unit tests
+        run: npm test
 
   e2e:
     runs-on: ubuntu-latest
