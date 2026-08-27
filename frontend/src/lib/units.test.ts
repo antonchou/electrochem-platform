@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { formatConductanceS, formatConductivityUsCm, formatCurrentA, formatOhms, strideSample } from './units.ts';
+import {
+  formatConductanceS,
+  formatConductivityUsCm,
+  formatCurrentA,
+  formatExcitationHz,
+  formatOhms,
+  strideSample,
+} from './units.ts';
 
 test('conductivity uses μS/cm below 1000 and mS/cm at or above', () => {
   assert.equal(formatConductivityUsCm(141.3).unit, 'μS/cm');
@@ -17,6 +24,12 @@ test('conductance uses μS below 1000 μS and mS otherwise', () => {
 test('current uses mA at or above 1 mA', () => {
   assert.equal(formatCurrentA(1.413e-3).unit, 'mA');
   assert.equal(formatCurrentA(5e-7).unit, 'μA');
+});
+
+test('excitation frequency labels AC vs DC', () => {
+  assert.equal(formatExcitationHz(0), '直流');
+  assert.equal(formatExcitationHz(1000), '交流 1 kHz');
+  assert.equal(formatExcitationHz(80), '交流 80 Hz');
 });
 
 test('ohms picks kΩ / MΩ', () => {

@@ -127,7 +127,7 @@ export function ExperimentPage() {
       </header>
 
       <p className={styles.story}>
-        施加电压 → 测量电流 → 得到 I–V 曲线 → 判断导电能力 → 比较不同溶液
+        施加交流激励 → 测量电流 → 得到导电能力 → 比较不同溶液
       </p>
 
       <ErrorBanner
@@ -226,7 +226,7 @@ export function ExperimentPage() {
         <div className={styles.chartHead}>
           <div>
             <h2 className={styles.chartTitle}>实时测量</h2>
-            <p className={styles.chartHint}>观察电压、电流、噪声和是否稳定。这不是最终比较图。</p>
+            <p className={styles.chartHint}>交流激励下的电压、电流采样。用于看噪声和是否稳定。</p>
           </div>
           <DataStats
             pointCount={count}
@@ -264,11 +264,12 @@ export function ExperimentPage() {
         <div className={styles.chartHead}>
           <div>
             <h2 className={styles.chartTitle}>不同溶液电导率比较</h2>
-            <p className={styles.chartHint}>每根柱是一次已完成实验的 κ。换溶液名称再测，就会多一根柱。</p>
+            <p className={styles.chartHint}>
+              从打开本页后的第一次实验开始。换溶液再测会多一根柱，不带入历史记录。
+            </p>
           </div>
         </div>
         <SolutionCompare
-          api={bridge.api}
           status={status}
           experimentId={experimentId}
           sampleId={displayedSample}

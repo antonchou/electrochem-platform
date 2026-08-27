@@ -213,14 +213,18 @@ test('I-V 主图：恒压模拟不强制给出线性结论，仍给出平均电�
   await expect(page.getByTestId('iv-kappa')).not.toHaveText('--');
 });
 
-test('溶液比较：使用本次样品名，不插入虚构蒸馏水', async ({ page }) => {
+test('溶液比较：从本页第一次实验起算，不带入历史样品', async ({ page }) => {
+  await expect(page.getByTestId('compare-empty')).toBeVisible();
   await page.getByTestId('input-sample').fill('NACL_010');
   await page.getByTestId('btn-start').click();
   await waitForPoints(page, 8);
+  await expect(page.getByTestId('stat-exc-freq')).toContainText('交流');
   await page.getByTestId('btn-stop').click();
   await expect(page.getByTestId('solution-compare')).toBeVisible();
   await expect(page.getByTestId('compare-table')).toContainText('NACL_010');
   await expect(page.getByTestId('compare-table')).not.toContainText('蒸馏水');
+  // 同一后端库里 F07 等用例已经写过 BLANK；比较图不得把那些历史柱带进来
+  await expect(page.getByTestId('compare-table')).not.toContainText('BLANK');
   await expect(page.getByTestId('compare-simulated-note')).toBeVisible();
 });
 
