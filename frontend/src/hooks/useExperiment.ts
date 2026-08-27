@@ -45,7 +45,7 @@ export function useExperiment(bridge: ExperimentBridge) {
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
       if (ev.type === 'status') {
-        applyCurrent({ status: ev.status });
+        applyCurrent({ status: ev.status, experiment_id: ev.experiment_id });
         if (ev.status === 'idle' && !ev.message) setActionError(null);
         if (ev.message) setActionError(ev.message);
       }

@@ -269,6 +269,8 @@ def test_frames_persist_and_export(client):
     body = json_resp.json()
     assert len(body["frames"]) >= 3
     assert body["frames"][0]["sensor_path_id"] == "BA121S_LOW"
+    assert body["truncated"] is False
+    assert body["frame_count_total"] == len(body["frames"])
 
 
 def test_experiment_404(client):
