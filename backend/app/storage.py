@@ -9,12 +9,14 @@
 from __future__ import annotations
 
 import csv
+import datetime
 import io
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 # 仓库约定：原始数据不可变，统一存 data/raw/（backend/app/storage.py → 仓库根/data/raw/ec.db）
 DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "ec.db"
@@ -268,7 +270,7 @@ END;
 """
 
 
-def _conn() -> sqlite3.Connection:
+def _connect() -> sqlite3.Connection:
     db = _db_path()
     Path(db).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db, timeout=15)
@@ -276,6 +278,20 @@ def _conn() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+@contextmanager
+def _conn() -> Iterator[sqlite3.Connection]:
+    """Open a connection, commit on success, always close (P2-1)."""
+    conn = _connect()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
@@ -286,7 +302,7 @@ def init_db() -> None:
     - 迁移内禁用 executescript（会隐式提交），全部用 execute 逐条执行；
     - 新增迁移必须同时提供「旧库升级」测试（tests/test_migrations.py）。
     """
-    conn = _conn()
+    conn = _connect()
     try:
         _apply_migrations(conn)
         conn.commit()
@@ -598,6 +614,7 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
     if not frames:
         return
     rows = [{col: f.get(col) for col in _FRAME_COLUMNS} for f in frames]
+    measured = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     with _conn() as conn:
         conn.executemany(_INSERT_FRAMES_SQL, rows)
         # 必须按完整样品链路聚合；同一样品编号可能同时走 WIDE/NARROW 等不同通道。
@@ -606,14 +623,19 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
             sample_id = f.get("sample_id")
             if sample_id is None:
                 continue
-            key = (f["experiment_id"], sample_id, f["sensor_path_id"])
+            sensor_path_id = f.get("sensor_path_id") or ""
+            key = (f["experiment_id"], sample_id, sensor_path_id)
             counts[key] = counts.get(key, 0) + 1
         for (exp_id, sample_id, sensor_path_id), n in counts.items():
             conn.execute(
-                """UPDATE samples
-                   SET frame_count = frame_count + ?
-                   WHERE experiment_id = ? AND sample_id = ? AND sensor_path_id = ?""",
-                (n, exp_id, sample_id, sensor_path_id),
+                """
+                INSERT INTO samples
+                    (experiment_id, sample_id, sensor_path_id, measured_at_utc, frame_count)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(experiment_id, sample_id, sensor_path_id) DO UPDATE SET
+                    frame_count = frame_count + excluded.frame_count
+                """,
+                (exp_id, sample_id, sensor_path_id, measured, n),
             )
 
 
@@ -844,6 +866,10 @@ def insert_fit_results(
     """Persist one fit run (one row per model)."""
     ids: List[int] = []
     with _conn() as conn:
+        conn.execute(
+            "DELETE FROM fit_results WHERE experiment_id = ? AND x_axis = ?",
+            (experiment_id, x_axis),
+        )
         for item in models:
             cur = conn.execute(
                 """
@@ -894,12 +920,10 @@ def get_fit_results(experiment_id: int) -> List[Dict[str, Any]]:
 
 
 def write_fit_report(experiment_id: int, payload: Dict[str, Any]) -> str:
-    """Write a derived JSON report under data/derived/ (gitignored)."""
-    import datetime
-
+    """Write a derived JSON report under data/derived/ (gitignored). Overwrites per experiment+axis."""
     root = Path(os.environ.get("EC_DERIVED_DIR", str(DEFAULT_DERIVED_DIR)))
     root.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    path = root / f"experiment_{experiment_id}_fit_{stamp}.json"
+    axis = str(payload.get("x_axis") or "time")
+    path = root / f"experiment_{experiment_id}_fit_{axis}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(path)

@@ -45,6 +45,17 @@ def test_frame_count_isolated_by_sensor_path(tmp_path, monkeypatch):
     assert samples == {"WIDE": 1, "NARROW": 0}
 
 
+def test_insert_frames_upserts_missing_sample(tmp_path, monkeypatch):
+    """P0-2：帧写入时样品行不存在则补建并累计 frame_count。"""
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "upsert-count.db"))
+    storage.init_db()
+    exp_id = storage.create_experiment("EXP-UPSERT", "upsert")
+    storage.insert_frames([_frame(exp_id, "WIDE")])
+    storage.insert_frames([_frame(exp_id, "WIDE")])
+    samples = {item["sensor_path_id"]: item["frame_count"] for item in storage.get_samples(exp_id)}
+    assert samples == {"WIDE": 2}
+
+
 def test_experiment_and_sample_creation_rolls_back_together(tmp_path, monkeypatch):
     monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "atomic.db"))
     storage.init_db()

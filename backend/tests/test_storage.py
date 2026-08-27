@@ -62,9 +62,11 @@ def test_raw_frames_append_only(store):
 
     # sqlite 对触发器 RAISE(ABORT) 的错误类型在不同版本可能是 OperationalError 或 IntegrityError
     with pytest.raises((sqlite3.OperationalError, sqlite3.IntegrityError)):
-        store._conn().execute("UPDATE raw_frames SET ec_raw = 999 WHERE experiment_id = ?", (eid,))
+        with store._conn() as conn:
+            conn.execute("UPDATE raw_frames SET ec_raw = 999 WHERE experiment_id = ?", (eid,))
     with pytest.raises((sqlite3.OperationalError, sqlite3.IntegrityError)):
-        store._conn().execute("DELETE FROM raw_frames WHERE experiment_id = ?", (eid,))
+        with store._conn() as conn:
+            conn.execute("DELETE FROM raw_frames WHERE experiment_id = ?", (eid,))
 
     # 数据仍然完好
     assert store.count_frames(eid) == 1
@@ -182,3 +184,28 @@ def test_calibration_and_frame_trace_columns(store):
     recs = store.get_calibration_records(eid)
     assert recs[0]["calibration_id"] == "MOCK-KCELL-1.0"
     assert recs[0]["coeff_value"] == 1.0
+
+
+def test_fit_results_replace_same_axis(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DERIVED_DIR", str(tmp_path / "derived"))
+    eid = store.create_experiment("EXP-FIT", "fit")
+    model = {
+        "model": "linear",
+        "label": "线性",
+        "params": {"a": 1},
+        "r2": 0.9,
+        "rmse": 0.1,
+        "n": 5,
+    }
+    store.insert_fit_results(eid, "time", [{**model, "r2": 0.9}])
+    store.insert_fit_results(eid, "time", [{**model, "r2": 0.99}])
+    store.insert_fit_results(eid, "temperature", [{**model, "model": "arrhenius", "r2": 0.8}])
+    rows = store.get_fit_results(eid)
+    time_rows = [r for r in rows if r["x_axis"] == "time"]
+    assert len(time_rows) == 1
+    assert time_rows[0]["r2"] == 0.99
+    assert len([r for r in rows if r["x_axis"] == "temperature"]) == 1
+    path = store.write_fit_report(eid, {"x_axis": "time", "models": []})
+    assert path.endswith("experiment_%s_fit_time.json" % eid)
+    store.write_fit_report(eid, {"x_axis": "time", "models": [{"n": 1}]})
+    assert len(list((tmp_path / "derived").glob("*.json"))) == 1
