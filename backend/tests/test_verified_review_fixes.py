@@ -153,6 +153,43 @@ def test_lifespan_aborts_leaked_run_and_resets_state(tmp_path, monkeypatch):
     assert storage.get_experiment(exp_id)["status"] == "aborted"
 
 
+def test_persist_failure_is_visible_and_stop_still_finishes(tmp_path, monkeypatch):
+    """P0-1/P1-2：insert 失败后 health 降级，stop 仍能 finish，不把实验留在 running。"""
+    import time
+
+    from app import routes
+
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "persist-degraded.db"))
+    monkeypatch.setenv("EC_ENABLE_DEBUG_ENDPOINTS", "1")
+    with TestClient(app) as client:
+        start = client.post("/api/experiment/start")
+        assert start.json()["ok"] is True
+        exp_id = start.json()["experiment_id"]
+        time.sleep(0.25)
+
+        def boom(_batch: list[dict]) -> None:
+            raise sqlite3.OperationalError("injected persist failure")
+
+        monkeypatch.setattr(storage, "insert_frames", boom)
+        time.sleep(0.8)
+
+        health = client.get("/health").json()
+        assert health["status"] == "ok"
+        assert health["persistence"] == "degraded"
+        assert "injected persist failure" in (health.get("persistence_error") or "")
+
+        stop = client.post("/api/experiment/stop")
+        assert stop.status_code == 200
+        body = stop.json()
+        assert body["ok"] is True
+        assert body["status"] == "stopped"
+        assert "落库失败" in (body.get("message") or "")
+        assert storage.get_experiment(exp_id)["status"] == "stopped"
+        assert persist.degraded is True
+
+    routes._reset_persist_notice()
+
+
 def test_persist_insert_failure_stops_accepting(monkeypatch):
     async def scenario() -> None:
         service = PersistService()
@@ -167,7 +204,9 @@ def test_persist_insert_failure_stops_accepting(monkeypatch):
         with pytest.raises(sqlite3.OperationalError, match="injected persist failure"):
             await service.flush()
         assert service._accepting is False
-        service.enqueue_frame({"seq": 2})
+        assert service.degraded is True
+        assert service.snapshot()["persistence"] == "degraded"
+        assert service.enqueue_frame({"seq": 2}) is False
         await service.stop()
 
     asyncio.run(scenario())
