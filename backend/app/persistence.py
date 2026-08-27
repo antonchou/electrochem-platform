@@ -75,9 +75,22 @@ class PersistService:
             await task
         await completed
 
-    def enqueue_frame(self, frame: Dict[str, Any]) -> None:
+    @property
+    def degraded(self) -> bool:
+        """True after a batch insert failed; further frames are refused."""
+        return self._error is not None
+
+    def snapshot(self) -> dict[str, str | None]:
+        if self._error is None:
+            return {"persistence": "ok", "persistence_error": None}
+        return {"persistence": "degraded", "persistence_error": str(self._error)}
+
+    def enqueue_frame(self, frame: Dict[str, Any]) -> bool:
+        """Queue a frame. False means it will never be written (queue closed or prior failure)."""
         if self._accepting and self._queue is not None:
             self._queue.put_nowait(frame)
+            return True
+        return False
 
     async def _commit_batch(self, batch: List[Dict[str, Any]]) -> None:
         """Write one batch. On failure, stop accepting so RAM cannot grow unbounded."""

@@ -46,7 +46,8 @@ export function useExperiment(bridge: ExperimentBridge) {
     const unsub = bridge.subscribe((ev) => {
       if (ev.type === 'status') {
         applyCurrent({ status: ev.status });
-        if (ev.status === 'idle') setActionError(null);
+        if (ev.status === 'idle' && !ev.message) setActionError(null);
+        if (ev.message) setActionError(ev.message);
       }
       if (ev.type === 'message') {
         setStatus(ev.frame.status);
@@ -74,6 +75,7 @@ export function useExperiment(bridge: ExperimentBridge) {
           setStatus(res.status);
           return res;
         }
+        if (res.message) setActionError(res.message);
         setStatus(res.status);
         if (action === 'start') {
           if (!res.resumed) setStartedAt(new Date());
