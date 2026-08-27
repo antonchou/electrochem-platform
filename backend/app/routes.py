@@ -42,6 +42,7 @@ _driver: Optional[DeviceDriver] = None
 _sample_period_seconds = 0.1
 _lifecycle_lock = asyncio.Lock()
 _persist_notice_sent = False
+_quiet_incomplete_flags: set[tuple[str, ...]] = set()
 
 PERSIST_DEGRADED_MESSAGE = "落库失败：实时曲线仍在更新，但历史和导出将缺帧。"
 
@@ -184,10 +185,7 @@ async def _acquisition_loop() -> None:
                 ):
                     continue
                 if not reading.complete_for_conductivity and not reading.complete_for_iv:
-                    logger.warning(
-                        "设备读数不完整，跳过本周期: flags=%s",
-                        reading.quality_flags,
-                    )
+                    _log_incomplete_reading(reading.quality_flags)
                     await asyncio.sleep(_sample_period_seconds)
                     continue
                 frame = _build_frame(elapsed, reading)
@@ -337,9 +335,22 @@ async def _notify_persist_degraded() -> None:
     )
 
 
+def _log_incomplete_reading(flags: tuple[str, ...]) -> None:
+    """EOF/EMPTY 只 info 一次；其它不完整读数每次 warning。"""
+    quiet = "EOF" in flags or "EMPTY" in flags
+    if quiet:
+        if flags in _quiet_incomplete_flags:
+            return
+        _quiet_incomplete_flags.add(flags)
+        logger.info("回放结束或无数据，后续静默: flags=%s", flags)
+        return
+    logger.warning("设备读数不完整，跳过本周期: flags=%s", flags)
+
+
 def _reset_persist_notice() -> None:
     global _persist_notice_sent
     _persist_notice_sent = False
+    _quiet_incomplete_flags.clear()
 
 
 async def _flush_frames_best_effort() -> bool:

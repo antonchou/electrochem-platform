@@ -24,6 +24,7 @@ class ExperimentState:
         self.sensor_path_id: str = DEFAULT_SENSOR_PATH_ID
         self.calibration_id: Optional[str] = None
         self.seq_no: int = 0
+        self._paused_at: Optional[float] = None
 
     async def start(
         self,
@@ -45,6 +46,7 @@ class ExperimentState:
                 return False
             self.status = "running"
             self.t0 = time.monotonic()
+            self._paused_at = None
             self.seq_no = 0
             self.sample_id = sample_id
             self.sensor_path_id = sensor_path_id
@@ -58,22 +60,28 @@ class ExperimentState:
             changed = self.status == "running"
             if changed:
                 self.status = "stopped"
+                self._paused_at = time.monotonic()
             return changed
 
     async def resume(self) -> bool:
-        """stopped → running，保留 t0 / seq_no / 实验上下文（暂停后续跑）。"""
+        """stopped → running，保留 seq_no / 实验上下文；扣除暂停墙钟，elapsed 从停点续上。"""
         async with self.lock:
             if self.status != "stopped" or self.experiment_db_id is None:
                 return False
-            self.status = "running"
+            now = time.monotonic()
             if self.t0 is None:
-                self.t0 = time.monotonic()
+                self.t0 = now
+            elif self._paused_at is not None:
+                self.t0 += now - self._paused_at
+            self._paused_at = None
+            self.status = "running"
             return True
 
     async def reset(self) -> None:
         async with self.lock:
             self.status = "idle"
             self.t0 = None
+            self._paused_at = None
             self.experiment_db_id = None
             self.experiment_uid = None
             self.calibration_id = None
@@ -83,10 +91,11 @@ class ExperimentState:
         return self.seq_no
 
     def elapsed(self) -> float:
-        """实验已运行秒数（running 状态才有意义）。"""
+        """实验已运行秒数（不含暂停墙钟）。"""
         if self.t0 is None:
             return 0.0
-        return time.monotonic() - self.t0
+        end = self._paused_at if self.status != "running" and self._paused_at is not None else time.monotonic()
+        return max(0.0, end - self.t0)
 
 
 state = ExperimentState()
