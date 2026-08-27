@@ -1,6 +1,7 @@
 """实验状态单例。模拟数据源与真实后端解耦：真实后端接入后本模块被替换，前端协议不变。"""
 
 import asyncio
+import threading
 import time
 from typing import Optional
 
@@ -24,6 +25,7 @@ class ExperimentState:
         self.sensor_path_id: str = DEFAULT_SENSOR_PATH_ID
         self.calibration_id: Optional[str] = None
         self.seq_no: int = 0
+        self._seq_lock = threading.Lock()
         self._paused_at: Optional[float] = None
 
     async def start(
@@ -87,8 +89,10 @@ class ExperimentState:
             self.calibration_id = None
 
     def next_seq(self) -> int:
-        self.seq_no += 1
-        return self.seq_no
+        """Monotonic seq for the current experiment. Safe if a second task appears."""
+        with self._seq_lock:
+            self.seq_no += 1
+            return self.seq_no
 
     def elapsed(self) -> float:
         """实验已运行秒数（不含暂停墙钟）。"""
