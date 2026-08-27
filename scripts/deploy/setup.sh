@@ -14,8 +14,19 @@ fi
 PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 DEPLOY_USER="$(id -un)"
 DEPLOY_HOME="${HOME}"
+EC_BIND="${EC_BIND:-127.0.0.1}"
+case "$EC_BIND" in
+  127.0.0.1 | 0.0.0.0 | localhost) ;;
+  *)
+    if [[ ! "$EC_BIND" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      echo "错误：无效 EC_BIND=${EC_BIND}（允许 127.0.0.1、0.0.0.0、localhost 或 IPv4）"
+      exit 1
+    fi
+    ;;
+esac
 echo "==> 项目目录: $PROJECT_DIR"
 echo "==> 部署用户: $DEPLOY_USER"
+echo "==> 监听地址: ${EC_BIND}:8000"
 
 # ---------- 1. 前端依赖与构建 ----------
 echo "[1/3] 构建前端到 frontend/dist（由后端 :8000 托管）"
@@ -53,6 +64,7 @@ echo "[3/3] 安装 systemd 服务（页面 + API + WebSocket 都在 :8000）"
 UNIT_DIR="$(mktemp -d)"
 SVC_BACKEND="${UNIT_DIR}/ec-backend.service"
 
+chmod +x "${PROJECT_DIR}/scripts/run_backend.sh"
 cat > "$SVC_BACKEND" <<EOF
 [Unit]
 Description=EC Experiment (FastAPI + frontend)
@@ -61,7 +73,8 @@ After=network.target
 [Service]
 User=${DEPLOY_USER}
 WorkingDirectory=${PROJECT_DIR}/backend
-ExecStart=${PROJECT_DIR}/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+Environment=EC_BIND=${EC_BIND}
+ExecStart=${PROJECT_DIR}/scripts/run_backend.sh
 Restart=always
 RestartSec=3
 NoNewPrivileges=yes
@@ -83,7 +96,11 @@ fi
 sudo systemctl daemon-reload
 sudo systemctl enable ec-backend
 sudo systemctl restart ec-backend
-echo "    服务已启用并重启：ec-backend → http://127.0.0.1:8000"
+echo "    服务已启用并重启：ec-backend → http://${EC_BIND}:8000"
+if [ "$EC_BIND" = "127.0.0.1" ] || [ "$EC_BIND" = "localhost" ]; then
+  echo "    当前仅本机 Kiosk 可访问。教师机/平板：EC_BIND=0.0.0.0 ./scripts/deploy/setup.sh"
+  echo "    或 sudo systemctl edit ec-backend 增加 Environment=EC_BIND=0.0.0.0 后 restart"
+fi
 
 # ---------- Chromium Kiosk 自启动 ----------
 echo "==> 配置 Chromium Kiosk 自启动"

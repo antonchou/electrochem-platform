@@ -30,7 +30,8 @@ python3 -m venv .venv
 .venv/Scripts/pip install -r requirements.txt    # Windows（生产）
 # Linux/RPi: source .venv/bin/activate && pip install -r requirements.txt
 # 开发/测试：pip install -r requirements-dev.txt
-.venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+# 局域网：EC_BIND=0.0.0.0 ../scripts/run_backend.sh
 ```
 
 原始数据默认落库到 `data/raw/ec.db`（仓库约定 11.1：原始数据不可变，只追加）。
