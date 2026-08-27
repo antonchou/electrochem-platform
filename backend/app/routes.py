@@ -113,7 +113,7 @@ def _measurement_params() -> dict:
         "device_id": getattr(config, "device_id", "MOCK-IV-01"),
         "firmware_version": getattr(config, "firmware_version", "0.1.0"),
         "range_id": getattr(config, "range_id", "WIDE"),
-        "excitation_frequency_hz": getattr(config, "excitation_frequency_hz", 0.0),
+        "excitation_frequency_hz": getattr(config, "excitation_frequency_hz", 1000.0),
         "excitation_amplitude_v": amplitude,
         "compensation_model": getattr(config, "compensation_model", "linear_alpha"),
         "calibration_id": state.calibration_id or storage.DEFAULT_CALIBRATION_ID,

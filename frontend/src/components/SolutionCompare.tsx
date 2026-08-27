@@ -3,9 +3,7 @@ import * as echarts from 'echarts/core';
 import { BarChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
-import type { ApiClient } from '../services/apiClient';
 import type { IVAnalysis } from '../lib/ivAnalysis';
-import { analyzeIV, rawFrameToPoint } from '../lib/ivAnalysis';
 import { formatConductanceS, formatConductivityUsCm, formatOhms } from '../lib/units';
 import styles from './SolutionCompare.module.css';
 
@@ -25,15 +23,12 @@ export interface SolutionRow {
 }
 
 interface Props {
-  api: ApiClient | null;
   status: string;
   experimentId: number | null;
   sampleId: string;
   live: IVAnalysis;
   simulated?: boolean;
 }
-
-const MAX_HISTORY = 8;
 
 function liveRow(
   sampleId: string,
@@ -70,76 +65,48 @@ function fmtR(value: number | null): string {
 
 /**
  * 不同溶液 κ 比较：柱状图 + 表。
- * 只展示后端历史实验与当前测量，不插入虚构的 NaCl/蒸馏水。
+ * 只累计「打开本页之后」做过的实验，不读取历史库，不插入虚构溶液。
  */
 export function SolutionCompare({
-  api,
   status,
   experimentId,
   sampleId,
   live,
   simulated = false,
 }: Props) {
-  const [history, setHistory] = useState<SolutionRow[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [sessionRows, setSessionRows] = useState<SolutionRow[]>([]);
   const chartEl = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
 
   useEffect(() => {
-    if (!api || status === 'running') return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await api.listExperiments();
-        const stopped = list
-          .filter((item) => item.status === 'stopped' || item.status === 'aborted')
-          .slice(0, MAX_HISTORY);
-        const rows = await Promise.all(
-          stopped.map(async (item) => {
-            const [detail, frames] = await Promise.all([
-              api.getExperiment(item.id),
-              api.getFrames(item.id, 4000).catch(() => []),
-            ]);
-            const sample = detail.samples[0];
-            const analysis = analyzeIV(frames.map(rawFrameToPoint));
-            const flags = frames.map((f) => f.quality_flags ?? '').join('|');
-            const kappa =
-              sample?.representative_value ?? sample?.k25_median ?? analysis.kappa25 ?? null;
-            return {
-              key: `exp-${item.id}`,
-              experimentId: item.id,
-              solutionName: sample?.sample_id || item.sample_id || `实验 ${item.id}`,
-              conductanceS: analysis.conductanceS,
-              resistanceOhm: analysis.resistanceOhm,
-              kappa25: kappa,
-              temperatureC: analysis.meanTemperature,
-              r2: analysis.linearOk ? analysis.r2 : null,
-              isCurrent: experimentId === item.id,
-              simulated: flags.includes('SIMULATED'),
-            } satisfies SolutionRow;
-          }),
-        );
-        if (!cancelled) {
-          setHistory(rows);
-          setLoadError(null);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setHistory([]);
-          setLoadError(err instanceof Error ? err.message : '无法读取历史溶液');
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [api, status, experimentId]);
+    if (status !== 'stopped') return;
+    const row = liveRow(sampleId, experimentId, live, simulated);
+    if (!row || row.experimentId == null) return;
+    const stored: SolutionRow = { ...row, isCurrent: false, key: `exp-${row.experimentId}` };
+    setSessionRows((prev) => {
+      const index = prev.findIndex((item) => item.experimentId === stored.experimentId);
+      if (index === -1) return [...prev, stored];
+      const next = prev.slice();
+      next[index] = stored;
+      return next;
+    });
+  }, [status, experimentId, sampleId, simulated, live]);
 
   const rows = useMemo(() => {
     const current = liveRow(sampleId, experimentId, live, simulated);
-    const withoutCurrent = history.filter((row) => row.experimentId !== experimentId);
-    return current ? [current, ...withoutCurrent] : withoutCurrent;
-  }, [history, live, sampleId, experimentId, simulated]);
+    const ordered: SolutionRow[] = [];
+    const seen = new Set<number | null>();
+    for (const row of sessionRows) {
+      if (current && row.experimentId === current.experimentId) {
+        ordered.push(current);
+      } else {
+        ordered.push({ ...row, isCurrent: false });
+      }
+      seen.add(row.experimentId);
+    }
+    if (current && !seen.has(current.experimentId)) ordered.push(current);
+    return ordered;
+  }, [sessionRows, live, sampleId, experimentId, simulated]);
 
   const names = useMemo(() => {
     const seen = new Map<string, number>();
@@ -225,18 +192,14 @@ export function SolutionCompare({
 
   return (
     <div className={styles.wrap} data-testid="solution-compare">
-      {!api && (
-        <p className={styles.hint}>浏览器模拟模式没有历史溶液接口，这里只显示本次测量。</p>
-      )}
-      {loadError && <p className={styles.hint}>{loadError}</p>}
       {!hasBars && (
         <p className={styles.hint} data-testid="compare-empty">
-          完成至少一次实验后，不同溶液会出现在这里。不会用模拟溶液冒充实测。
+          从打开本页后的第一次实验开始比较。换溶液再测，这里会多一根柱；不会带入历史记录。
         </p>
       )}
       {anySimulated && hasBars && (
         <p className={styles.warn} data-testid="compare-simulated-note">
-          当前数据源含 SIMULATED 标记，柱状图来自本机已完成的实验，不是真实电极测量。
+          当前数据源含 SIMULATED 标记，柱状图只含本页打开后测过的溶液，不是真实电极测量。
         </p>
       )}
       <div ref={chartEl} className={styles.chart} data-testid="compare-chart" />
