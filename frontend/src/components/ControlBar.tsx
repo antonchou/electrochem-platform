@@ -9,6 +9,8 @@ interface Props {
   onStart: () => void;
   onStop: () => void;
   onReset: () => void;
+  canClear?: boolean;
+  onClear?: () => void;
 }
 
 /** 实验控制按钮组：运行中禁用"开始"防止重复触发；停止后「开始」续跑，重新开始才开新实验 */
@@ -21,6 +23,8 @@ export function ControlBar({
   onStart,
   onStop,
   onReset,
+  canClear,
+  onClear,
 }: Props) {
   return (
     <div className={styles.bar}>
@@ -51,6 +55,17 @@ export function ControlBar({
       >
         重新开始
       </button>
+      {onClear && (
+        <button
+          type="button"
+          data-testid="btn-clear"
+          className={styles.btn}
+          onClick={onClear}
+          disabled={!canClear || busy}
+        >
+          清空数据
+        </button>
+      )}
     </div>
   );
 }
