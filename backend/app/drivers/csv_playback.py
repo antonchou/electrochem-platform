@@ -8,6 +8,7 @@ COMPUTE_INVALID），原始 U/I/T 仍落库（Raw 层不可变），Derived 层�
 
 from __future__ import annotations
 
+import bisect
 import csv
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,7 @@ class CsvPlaybackDriver(DeviceDriver):
         self.config = config
         self._connected = False
         self._rows: List[Tuple[float, float, float, float]] = []
+        self._times: List[float] = []
         self._max_t = 0.0
 
     @property
@@ -78,6 +80,7 @@ class CsvPlaybackDriver(DeviceDriver):
             raise ValueError(f"no valid rows in {path}")
         rows.sort(key=lambda r: r[0])
         self._rows = rows
+        self._times = [r[0] for r in rows]
         self._max_t = rows[-1][0]
         self._connected = True
 
@@ -95,13 +98,10 @@ class CsvPlaybackDriver(DeviceDriver):
             if not self.config.loop:
                 return DriverReading(ec=None, temperature=None, quality_flags=("CSV", "EOF"))
             t_eff = t_eff % (self._max_t + 1e-9)
-        # 取时间戳 ≤ t_eff 的最近一行（线性外推需求简单，直接取最近）
-        chosen = rows[0]
-        for r in rows:
-            if r[0] > t_eff:
-                break
-            chosen = r
-        _, v, i, temp = chosen
+        idx = bisect.bisect_right(self._times, t_eff) - 1
+        if idx < 0:
+            idx = 0
+        _, v, i, temp = rows[idx]
         return DriverReading(
             ec=None,
             temperature=temp,
