@@ -154,6 +154,7 @@ def test_ws_stream_protocol(client):
         } <= set(data)
         assert data["calibration_id"] == "MOCK-KCELL-1.0"
         assert data["compensation_model"] == "linear_alpha"
+        assert data["excitation_frequency_hz"] == 1000.0
         assert data["status"] == "running"
         assert data["ec"] is not None
         assert data["kappa_25_us_cm"] is not None

@@ -1,3 +1,4 @@
+import { formatExcitationHz } from '../lib/units';
 import styles from './DataStats.module.css';
 
 interface Props {
@@ -48,9 +49,9 @@ export function DataStats({
       )}
       {excitationFreqHz != null && Number.isFinite(excitationFreqHz) && (
         <div className={styles.item}>
-          <span className={styles.label}>激励频率</span>
+          <span className={styles.label}>激励</span>
           <span className={styles.value} data-testid="stat-exc-freq">
-            {excitationFreqHz === 0 ? '直流' : `${excitationFreqHz.toFixed(1)} Hz`}
+            {formatExcitationHz(excitationFreqHz)}
           </span>
         </div>
       )}
