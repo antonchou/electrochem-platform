@@ -104,6 +104,10 @@ class SimulatorConfig:
     device_id: str = "SIM-IV-01"
     firmware_version: str = "0.1.0"
     range_id: str = "SIM"
+    calibration_id: str | None = "SIM-KCELL-1.0"
+    calibration_standard: str | None = "simulated cell_constant; not a lab standard"
+    calibration_lot: str | None = "SIMULATED"
+    calibration_claimed: bool = False
     # Effects (mode presets if omitted)
     voltage_noise_v: float = 0.0003
     current_noise_a: float = 1.0e-6

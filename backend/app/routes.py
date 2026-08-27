@@ -115,8 +115,7 @@ async def stop_acquisition() -> None:
 def _measurement_params() -> dict:
     """取当前驱动的 I–V 计算参数（电池常数/温补系数/协议元数据）。
 
-    真实硬件驱动接入后从驱动配置读取；Mock 从 MockDeviceConfig 读取。
-    缺省使用标准值，保证旧/测试驱动也能走通。
+    校准溯源字段来自驱动 config，不再默认写成 KCl 1413。
     """
     config = getattr(_driver, "config", None)
     cell = getattr(config, "cell_constant_per_cm", 1.0)
@@ -124,6 +123,13 @@ def _measurement_params() -> dict:
     amplitude = getattr(config, "excitation_amplitude_v", None)
     if amplitude is None:
         amplitude = getattr(config, "excitation_voltage_v", 1.0)
+    driver_cal_id = getattr(config, "calibration_id", None)
+    if isinstance(driver_cal_id, str):
+        driver_cal_id = driver_cal_id.strip() or None
+    claimed = getattr(config, "calibration_claimed", None)
+    if claimed is None:
+        claimed = bool(driver_cal_id) and driver_cal_id != "UNCALIBRATED"
+    cal_id = state.calibration_id if state.calibration_id is not None else driver_cal_id
     return {
         "cell_constant_per_cm": cell,
         "alpha_per_c": alpha,
@@ -133,8 +139,25 @@ def _measurement_params() -> dict:
         "excitation_frequency_hz": getattr(config, "excitation_frequency_hz", 1000.0),
         "excitation_amplitude_v": amplitude,
         "compensation_model": getattr(config, "compensation_model", "linear_alpha"),
-        "calibration_id": state.calibration_id or storage.DEFAULT_CALIBRATION_ID,
+        "driver_calibration_id": driver_cal_id,
+        "calibration_id": cal_id,
+        "calibration_standard": getattr(config, "calibration_standard", None),
+        "calibration_lot": getattr(config, "calibration_lot", None),
+        "calibration_claimed": bool(claimed),
+        "calibration_mode": getattr(config, "calibration_mode", None)
+        or ("cell_constant" if claimed else "none"),
     }
+
+
+def _join_flags(*parts: str | None) -> str | None:
+    tokens: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        for token in str(part).split("|"):
+            if token and token not in tokens:
+                tokens.append(token)
+    return "|".join(tokens) if tokens else None
 
 
 async def _acquisition_loop() -> None:
@@ -194,7 +217,8 @@ def _build_frame(elapsed: float, reading) -> dict:
     - 读数只有 ec/temperature（旧驱动或 dropout 后仍完整）：回退 V1 简化帧。
     """
     params = _measurement_params()
-    quality = "|".join(reading.quality_flags) or None
+    uncal = None if params.get("calibration_claimed") else "UNCALIBRATED"
+    quality = _join_flags("|".join(reading.quality_flags), uncal)
     base = {
         "timestamp": round(elapsed, 2),
         "temperature": reading.temperature,
@@ -231,7 +255,7 @@ def _build_frame(elapsed: float, reading) -> dict:
                 "conductance_s": None,
                 "kappa_t_us_cm": None,
                 "kappa_25_us_cm": None,
-                "quality_flags": (quality + "|" if quality else "") + "COMPUTE_INVALID",
+                "quality_flags": _join_flags(quality, "COMPUTE_INVALID"),
             }
         return {
             **base,
@@ -385,9 +409,9 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
         sensor_path_id = body.sensor_path_id or DEFAULT_SENSOR_PATH_ID
         title = body.title or "不同溶液导电性相对比较"
         uid = f"EXP-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:4]}"
-        cal_id = os.environ.get("EC_CALIBRATION_ID", storage.DEFAULT_CALIBRATION_ID).strip() or (
-            storage.DEFAULT_CALIBRATION_ID
-        )
+        params = _measurement_params()
+        env_cal = os.environ.get("EC_CALIBRATION_ID", "").strip()
+        cal_id = env_cal or params.get("driver_calibration_id")
 
         # 实验与样品在一个 SQLite 事务中创建。数据库失败时内存态不会进入 running，
         # 并发 start 也由本锁串行化，避免遗留空的 running/idle 历史记录。
@@ -407,27 +431,29 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
             },
         )
 
-        params = _measurement_params()
         try:
-            await persist.insert_calibration_record(
-                experiment_id=exp_id,
-                calibration_id=cal_id,
-                sensor_path_id=sensor_path_id,
-                mode="cell_constant",
-                standard="KCl 1413 uS/cm @ 25C (simulated)",
-                lot="SIMULATED",
-                coeff_value=params["cell_constant_per_cm"],
-                coeff_json={
-                    "cell_constant_per_cm": params["cell_constant_per_cm"],
-                    "alpha_per_c": params["alpha_per_c"],
-                    "compensation_model": params["compensation_model"],
-                    "excitation_frequency_hz": params["excitation_frequency_hz"],
-                    "excitation_amplitude_v": params["excitation_amplitude_v"],
-                    "device_id": params["device_id"],
-                    "firmware_version": params["firmware_version"],
-                    "range_id": params["range_id"],
-                },
-            )
+            if cal_id:
+                claimed = bool(params.get("calibration_claimed"))
+                await persist.insert_calibration_record(
+                    experiment_id=exp_id,
+                    calibration_id=cal_id,
+                    sensor_path_id=sensor_path_id,
+                    mode=params.get("calibration_mode") or ("cell_constant" if claimed else "none"),
+                    standard=params.get("calibration_standard"),
+                    lot=params.get("calibration_lot"),
+                    coeff_value=params["cell_constant_per_cm"] if claimed else None,
+                    coeff_json={
+                        "cell_constant_per_cm": params["cell_constant_per_cm"],
+                        "alpha_per_c": params["alpha_per_c"],
+                        "compensation_model": params["compensation_model"],
+                        "excitation_frequency_hz": params["excitation_frequency_hz"],
+                        "excitation_amplitude_v": params["excitation_amplitude_v"],
+                        "device_id": params["device_id"],
+                        "firmware_version": params["firmware_version"],
+                        "range_id": params["range_id"],
+                        "calibration_claimed": claimed,
+                    },
+                )
             ok = await state.start(
                 sample_id=sample_id,
                 sensor_path_id=sensor_path_id,
