@@ -30,6 +30,10 @@ class CsvPlaybackConfig:
     excitation_frequency_hz: float = 0.0
     excitation_amplitude_v: float = 1.0
     compensation_model: str = "linear_alpha"
+    calibration_id: str | None = "UNCALIBRATED"
+    calibration_standard: str | None = "playback: no calibration claim"
+    calibration_lot: str | None = None
+    calibration_claimed: bool = False
 
     def __post_init__(self) -> None:
         if self.sample_rate_hz <= 0:

@@ -43,6 +43,10 @@ class MockDeviceConfig:
     device_id: str = "MOCK-IV-01"
     firmware_version: str = "0.1.0"
     range_id: str = "WIDE"
+    calibration_id: str | None = "MOCK-KCELL-1.0"
+    calibration_standard: str | None = "KCl 1413 uS/cm @ 25C (simulated)"
+    calibration_lot: str | None = "SIMULATED"
+    calibration_claimed: bool = True
 
     def __post_init__(self) -> None:
         if self.sample_rate_hz <= 0:
@@ -82,6 +86,10 @@ class MockDeviceConfig:
             "device_id",
             "firmware_version",
             "range_id",
+            "calibration_id",
+            "calibration_standard",
+            "calibration_lot",
+            "calibration_claimed",
         }
         unknown = set(raw) - allowed - {"schema_version", "driver"}
         if unknown:
