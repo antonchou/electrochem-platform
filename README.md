@@ -75,6 +75,7 @@ cd tests/e2e && npm install && E2E_BROWSER=msedge npx playwright test
 
 生产环境由 FastAPI 在 `http://localhost:8000` **同源托管** `frontend/dist`（页面 + API + WebSocket）。
 `npm ci` 只装依赖，还要 `npm run build`（或直接跑 `scripts/deploy/setup.sh`）。
+Kiosk 默认只绑本机；局域网访问：`EC_BIND=0.0.0.0 ./scripts/deploy/setup.sh`。
 
 ```bash
 cd scripts/deploy && chmod +x setup.sh && ./setup.sh

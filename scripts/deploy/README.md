@@ -36,14 +36,15 @@ cd frontend && npm run build     # 生成 dist/
 ```bash
 cd /home/pi/electrochem-platform   # 或你的仓库路径
 chmod +x scripts/deploy/setup.sh
-./scripts/deploy/setup.sh          # 不要加 sudo
+./scripts/deploy/setup.sh          # 不要加 sudo；默认仅本机
+EC_BIND=0.0.0.0 ./scripts/deploy/setup.sh   # 允许局域网平板/教师机访问
 ```
 
 脚本会：
 
 1. 若无 `node_modules` 则 `npm ci`，然后 `npm run build` 写出 `frontend/dist`
 2. 创建 `backend/.venv` 并安装依赖
-3. 安装并重启 **唯一** systemd 服务 `ec-backend`（`127.0.0.1:8000`）
+3. 安装并重启 **唯一** systemd 服务 `ec-backend`（默认 `127.0.0.1:8000`）
 4. 配置 Chromium Kiosk 打开 `http://localhost:8000`
    - Bookworm/Trixie（Labwc）：`~/.config/labwc/autostart`
    - 旧版 LXDE/X11：`~/.config/autostart/ec-kiosk.desktop`
@@ -73,5 +74,17 @@ cd frontend && npm run dev
 
 ## 说明
 
-- 服务只绑本机。Kiosk 走 localhost；若要局域网访问，自行加防火墙 / 反代，不要把控制面裸绑 `0.0.0.0`。
+- 默认 `EC_BIND=127.0.0.1`，只有本机 Kiosk 能打开页面（控制面不裸露到局域网）。
+- 教学需要平板/教师机访问同一台树莓派时：
+
+```bash
+EC_BIND=0.0.0.0 ./scripts/deploy/setup.sh
+# 或安装后：
+sudo systemctl edit ec-backend
+# [Service]
+# Environment=EC_BIND=0.0.0.0
+sudo systemctl restart ec-backend
+```
+
+  前端会按 `window.location.hostname` 连 `:8000` 的 API/WebSocket。无鉴权、无 HTTPS，只用于实验室网。
 - 未配置鉴权与 HTTPS（实验室本机 kiosk）。

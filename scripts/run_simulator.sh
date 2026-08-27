@@ -8,5 +8,4 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export EC_DRIVER="${EC_DRIVER:-simulator}"
 export EC_SIM_CONFIG="${EC_SIM_CONFIG:-$ROOT/configs/devices/simulator.example.json}"
-cd "$ROOT/backend"
-exec "${ROOT}/backend/.venv/bin/python" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+exec "$ROOT/scripts/run_backend.sh"
