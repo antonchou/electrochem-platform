@@ -44,7 +44,9 @@ _lifecycle_lock = asyncio.Lock()
 _persist_notice_sent = False
 _quiet_incomplete_flags: set[tuple[str, ...]] = set()
 
-PERSIST_DEGRADED_MESSAGE = "落库失败：实时曲线仍在更新，但历史和导出将缺帧。"
+PERSIST_DEGRADED_MESSAGE = (
+    "落库失败：实时曲线仍在更新，但历史和导出将缺帧。请重启后端恢复落库。"
+)
 
 
 async def broadcast(payload: dict) -> int:
@@ -318,21 +320,29 @@ def _enqueue_frame(frame: dict) -> bool:
     return persist.enqueue_frame(_frame_to_row(frame))
 
 
+def _persist_degraded_payload() -> dict:
+    """状态帧：晚连/刷新客户端与一次性广播共用同一文案。"""
+    snap = persist.snapshot()
+    payload: dict = {
+        "status": state.status,
+        "message": PERSIST_DEGRADED_MESSAGE,
+        "persistence": snap["persistence"],
+    }
+    if state.experiment_db_id is not None:
+        payload["experiment_id"] = state.experiment_db_id
+    return payload
+
+
 async def _notify_persist_degraded() -> None:
-    """WS 告警只发一次，避免 10Hz 刷屏。"""
+    """采集拒帧时广播告警；同一次降级只主动推一次，避免 10Hz 刷屏。
+
+    晚连客户端不依赖这次广播：WebSocket 握手后若仍降级会补发同一状态帧。
+    """
     global _persist_notice_sent
     if _persist_notice_sent:
         return
     _persist_notice_sent = True
-    snap = persist.snapshot()
-    await broadcast(
-        {
-            "status": state.status,
-            "experiment_id": state.experiment_db_id,
-            "message": PERSIST_DEGRADED_MESSAGE,
-            "persistence": snap["persistence"],
-        }
-    )
+    await broadcast(_persist_degraded_payload())
 
 
 def _log_incomplete_reading(flags: tuple[str, ...]) -> None:
@@ -381,6 +391,9 @@ async def ws_stream(ws: WebSocket) -> None:
     """
     await _hub.connect(ws)
     try:
+        # 晚连/刷新：一次性告警可能已发出且当时无订阅者，连接时补发。
+        if persist.degraded:
+            await _hub.send_to(ws, _persist_degraded_payload())
         # 客户端不发送业务消息，这里阻塞等待断连信号
         while True:
             await ws.receive_text()
@@ -407,13 +420,18 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
             exp_id = state.experiment_db_id
             reopened = await persist.reopen_experiment(exp_id)
             if reopened and await state.resume():
+                _reset_persist_notice()
                 await broadcast({"status": "running", "experiment_id": exp_id})
+                if persist.degraded:
+                    await _notify_persist_degraded()
                 return ControlResponse(
                     ok=True,
                     status="running",
                     experiment_id=exp_id,
                     sample_id=state.sample_id,
                     resumed=True,
+                    persistence="degraded" if persist.degraded else None,
+                    message=PERSIST_DEGRADED_MESSAGE if persist.degraded else None,
                 )
 
         sample_id = body.sample_id or DEFAULT_SAMPLE_ID
@@ -482,12 +500,16 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
 
         _reset_persist_notice()
         await broadcast({"status": "running", "experiment_id": exp_id})
+        if persist.degraded:
+            await _notify_persist_degraded()
         return ControlResponse(
             ok=True,
             status="running",
             experiment_id=exp_id,
             sample_id=sample_id,
             resumed=False,
+            persistence="degraded" if persist.degraded else None,
+            message=PERSIST_DEGRADED_MESSAGE if persist.degraded else None,
         )
 
 
@@ -517,6 +539,7 @@ async def stop() -> ControlResponse:
             status=status,
             experiment_id=exp_id,
             message=message,
+            persistence=None if persist_ok else "degraded",
         )
 
 
@@ -570,17 +593,26 @@ async def reset() -> ControlResponse:
             payload["persistence"] = "degraded"
             message = PERSIST_DEGRADED_MESSAGE
         await broadcast(payload)
-        return ControlResponse(ok=True, status="idle", message=message)
+        return ControlResponse(
+            ok=True,
+            status="idle",
+            message=message,
+            persistence=None if persist_ok else "degraded",
+        )
 
 
 @router.get("/api/experiment/current")
 async def current_experiment() -> CurrentExperimentResponse:
     """前端重连后用来恢复 experiment_id / 样品号，避免导出按钮消失。"""
+    snap = persist.snapshot()
+    degraded = snap["persistence"] == "degraded"
     return CurrentExperimentResponse(
         status=state.status,
         experiment_id=state.experiment_db_id,
         sample_id=state.sample_id if state.experiment_db_id is not None else None,
         experiment_uid=state.experiment_uid,
+        persistence=snap["persistence"],
+        message=PERSIST_DEGRADED_MESSAGE if degraded else None,
     )
 
 
