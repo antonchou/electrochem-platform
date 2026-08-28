@@ -51,6 +51,7 @@ export function ExperimentPage() {
     sampleId,
     busy,
     actionError,
+    persistDegraded,
     setActionError,
     start,
     stop,
@@ -107,6 +108,8 @@ export function ExperimentPage() {
   const shownError = actionError ?? error;
   const currentDisplay = latest?.current_raw_a != null ? formatCurrentA(latest.current_raw_a) : null;
   const simulated = latest?.quality_flags?.includes('SIMULATED') ?? false;
+  const persistDropped = latest?.quality_flags?.includes('PERSIST_DROPPED') ?? false;
+  const showPersistWarn = persistDegraded || persistDropped;
   const displayedSample = sampleId || sampleIdInput;
 
   return (
@@ -189,6 +192,12 @@ export function ExperimentPage() {
         实验编号 {experimentId ?? '--'}
         {displayedSample ? ` · 溶液 ${displayedSample}` : ''}
         {simulated ? ' · 模拟设备' : ''}
+        {showPersistWarn ? (
+          <span className={styles.persistWarn} data-testid="persist-degraded-badge">
+            {' '}
+            · 落库失败（请重启后端）
+          </span>
+        ) : null}
       </p>
 
       <section className={styles.values}>
