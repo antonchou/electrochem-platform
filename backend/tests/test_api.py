@@ -398,6 +398,14 @@ def test_short_experiment_skips_qc(client):
 
 # ---------------- Review B-3 / B-4 / B-5 回归 ----------------
 
+def test_stop_when_idle_is_ok_without_message(client):
+    """P2-A：空闲时 stop 是幂等成功，不把提示文案当成错误。"""
+    body = client.post("/api/experiment/stop").json()
+    assert body["ok"] is True
+    assert body["status"] == "idle"
+    assert body.get("message") in (None, "")
+
+
 def test_stop_idempotent_does_not_refresh_ended_at(client):
     """B-4：重复 stop 返回 ok=true，但不再刷新 ended_at_utc。"""
     exp_id = client.post("/api/experiment/start").json()["experiment_id"]
@@ -409,7 +417,7 @@ def test_stop_idempotent_does_not_refresh_ended_at(client):
 
     r2 = client.post("/api/experiment/stop")
     assert r2.json()["ok"] is True
-    assert r2.json()["message"] == "当前没有运行中的实验"
+    assert r2.json().get("message") in (None, "")
 
     second = client.get(f"/api/experiments/{exp_id}").json()
     assert second["status"] == "stopped"
