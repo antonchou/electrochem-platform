@@ -17,14 +17,18 @@ export function useExperiment(bridge: ExperimentBridge) {
   const [sampleId, setSampleId] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [persistDegraded, setPersistDegraded] = useState(false);
 
   const applyCurrent = useCallback(
     (payload: {
       status: ExperimentStatus;
       experiment_id?: number | null;
       sample_id?: string | null;
+      persistence?: string | null;
     }) => {
       setStatus(payload.status);
+      if (payload.persistence === 'degraded') setPersistDegraded(true);
+      else if (payload.persistence === 'ok') setPersistDegraded(false);
       if (payload.status === 'idle') {
         setStartedAt(null);
         setExperimentId(null);
@@ -45,17 +49,25 @@ export function useExperiment(bridge: ExperimentBridge) {
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
       if (ev.type === 'status') {
-        applyCurrent({ status: ev.status, experiment_id: ev.experiment_id });
+        applyCurrent({
+          status: ev.status,
+          experiment_id: ev.experiment_id,
+          persistence: ev.persistence,
+        });
         if (ev.status === 'idle' && !ev.message) setActionError(null);
         if (ev.message) setActionError(ev.message);
       }
       if (ev.type === 'message') {
         setStatus(ev.frame.status);
+        if (ev.frame.quality_flags?.includes('PERSIST_DROPPED')) setPersistDegraded(true);
       }
       if (ev.type === 'connection' && ev.status === 'connected' && bridge.api) {
         bridge.api
           .getCurrentExperiment()
-          .then((cur) => applyCurrent(cur))
+          .then((cur) => {
+            applyCurrent(cur);
+            if (cur.persistence === 'degraded' && cur.message) setActionError(cur.message);
+          })
           .catch(() => {
             /* 重连恢复失败不阻断实时流 */
           });
@@ -75,6 +87,8 @@ export function useExperiment(bridge: ExperimentBridge) {
           setStatus(res.status);
           return res;
         }
+        if (res.persistence === 'degraded') setPersistDegraded(true);
+        else if (res.persistence === 'ok') setPersistDegraded(false);
         if (res.message) setActionError(res.message);
         setStatus(res.status);
         if (action === 'start') {
@@ -129,6 +143,7 @@ export function useExperiment(bridge: ExperimentBridge) {
     sampleId,
     busy,
     actionError,
+    persistDegraded,
     setActionError,
     start,
     stop,
