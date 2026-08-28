@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { errorFromControlResponse } from '../lib/controlError';
 import type { ExperimentStartOptions, ExperimentStatus } from '../types/protocol';
 import type { ExperimentBridge } from '../services';
 
@@ -82,14 +83,14 @@ export function useExperiment(bridge: ExperimentBridge) {
       setActionError(null);
       try {
         const res = await bridge.control(action, options);
+        const banner = errorFromControlResponse(res);
+        if (banner) setActionError(banner);
         if (!res.ok) {
-          setActionError(res.message ?? '控制请求失败');
           setStatus(res.status);
           return res;
         }
         if (res.persistence === 'degraded') setPersistDegraded(true);
         else if (res.persistence === 'ok') setPersistDegraded(false);
-        if (res.message) setActionError(res.message);
         setStatus(res.status);
         if (action === 'start') {
           if (!res.resumed) setStartedAt(new Date());
