@@ -471,6 +471,27 @@ def finish_experiment(experiment_id: int, status: str = "stopped") -> None:
         )
 
 
+def abort_stale_running_experiments() -> int:
+    """把遗留的 running 行标为 aborted。仅在进程启动、内存态为空时调用。
+
+    finish_experiment 失败会被 best-effort 吞掉，历史里会出现 ended_at 为空的
+    running 行。一次性 schema 迁移只跑一遍，下次再失败仍会留下；所以每次
+    persist.start() 都扫一遍。
+    """
+    ended = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    with _conn() as conn:
+        cur = conn.execute(
+            """
+            UPDATE experiments
+               SET status = 'aborted',
+                   ended_at_utc = COALESCE(ended_at_utc, ?)
+             WHERE status = 'running'
+            """,
+            (ended,),
+        )
+        return int(cur.rowcount)
+
+
 # ---------------- 样品 ----------------
 
 def upsert_sample(
