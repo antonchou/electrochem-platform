@@ -64,6 +64,8 @@ export interface CurrentExperiment {
   experiment_id?: number | null;
   sample_id?: string | null;
   experiment_uid?: string | null;
+  persistence?: string | null;
+  message?: string | null;
 }
 
 /** 控制接口的响应 */
@@ -75,6 +77,7 @@ export interface ControlResponse {
   experiment_id?: number;
   sample_id?: string;
   resumed?: boolean;
+  persistence?: string;
 }
 
 /** 历史实验摘要（列表项） */
@@ -240,7 +243,13 @@ export interface DataPoint {
 /** 客户端事件总线（供 hooks 订阅） */
 export type ClientEvent =
   | { type: 'message'; frame: ExperimentFrame }
-  | { type: 'status'; status: ExperimentStatus; experiment_id?: number; message?: string }
+  | {
+      type: 'status';
+      status: ExperimentStatus;
+      experiment_id?: number;
+      message?: string;
+      persistence?: string;
+    }
   | { type: 'connection'; status: ConnectionStatus }
   | { type: 'error'; message: string };
 

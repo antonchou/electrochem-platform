@@ -117,6 +117,7 @@ export class WebSocketClient implements DataClient {
           status: parsed.status,
           experiment_id: 'experiment_id' in parsed ? parsed.experiment_id : undefined,
           message: 'message' in parsed ? parsed.message : undefined,
+          persistence: 'persistence' in parsed ? parsed.persistence : undefined,
         });
       }
     };
