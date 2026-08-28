@@ -45,7 +45,7 @@ test('parses persistence warning on status frames', () => {
   const parsed = parseServerMessage({
     status: 'running',
     experiment_id: 7,
-    message: '落库失败：实时曲线仍在更新，但历史和导出将缺帧。',
+    message: '落库失败：实时曲线仍在更新，但历史和导出将缺帧。请重启后端恢复落库。',
     persistence: 'degraded',
   });
   assert.ok(parsed && !('ec' in parsed));
@@ -53,4 +53,5 @@ test('parses persistence warning on status frames', () => {
   assert.equal(parsed.experiment_id, 7);
   assert.equal(parsed.persistence, 'degraded');
   assert.match(parsed.message ?? '', /落库失败/);
+  assert.match(parsed.message ?? '', /重启后端/);
 });

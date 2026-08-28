@@ -59,6 +59,29 @@ def test_slow_subscriber_drops_oldest_without_blocking_publisher():
     asyncio.run(scenario())
 
 
+def test_send_to_targets_one_subscriber():
+    async def scenario() -> None:
+        hub = BroadcastHub(queue_size=4)
+        first = _SlowWebSocket()
+        second = _SlowWebSocket()
+        first.gate.set()
+        second.gate.set()
+        await hub.connect(first)  # type: ignore[arg-type]
+        await hub.connect(second)  # type: ignore[arg-type]
+
+        assert await hub.send_to(first, {"target": "first"}) is True  # type: ignore[arg-type]
+        for _ in range(20):
+            if first.sent:
+                break
+            await asyncio.sleep(0)
+        assert [json.loads(item) for item in first.sent] == [{"target": "first"}]
+        assert second.sent == []
+
+        await hub.close_all(reason="test complete")
+
+    asyncio.run(scenario())
+
+
 def test_sender_failure_closes_and_removes_subscriber():
     async def scenario() -> None:
         hub = BroadcastHub(queue_size=2)

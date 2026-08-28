@@ -46,6 +46,7 @@ class ControlResponse(BaseModel):
     experiment_id: Optional[int] = None
     sample_id: Optional[str] = None
     resumed: Optional[bool] = None
+    persistence: Optional[str] = None
 
 
 class ExperimentStartRequest(BaseModel):
@@ -107,3 +108,5 @@ class CurrentExperimentResponse(BaseModel):
     experiment_id: Optional[int] = None
     sample_id: Optional[str] = None
     experiment_uid: Optional[str] = None
+    persistence: Optional[str] = None
+    message: Optional[str] = None
