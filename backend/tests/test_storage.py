@@ -36,6 +36,23 @@ def test_experiment_lifecycle(store):
     assert exp["ended_at_utc"] is not None
 
 
+def test_abort_stale_running_experiments_leaves_terminal_rows(store):
+    """P1-B：启动兜底只动 running 行，stopped/aborted 不动。"""
+    leftover = store.create_experiment("EXP-STALE", "leftover")
+    stopped = store.create_experiment("EXP-STOPPED", "done")
+    store.finish_experiment(stopped, "stopped")
+    aborted = store.create_experiment("EXP-ABORTED", "killed")
+    store.finish_experiment(aborted, "aborted")
+
+    assert store.abort_stale_running_experiments() == 1
+    stale = store.get_experiment(leftover)
+    assert stale["status"] == "aborted"
+    assert stale["ended_at_utc"] is not None
+    assert store.get_experiment(stopped)["status"] == "stopped"
+    assert store.get_experiment(aborted)["status"] == "aborted"
+    assert store.abort_stale_running_experiments() == 0
+
+
 def test_raw_frames_append_only(store):
     """REQ-D-001：原始帧只追加，UPDATE/DELETE 均被拒绝。"""
     eid = store.create_experiment("EXP-002", "t", sample_id="S", sensor_path_id="CM2_WIDE")

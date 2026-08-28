@@ -140,6 +140,7 @@ def test_persist_stop_waits_for_inflight_thread_write(monkeypatch):
     async def scenario() -> None:
         service = PersistService()
         monkeypatch.setattr(storage, "init_db", lambda: None)
+        monkeypatch.setattr(storage, "abort_stale_running_experiments", lambda: 0)
         monkeypatch.setattr(storage, "insert_frames", slow_insert)
         await service.start()
         service.enqueue_frame({"seq": 1})
@@ -152,6 +153,28 @@ def test_persist_stop_waits_for_inflight_thread_write(monkeypatch):
         assert inserted == [[{"seq": 1}]]
 
     asyncio.run(scenario())
+
+
+def test_startup_aborts_leftover_running_row(tmp_path, monkeypatch):
+    """P1-B：进程启动时把历史遗留 running 行标 aborted，不影响已结束行与新实验。"""
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "stale-running.db"))
+    storage.init_db()
+    leftover = storage.create_experiment("EXP-STALE", "crash leftover")
+    stopped = storage.create_experiment("EXP-OK", "already stopped")
+    storage.finish_experiment(stopped, "stopped")
+    assert storage.get_experiment(leftover)["status"] == "running"
+    assert storage.get_experiment(leftover)["ended_at_utc"] is None
+
+    with TestClient(app) as client:
+        stale = storage.get_experiment(leftover)
+        assert stale["status"] == "aborted"
+        assert stale["ended_at_utc"] is not None
+        assert storage.get_experiment(stopped)["status"] == "stopped"
+        assert client.get("/health").json()["experiment"] == "idle"
+        started = client.post("/api/experiment/start").json()
+        assert started["ok"] is True
+        assert started["experiment_id"] != leftover
+        client.post("/api/experiment/reset")
 
 
 def test_lifespan_aborts_leaked_run_and_resets_state(tmp_path, monkeypatch):
@@ -207,6 +230,7 @@ def test_persist_insert_failure_stops_accepting(monkeypatch):
     async def scenario() -> None:
         service = PersistService()
         monkeypatch.setattr(storage, "init_db", lambda: None)
+        monkeypatch.setattr(storage, "abort_stale_running_experiments", lambda: 0)
 
         def boom(_batch: list[dict]) -> None:
             raise sqlite3.OperationalError("injected persist failure")
