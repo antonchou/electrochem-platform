@@ -56,6 +56,8 @@ def test_current_experiment_and_default_sensor_path(client):
     idle = client.get("/api/experiment/current").json()
     assert idle["status"] == "idle"
     assert idle["experiment_id"] is None
+    assert idle["persistence"] == "ok"
+    assert idle.get("message") in (None, "")
 
     started = client.post("/api/experiment/start").json()
     current = client.get("/api/experiment/current").json()

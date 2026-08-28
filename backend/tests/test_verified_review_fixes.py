@@ -195,6 +195,8 @@ def test_persist_failure_is_visible_and_stop_still_finishes(tmp_path, monkeypatc
         assert body["ok"] is True
         assert body["status"] == "stopped"
         assert "落库失败" in (body.get("message") or "")
+        assert "重启后端" in (body.get("message") or "")
+        assert body.get("persistence") == "degraded"
         assert storage.get_experiment(exp_id)["status"] == "stopped"
         assert persist.degraded is True
 
@@ -221,3 +223,39 @@ def test_persist_insert_failure_stops_accepting(monkeypatch):
         await service.stop()
 
     asyncio.run(scenario())
+
+
+def test_persist_degraded_visible_to_late_ws_client(tmp_path, monkeypatch):
+    """P1-A：一次性告警发出时无订阅者，晚连 WS 与 /current 仍能感知降级。"""
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "late-ws.db"))
+    with TestClient(app) as client:
+        persist._error = RuntimeError("injected persist failure")
+        persist._accepting = False
+        routes._persist_notice_sent = True
+        try:
+            current = client.get("/api/experiment/current").json()
+            assert current["persistence"] == "degraded"
+            assert "重启后端" in (current.get("message") or "")
+            with client.websocket_connect("/ws/stream") as ws:
+                msg = ws.receive_json()
+                assert "ec" not in msg
+                assert msg["persistence"] == "degraded"
+                assert "重启后端" in (msg.get("message") or "")
+                assert "落库失败" in (msg.get("message") or "")
+        finally:
+            persist._error = None
+            persist._accepting = True
+            routes._reset_persist_notice()
+
+
+def test_resume_resets_persist_notice(tmp_path, monkeypatch):
+    """P2-B：resume 清除一次性告警闩锁，续跑期间可再发降级提示。"""
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "resume-notice.db"))
+    with TestClient(app) as client:
+        client.post("/api/experiment/start")
+        client.post("/api/experiment/stop")
+        routes._persist_notice_sent = True
+        again = client.post("/api/experiment/start")
+        assert again.json()["resumed"] is True
+        assert routes._persist_notice_sent is False
+        client.post("/api/experiment/reset")

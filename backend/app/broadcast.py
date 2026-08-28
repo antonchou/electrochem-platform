@@ -73,6 +73,25 @@ class BroadcastHub:
         if subscriber is not None:
             await self._cancel_sender(subscriber)
 
+    def _enqueue(self, subscriber: _Subscriber, text: str) -> None:
+        if subscriber.queue.full():
+            with suppress(asyncio.QueueEmpty):
+                subscriber.queue.get_nowait()
+                self._dropped_messages += 1
+        subscriber.queue.put_nowait(text)
+
+    async def send_to(self, websocket: WebSocket, payload: dict) -> bool:
+        """Queue one JSON payload for a single subscriber. False if it is gone."""
+        subscriber = self._subscribers.get(websocket)
+        if subscriber is None:
+            return False
+        task = subscriber.sender_task
+        if task is None or task.done():
+            self._subscribers.pop(websocket, None)
+            return False
+        self._enqueue(subscriber, json.dumps(payload, ensure_ascii=False))
+        return True
+
     async def publish(self, payload: dict) -> int:
         """Queue one JSON payload for every connected subscriber.
 
@@ -87,11 +106,7 @@ class BroadcastHub:
             if task is None or task.done():
                 self._subscribers.pop(websocket, None)
                 continue
-            if subscriber.queue.full():
-                with suppress(asyncio.QueueEmpty):
-                    subscriber.queue.get_nowait()
-                    self._dropped_messages += 1
-            subscriber.queue.put_nowait(text)
+            self._enqueue(subscriber, text)
             accepted += 1
         return accepted
 

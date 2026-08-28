@@ -147,6 +147,11 @@
   color: var(--text-sub);
 }
 
+.persistWarn {
+  color: #b42318;
+  font-weight: 600;
+}
+
 .resultCardWrap {
   margin-bottom: 12px;
 }
