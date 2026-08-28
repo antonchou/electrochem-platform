@@ -531,9 +531,8 @@ async def stop() -> ControlResponse:
                 payload["message"] = PERSIST_DEGRADED_MESSAGE
                 payload["persistence"] = "degraded"
             await broadcast(payload)
-        message = None if changed else "当前没有运行中的实验"
-        if changed and not persist_ok:
-            message = PERSIST_DEGRADED_MESSAGE
+        # 幂等 stop（本来就没在跑）不是错误，不带 message，避免前端当失败横幅。
+        message = PERSIST_DEGRADED_MESSAGE if changed and not persist_ok else None
         return ControlResponse(
             ok=True,
             status=status,
