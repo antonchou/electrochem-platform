@@ -36,6 +36,14 @@ class PersistService:
         await asyncio.to_thread(storage.init_db)
         if self._task is not None and not self._task.done():
             return
+        # 写入器尚未拉起 = 本进程刚启动（lifespan 已 reset 内存态），扫掉陈旧 running 行。
+        try:
+            n = await asyncio.to_thread(storage.abort_stale_running_experiments)
+        except Exception:
+            logger.exception("abort leftover running experiments failed")
+        else:
+            if n:
+                logger.warning("aborted %s leftover running experiment(s) on startup", n)
         self._queue = asyncio.Queue()
         self._accepting = True
         self._error = None
