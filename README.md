@@ -40,11 +40,12 @@ electrochem-platform/
 
 ```bash
 cd backend
-python3 -m venv .venv
+python3 -m venv .venv      # Windows 若无 python3 命令，改用：py -3 -m venv .venv
 .venv/Scripts/pip install -r requirements.txt      # Windows（生产）
 # Linux/RPi: source .venv/bin/activate && pip install -r requirements.txt
 # 跑测试再装：pip install -r requirements-dev.txt
 .venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 注：--host 0.0.0.0 会监听所有网卡（局域网可访问）；仅本机调试可改 127.0.0.1
 ```
 
 **2. 启动前端（端口 5173）**
@@ -55,7 +56,7 @@ npm install
 npm run dev            # 打开 http://localhost:5173
 ```
 
-点击「开始实验」即可看到实时 EC/温度/曲线；「历史实验」可回看/导出（Phase 7）。
+点击「开始实验」即可看到实时波形（V/I）、I–V 特性图与 κ25 曲线；「历史实验」可回看/导出（Phase 7）。
 
 ## 切换真实后端
 
