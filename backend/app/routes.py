@@ -551,10 +551,12 @@ async def _compute_and_store_qc(exp_id: int) -> None:
         rows = await asyncio.to_thread(storage.get_recent_frames, exp_id, limit=500)
         if not rows:
             return
-        kappa25, flags = stability.qc_series_from_frames(rows)
+        kappa25, flags, qc_ts = stability.qc_series_from_frames(rows)
         if len(kappa25) < 3:
             return
-        result = stability.check_stability(kappa25, quality_flags=flags)
+        # slope 阈值按真实采样率换算，判定与数据源速率（Mock 10Hz / CSV 50Hz…）无关
+        cfg = stability.rate_scaled_config(qc_ts)
+        result = stability.check_stability(kappa25, quality_flags=flags, config=cfg)
         sample_id = rows[-1].get("sample_id") or state.sample_id
         sensor_path_id = rows[-1].get("sensor_path_id") or state.sensor_path_id
         await persist.update_sample_qc(
