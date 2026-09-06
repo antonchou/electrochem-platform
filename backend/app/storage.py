@@ -746,6 +746,20 @@ def count_frames(experiment_id: int) -> int:
         return int(row["n"])
 
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: Any) -> Any:
+    """中和 Excel 公式注入：以 = + - @ 等开头的文本单元格前置单引号（OWASP 建议）。
+
+    sample_id/sensor_path_id 等字段来自用户输入，导出的 CSV 若被 Excel 打开，
+    未消毒的单元格会被当公式执行。数值列不受影响（非 str 原样通过）。
+    """
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def export_csv(experiment_id: int) -> str:
     """导出该实验全部原始帧为 CSV 文本（Excel 可直接打开）。
 
@@ -796,30 +810,30 @@ def export_csv(experiment_id: int) -> str:
     for r in rows:
         writer.writerow(
             [
-                r["seq_no"],
-                r["timestamp_utc"],
-                r["monotonic_ms"],
-                r["t_seconds"],
-                r["sensor_path_id"],
-                r["sample_id"],
-                r["ec_raw"],
-                r["temperature_raw"],
-                r["k25"],
-                r["quality_flags"],
-                r["status"],
-                r["voltage_raw_v"],
-                r["current_raw_a"],
-                r["conductance_s"],
-                r["kappa_t_us_cm"],
-                r["kappa_25_us_cm"],
-                r["schema_version"],
-                r["device_id"],
-                r["firmware_version"],
-                r["range_id"],
-                r["calibration_id"],
-                r["excitation_frequency_hz"],
-                r["excitation_amplitude_v"],
-                r["compensation_model"],
+                _csv_safe(r["seq_no"]),
+                _csv_safe(r["timestamp_utc"]),
+                _csv_safe(r["monotonic_ms"]),
+                _csv_safe(r["t_seconds"]),
+                _csv_safe(r["sensor_path_id"]),
+                _csv_safe(r["sample_id"]),
+                _csv_safe(r["ec_raw"]),
+                _csv_safe(r["temperature_raw"]),
+                _csv_safe(r["k25"]),
+                _csv_safe(r["quality_flags"]),
+                _csv_safe(r["status"]),
+                _csv_safe(r["voltage_raw_v"]),
+                _csv_safe(r["current_raw_a"]),
+                _csv_safe(r["conductance_s"]),
+                _csv_safe(r["kappa_t_us_cm"]),
+                _csv_safe(r["kappa_25_us_cm"]),
+                _csv_safe(r["schema_version"]),
+                _csv_safe(r["device_id"]),
+                _csv_safe(r["firmware_version"]),
+                _csv_safe(r["range_id"]),
+                _csv_safe(r["calibration_id"]),
+                _csv_safe(r["excitation_frequency_hz"]),
+                _csv_safe(r["excitation_amplitude_v"]),
+                _csv_safe(r["compensation_model"]),
             ]
         )
     return buf.getvalue()

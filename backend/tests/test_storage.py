@@ -129,6 +129,35 @@ def test_export_csv(store):
     assert "NACL_006" in lines[1]
 
 
+def test_export_csv_neutralizes_formula_injection(store):
+    """sample_id 以 = + - @ 开头时导出必须前置单引号，防止 Excel 公式执行。"""
+    eid = store.create_experiment("EXP-INJ", "t", sample_id="=cmd|'/c calc'!A1", sensor_path_id="CM2_WIDE")
+    store.insert_frames(
+        [
+            {
+                "experiment_id": eid,
+                "sample_id": "=cmd|'/c calc'!A1",
+                "sensor_path_id": "@evil",
+                "seq_no": 1,
+                "timestamp_utc": "2026-08-19T00:00:00Z",
+                "monotonic_ms": 1000,
+                "t_seconds": 0.1,
+                "ec_raw": -1413.0,
+                "temperature_raw": 25.0,
+                "k25": None,
+                "quality_flags": None,
+                "status": "running",
+            }
+        ]
+    )
+    csv_text = store.export_csv(eid)
+    data_line = csv_text.strip().split("\n")[1]
+    assert "'=cmd" in data_line
+    assert "'@evil" in data_line
+    # 数值列不受消毒影响（负数仍是数字字面量，非 str）
+    assert "-1413.0" in data_line
+
+
 def test_get_recent_frames_returns_tail(store):
     eid = store.create_experiment("EXP-TAIL", "t", sample_id="S", sensor_path_id="MOCK_EC_IV")
     store.insert_frames(
