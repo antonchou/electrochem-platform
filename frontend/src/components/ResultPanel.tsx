@@ -54,7 +54,8 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
   const sample: SampleSummary | undefined = detail?.samples?.[0];
 
   const stats = useMemo(() => {
-    if (count === 0) return null;
+    // 运行中结果区不渲染，跳过 O(n) 统计（count 每帧变化，否则 10Hz × 2 万点白算）
+    if (status === 'running' || count === 0) return null;
     const pts = pointsRef.current;
     let sum = 0;
     let min = Infinity;
@@ -72,6 +73,7 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
   }, [status, count, pointsRef]);
 
   const pointsForFit = useMemo(() => {
+    if (status === 'running') return [];
     const pts = pointsRef.current.slice();
     const c = sample?.concentration_mmol_l;
     if (c == null || !Number.isFinite(c)) return pts;

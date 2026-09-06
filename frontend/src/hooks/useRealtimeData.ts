@@ -28,10 +28,14 @@ export function useRealtimeData(bridge: ExperimentBridge) {
     const lastT = converted.length > 0 ? converted[converted.length - 1].t : Number.NEGATIVE_INFINITY;
     const extra = pointsRef.current.filter((p) => p.t > lastT);
     const merged = converted.concat(extra);
-    pointsRef.current = merged;
-    runStartTRef.current = merged.length > 0 ? merged[0].t : null;
-    setCount(merged.length);
-    setLatest(merged.length > 0 ? merged[merged.length - 1] : null);
+    // 历史帧可能远超缓冲上限（DB 里 >2 万帧的实验），只保留最新一段，
+    // 否则后续实时帧、拟合请求都会在超限缓冲上工作（拟合会被后端 2 万上限拒绝）。
+    const clamped =
+      merged.length > config.chart.maxPoints ? merged.slice(merged.length - config.chart.maxPoints) : merged;
+    pointsRef.current = clamped;
+    runStartTRef.current = clamped.length > 0 ? clamped[0].t : null;
+    setCount(clamped.length);
+    setLatest(clamped.length > 0 ? clamped[clamped.length - 1] : null);
   }, []);
 
   useEffect(() => {
