@@ -98,15 +98,16 @@ def test_qc_series_from_frames_aligns_and_drops_invalid():
     from app.stability import qc_series_from_frames
 
     rows = [
-        {"kappa_25_us_cm": 100.0, "quality_flags": "SIMULATED"},
-        {"kappa_25_us_cm": None, "quality_flags": "COMPUTE_INVALID"},
-        {"kappa_25_us_cm": 101.0, "quality_flags": "SIMULATED|COMPUTE_INVALID"},
-        {"kappa_25_us_cm": 102.0, "quality_flags": "SIMULATED"},
-        {"kappa_25_us_cm": 103.0, "quality_flags": "SATURATED"},
+        {"kappa_25_us_cm": 100.0, "quality_flags": "SIMULATED", "t_seconds": 0.0},
+        {"kappa_25_us_cm": None, "quality_flags": "COMPUTE_INVALID", "t_seconds": 0.1},
+        {"kappa_25_us_cm": 101.0, "quality_flags": "SIMULATED|COMPUTE_INVALID", "t_seconds": 0.2},
+        {"kappa_25_us_cm": 102.0, "quality_flags": "SIMULATED", "t_seconds": 0.3},
+        {"kappa_25_us_cm": 103.0, "quality_flags": "SATURATED", "t_seconds": 0.4},
     ]
-    values, flags = qc_series_from_frames(rows)
+    values, flags, timestamps = qc_series_from_frames(rows)
     assert values == [100.0, 102.0, 103.0]
     assert flags == ["SIMULATED", "SIMULATED", "SATURATED"]
+    assert timestamps == [0.0, 0.3, 0.4]
     result = check_stability(values, quality_flags=flags)
     assert result.status == "FAIL"
     assert result.reason == "hard_quality_flag"
@@ -121,3 +122,55 @@ def test_timestamps_affect_slope():
     r2 = check_stability(values, timestamps=ts_5s)
     assert r1.slope is not None and r2.slope is not None
     assert r2.slope == pytest.approx(r1.slope / 5.0, rel=1e-9)
+
+
+def test_rate_scaled_config_unchanged_at_baseline_rate():
+    from app.stability import rate_scaled_config
+
+    ts = [i * 0.1 for i in range(40)]  # 10 Hz 基线
+    cfg = rate_scaled_config(ts)
+    assert cfg.slope_warn == pytest.approx(0.5)
+    assert cfg.slope_fail == pytest.approx(2.0)
+
+
+def test_rate_scaled_config_scales_with_sample_rate():
+    from app.stability import rate_scaled_config
+
+    ts = [i * 0.02 for i in range(40)]  # 50 Hz
+    cfg = rate_scaled_config(ts)
+    assert cfg.slope_warn == pytest.approx(0.5 * 10 / 50)
+    assert cfg.slope_fail == pytest.approx(2.0 * 10 / 50)
+
+
+def test_rate_scaled_config_handles_hold_frames_and_missing_ts():
+    from app.stability import rate_scaled_config
+
+    # CSV 回放保持帧：Δt=0 的对不参与，中位数仍来自有效步长（10 Hz）
+    ts = [0.0, 0.1, 0.1, 0.2, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+    cfg = rate_scaled_config(ts)
+    assert cfg.slope_warn == pytest.approx(0.5)
+    assert rate_scaled_config(None).slope_warn == pytest.approx(0.5)
+    assert rate_scaled_config([1.0]).slope_warn == pytest.approx(0.5)
+    assert rate_scaled_config([5.0, 5.0, 5.0]).slope_warn == pytest.approx(0.5)
+
+
+def test_drift_verdict_is_rate_invariant():
+    """同一物理漂移（μS/cm/s）在 10Hz 与 50Hz 采样下判定必须一致。"""
+    from app.stability import rate_scaled_config
+
+    for hz in (10, 50):
+        n = 60
+        ts = [i / hz for i in range(n)]
+        # 30 μS/cm/s > 基线物理阈值 20（=2.0/点 × 10Hz）→ 任何速率都应 FAIL drift
+        values = [100.0 + 30.0 * (i / hz) for i in range(n)]
+        result = check_stability(values, config=rate_scaled_config(ts))
+        assert result.status == "FAIL", f"{hz}Hz"
+        assert result.reason == "drift", f"{hz}Hz"
+
+    for hz in (10, 50):
+        n = 60
+        ts = [i / hz for i in range(n)]
+        # 3 μS/cm/s < 基线物理软阈值 5 → 不应报 borderline_drift
+        values = [100.0 + 3.0 * (i / hz) for i in range(n)]
+        result = check_stability(values, config=rate_scaled_config(ts))
+        assert result.reason != "borderline_drift", f"{hz}Hz"
