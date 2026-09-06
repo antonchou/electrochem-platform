@@ -197,3 +197,48 @@ def test_csv_driver_start_and_persist(client):
     assert "playback" in (cal.get("standard") or "").lower()
     assert cal.get("coeff_value") is None
     assert cal.get("lot") in (None, "")
+
+
+@pytest.fixture()
+def constant_client(tmp_path, monkeypatch):
+    """恒定值 CSV 回放后端：所有行 U/I/T 相同，续跑首帧必命中去重窗口。"""
+    rows = [(round(t, 2), 1.0, 1.0e-3, 27.0) for t in [i * 0.01 for i in range(1000)]]
+    path = _write_csv(tmp_path, rows, name="constant.csv")
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "constant.db"))
+    monkeypatch.setenv("EC_ENABLE_DEBUG_ENDPOINTS", "1")
+    monkeypatch.setenv("EC_DRIVER", "csv")
+    monkeypatch.setenv("EC_CSV_PATH", path)
+    with TestClient(app) as c:
+        yield c
+    for k in ("EC_DB_PATH", "EC_ENABLE_DEBUG_ENDPOINTS", "EC_DRIVER", "EC_CSV_PATH"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_csv_resume_dedups_boundary_sample(constant_client):
+    """续跑首帧重采样停止前边界读数时必须丢弃，不重复落库（review M1）。
+
+    恒定值 CSV 下续跑首个读数与停止前最后一条落库帧的 U/I/T 必然一致；
+    去重后，续跑段第一帧的 t_seconds 应比停止点晚至少一个采样周期。
+    """
+    from app import storage
+
+    exp_id = constant_client.post("/api/experiment/start").json()["experiment_id"]
+    time.sleep(0.25)
+    constant_client.post("/api/experiment/stop")
+    first = storage.get_frames(exp_id, limit=500)
+    assert first
+    last_t = first[-1]["t_seconds"] or 0.0
+
+    time.sleep(0.15)
+    resumed = constant_client.post("/api/experiment/start").json()
+    assert resumed["resumed"] is True
+    time.sleep(0.35)
+    constant_client.post("/api/experiment/stop")
+    constant_client.post("/api/experiment/reset")
+
+    all_frames = storage.get_frames(exp_id, limit=500)
+    newer = [f for f in all_frames if (f["t_seconds"] or 0.0) > last_t + 1e-6]
+    assert newer, "续跑应追加帧"
+    # 去重窗口生效：续跑段没有帧落在停止点后不足一个采样周期的区间内
+    boundary = [f for f in newer if (f["t_seconds"] or 0.0) < last_t + 0.09]
+    assert not boundary, f"续跑首帧未去重: {[(f['t_seconds'], f['seq_no']) for f in boundary]}"
