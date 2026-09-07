@@ -177,10 +177,14 @@ class SimulatorConfig:
 
 def load_simulator_config() -> SimulatorConfig:
     config_path = os.environ.get("EC_SIM_CONFIG")
+    explicit: dict[str, Any] = {}
     try:
-        config = (
-            SimulatorConfig.from_json_file(config_path) if config_path else SimulatorConfig()
-        )
+        if config_path:
+            loaded = json.loads(Path(config_path).read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("simulator config root must be an object")
+            explicit = loaded
+        config = SimulatorConfig.from_mapping(explicit) if config_path else SimulatorConfig()
     except (OSError, TypeError, ValueError) as exc:
         location = config_path or "built-in defaults"
         raise ValueError(f"invalid simulator configuration ({location}): {exc}") from exc
@@ -194,8 +198,10 @@ def load_simulator_config() -> SimulatorConfig:
             raise ValueError(
                 f"invalid EC_SIM_MODE={mode_override!r}; expected one of: {choices}"
             ) from exc
-        raw.update(_MODE_PRESETS[mode])
-        raw["mode"] = mode
+        # 经 from_mapping 重解析：模式预设只填充显式配置未提供的字段，
+        # 显式字段优先（与 from_mapping 自身语义一致），不再被预设覆盖。
+        config = SimulatorConfig.from_mapping({**explicit, "mode": mode})
+        raw = {field: getattr(config, field) for field in SimulatorConfig.__dataclass_fields__}
     rate = os.environ.get("EC_SAMPLE_RATE_HZ")
     if rate is not None:
         try:
@@ -263,11 +269,11 @@ class SimulatorDriver(DeviceDriver):
 
     def _apply_fault(self, elapsed: float, index: int) -> FaultKind | None:
         cfg = self.config
-        if cfg.mode is not SimulatorMode.FAULT or elapsed < cfg.fault_start_s:
+        # 门控只看 fault_kind：from_mapping 允许任意 mode 搭配显式 fault_kind，
+        # 若按 mode=FAULT 门控，显式配置的故障会在 stable/realistic 下被静默丢弃。
+        if cfg.fault_kind is FaultKind.NONE or elapsed < cfg.fault_start_s:
             return None
         kind = cfg.fault_kind
-        if kind is FaultKind.NONE:
-            return None
         if kind is FaultKind.DROPOUT and cfg.dropout_every_n > 0:
             if (index + 1) % cfg.dropout_every_n == 0:
                 return FaultKind.DROPOUT
