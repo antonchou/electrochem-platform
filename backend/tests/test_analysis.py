@@ -268,3 +268,52 @@ def test_fit_endpoint_bad_input(client):
         ).status_code
         == 422
     )
+
+
+def test_fit_all_rejects_nonfinite_results():
+    """溢出数据不得产出 NaN/inf 结果：全部结果必须能通过严格 JSON 序列化。"""
+    import json as _json
+
+    from app.analysis import fit_all
+
+    x = [1.0, 2.0, 3.0, 4.0, 5.0]
+    y = [1e308, -1e308, 1e308, -1e308, 1e308]
+    results = fit_all(x, y, x_axis="time")
+    # 旧实现在此抛 ValueError（NaN/inf 无法以 allow_nan=False 序列化）
+    _json.dumps(results, allow_nan=False)
+    for r in results:
+        for v in r["params"].values():
+            assert math.isfinite(v)
+        assert math.isfinite(r["r2"])
+        assert r["loocv_rmse"] is None or math.isfinite(r["loocv_rmse"])
+
+
+def test_result_is_finite_gate():
+    """有限性闸门单元测试：任一核心数值非有限即拒绝整个拟合结果。"""
+    from app.analysis import _result_is_finite
+
+    ok = {
+        "params": {"a": 1.0, "b": -2.0},
+        "r2": 0.99,
+        "rmse": 0.1,
+        "mae": 0.05,
+        "residual_max_abs": 0.2,
+        "loocv_rmse": 0.12,
+        "fitted": [[0.0, 1.0], [1.0, -1.0]],
+        "param_ci": {"a": [0.5, 1.5]},
+    }
+    assert _result_is_finite(ok)
+    assert _result_is_finite({**ok, "mae": None, "param_ci": None})  # 允许缺失项
+
+    for mutate in (
+        {"params": {"a": float("nan")}},
+        {"params": {"a": float("-inf")}},
+        {"r2": float("inf")},
+        {"rmse": float("nan")},
+        {"mae": float("inf")},
+        {"residual_max_abs": float("nan")},
+        {"loocv_rmse": float("inf")},
+        {"fitted": [[0.0, float("nan")]]},
+        {"param_ci": {"a": [float("inf"), 1.5]}},
+    ):
+        assert not _result_is_finite({**ok, **mutate}), mutate

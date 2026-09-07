@@ -468,6 +468,31 @@ FITTERS = {
 }
 
 
+def _result_is_finite(res: Dict[str, Any]) -> bool:
+    """拒绝含 NaN/±inf 的拟合结果。
+
+    纯 float 运算可无声溢出（如 1e308 量级数据的平方和、商下溢），不抛
+    OverflowError；而 JSONResponse(allow_nan=False) 序列化非有限值会直接
+    500，前端 r2.toFixed 也会崩。非有限结果视为该模型拟合失败。
+    """
+    for value in res["params"].values():
+        if not math.isfinite(value):
+            return False
+    for key in ("r2", "rmse", "mae", "residual_max_abs"):
+        value = res.get(key)
+        if value is not None and not math.isfinite(value):
+            return False
+    if res.get("loocv_rmse") is not None and not math.isfinite(res["loocv_rmse"]):
+        return False
+    for pair in res["fitted"]:
+        if not (math.isfinite(pair[0]) and math.isfinite(pair[1])):
+            return False
+    for bounds in (res.get("param_ci") or {}).values():
+        if not all(math.isfinite(b) for b in bounds):
+            return False
+    return True
+
+
 def fit_all(
     x: List[float],
     y: List[float],
@@ -493,7 +518,9 @@ def fit_all(
         except (ValueError, OverflowError, ZeroDivisionError):
             res = None
         if res is not None:
-            res["loocv_rmse"] = _loocv_rmse(name, x, y, x_axis)
-            results.append(res)
+            loocv = _loocv_rmse(name, x, y, x_axis)
+            res["loocv_rmse"] = _finite_or_none(loocv) if loocv is not None else None
+            if _result_is_finite(res):
+                results.append(res)
     results.sort(key=lambda r: -r["r2"])
     return results
