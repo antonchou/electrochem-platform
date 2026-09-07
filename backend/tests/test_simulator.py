@@ -317,3 +317,49 @@ def test_fault_mode_does_not_crash_experiment(tmp_path, monkeypatch):
         flags = " ".join(f.get("quality_flags") or "" for f in frames)
         assert "SIMULATED" in flags
         assert "COMPUTE_INVALID" in flags or "VOLTAGE_OOR" in flags
+
+
+def test_explicit_fault_kind_works_in_stable_mode():
+    """显式 fault_kind 不得因 mode=stable 被静默丢弃（P1-1）。"""
+    cfg = SimulatorConfig(
+        mode=SimulatorMode.STABLE,
+        fault_kind=FaultKind.CURRENT_ZERO,
+        fault_start_s=0.0,
+        seed=5,
+    )
+
+    async def scenario():
+        # 故障类读数隔帧注入（保留有效帧），至少应命中一次
+        readings = await _collect(SimulatorDriver(cfg), [0.0, 0.1, 0.2, 0.3])
+        hit = [r for r in readings if "CURRENT_ZERO" in r.quality_flags]
+        assert hit, f"stable 模式下显式 fault_kind 未生效: {[r.quality_flags for r in readings]}"
+        assert all(r.current_a == 0.0 for r in hit)
+
+    asyncio.run(scenario())
+
+
+def test_mode_override_preserves_explicit_fields(monkeypatch, tmp_path):
+    """EC_SIM_MODE 切换预设时不得覆盖配置文件显式字段（P1-2）。"""
+    path = tmp_path / "sim.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0.0",
+                "driver": "simulator",
+                "mode": "stable",
+                "voltage_noise_v": 0.007,
+                "temperature_noise": 0.4,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EC_SIM_CONFIG", str(path))
+    monkeypatch.setenv("EC_SIM_MODE", "realistic")
+    cfg = load_simulator_config()
+    assert cfg.mode is SimulatorMode.REALISTIC
+    # 显式字段保留（旧实现会被 realistic 预设覆盖为 0.002 / 0.25）
+    assert cfg.voltage_noise_v == 0.007
+    assert cfg.temperature_noise == 0.4
+    # 未显式提供的字段取新模式预设
+    assert cfg.current_noise_a == 8.0e-6
+    assert cfg.nonlinearity > 0
