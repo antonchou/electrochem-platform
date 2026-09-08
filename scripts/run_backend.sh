@@ -15,4 +15,13 @@ case "$BIND" in
     ;;
 esac
 cd "$ROOT/backend"
-exec "${ROOT}/backend/.venv/bin/python" -m uvicorn app.main:app --host "$BIND" --port "$PORT"
+# venv 布局跨平台：Linux/树莓派为 bin/，Windows（Git Bash）为 Scripts/
+if [ -x "${ROOT}/backend/.venv/bin/python" ]; then
+  PY="${ROOT}/backend/.venv/bin/python"
+elif [ -f "${ROOT}/backend/.venv/Scripts/python.exe" ]; then
+  PY="${ROOT}/backend/.venv/Scripts/python.exe"
+else
+  echo "错误：未找到 backend/.venv（先在 backend/ 下创建虚拟环境）" >&2
+  exit 1
+fi
+exec "$PY" -m uvicorn app.main:app --host "$BIND" --port "$PORT"

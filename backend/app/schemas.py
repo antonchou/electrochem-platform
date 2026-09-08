@@ -50,14 +50,18 @@ class ControlResponse(BaseModel):
 
 
 class ExperimentStartRequest(BaseModel):
-    """开始实验的可选参数（用于样品溯源，Phase 7）。"""
+    """开始实验的可选参数（用于样品溯源，Phase 7）。
 
-    sample_id: Optional[str] = None
-    sensor_path_id: Optional[str] = None
-    title: Optional[str] = None
-    operator: Optional[str] = None
-    objective: Optional[str] = None
-    concentration_mmol_l: Optional[float] = Field(default=None, ge=0)
+    字符串限长、浓度限上界：这些值会原样入库、回显并进 CSV 导出，
+    不设界即接受任意大小负载（存储/导出放大）。
+    """
+
+    sample_id: Optional[str] = Field(default=None, max_length=64)
+    sensor_path_id: Optional[str] = Field(default=None, max_length=64)
+    title: Optional[str] = Field(default=None, max_length=200)
+    operator: Optional[str] = Field(default=None, max_length=64)
+    objective: Optional[str] = Field(default=None, max_length=500)
+    concentration_mmol_l: Optional[float] = Field(default=None, ge=0, le=10_000)
 
 
 class FitRequest(BaseModel):
