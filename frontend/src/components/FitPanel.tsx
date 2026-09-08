@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { DataPoint, FitAxis, FitResultItem } from '../types/protocol';
 import type { ApiClient } from '../services/apiClient';
+import { buildFitPoints } from '../lib/fitPoints';
 import { StaticChart, type ChartOverlay } from './StaticChart';
 import styles from './FitPanel.module.css';
 
@@ -86,18 +87,7 @@ export function FitPanel({ api, points, experimentId, testIdPrefix = 'fit', btnT
   const hasRealConcentration = uniqueConcentrations.size > 0;
   const hasUsableConcentrationAxis = uniqueConcentrations.size >= 3;
 
-  const fitPoints: [number, number][] = useMemo(
-    () =>
-      points
-        .filter((p) => p.ec !== null && Number.isFinite(p.ec) && Number.isFinite(p.t) && Number.isFinite(p.tc))
-        .map((p, i) => {
-          if (xAxis === 'temperature') return [p.tc, p.ec as number] as [number, number];
-          if (xAxis === 'concentration')
-            return [p.concentration ?? i + 1, p.ec as number] as [number, number];
-          return [p.t, p.ec as number] as [number, number];
-        }),
-    [points, xAxis],
-  );
+  const fitPoints: [number, number][] = useMemo(() => buildFitPoints(points, xAxis), [points, xAxis]);
   const arrheniusUnavailable = useMemo(() => {
     if (xAxis !== 'temperature' || !selectedModels.includes('arrhenius')) return false;
     const temperatures = fitPoints.map(([temperature]) => temperature);
