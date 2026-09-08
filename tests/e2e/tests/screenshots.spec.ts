@@ -1,11 +1,21 @@
 import { expect, test } from '@playwright/test';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 /**
  * 交付物 #5：页面截图（运行中 / 停止 / 断线 三个典型状态）。
  * 运行：npx playwright test tests/screenshots.spec.ts
+ *
+ * 默认写入系统临时目录（ec-e2e-results/screenshots），不污染 git 跟踪的
+ * docs/screenshots 验收交付物。需要重新生成交付截图时显式指定：
+ *   E2E_SCREENSHOT_DIR=../../docs/screenshots npx playwright test tests/screenshots.spec.ts
  */
 
 const API = 'http://127.0.0.1:8000';
+const SHOT_DIR = process.env.E2E_SCREENSHOT_DIR
+  ? path.resolve(process.env.E2E_SCREENSHOT_DIR)
+  : path.join(tmpdir(), 'ec-e2e-results', 'screenshots');
+const shot = (name: string) => path.join(SHOT_DIR, name);
 
 test('截取运行中 / 停止 / 断线三状态', async ({ page }) => {
   await page.goto('/');
@@ -17,19 +27,19 @@ test('截取运行中 / 停止 / 断线三状态', async ({ page }) => {
     .poll(async () => Number(await page.getByTestId('stat-count').innerText()), { timeout: 8000 })
     .toBeGreaterThanOrEqual(8);
   await page.waitForTimeout(500);
-  await page.screenshot({ path: '../../docs/screenshots/1-running.png', fullPage: true });
+  await page.screenshot({ path: shot('1-running.png'), fullPage: true });
 
   // 2) 停止：停止后保留曲线与结果区
   await page.getByTestId('btn-stop').click();
   await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
   await expect(page.getByTestId('result-panel')).toBeVisible();
   await page.waitForTimeout(200);
-  await page.screenshot({ path: '../../docs/screenshots/2-stopped.png', fullPage: true });
+  await page.screenshot({ path: shot('2-stopped.png'), fullPage: true });
 
   // 3) 断线：强制断开，捕获异常状态与提示
   await page.request.post(`${API}/api/debug/close-connections`);
   await expect(page.getByTestId('connection-status')).toHaveText(/已断开|重连中/, { timeout: 3000 });
-  await page.screenshot({ path: '../../docs/screenshots/3-disconnected.png', fullPage: true });
+  await page.screenshot({ path: shot('3-disconnected.png'), fullPage: true });
 });
 
 test('截取历史实验面板（Phase 7）', async ({ page }) => {
@@ -51,5 +61,5 @@ test('截取历史实验面板（Phase 7）', async ({ page }) => {
   await page.locator('[data-testid^="history-item-"]').first().click();
   await expect(page.getByTestId('btn-export-csv')).toBeVisible();
   await page.waitForTimeout(400);
-  await page.screenshot({ path: '../../docs/screenshots/4-history.png', fullPage: true });
+  await page.screenshot({ path: shot('4-history.png'), fullPage: true });
 });
