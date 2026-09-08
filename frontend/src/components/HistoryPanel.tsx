@@ -116,7 +116,11 @@ export function HistoryPanel({ api, onClose }: Props) {
       t: f.t_seconds ?? 0,
       tc: f.temperature_raw,
       ec: f.kappa_25_us_cm ?? f.k25 ?? f.ec_raw,
-      concentration: (f.sample_id && concBySample.get(f.sample_id)) || undefined,
+      // 浓度 0（空白样）是合法标定点，必须保留：`||` 会把 0 吞成 undefined
+      concentration:
+        f.sample_id != null && concBySample.has(f.sample_id)
+          ? concBySample.get(f.sample_id)
+          : undefined,
     }));
   }, [frames, selected]);
 
