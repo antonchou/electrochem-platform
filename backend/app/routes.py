@@ -94,12 +94,13 @@ def _build_driver() -> tuple[DeviceDriver, float]:
 
 
 async def start_acquisition() -> None:
-    """启动单一采集任务（幂等）。"""
+    """启动单一采集任务（幂等）。与实验接口共用 _lifecycle_lock，防止并发重入双建任务。"""
     global _acquisition_task, _driver, _sample_period_seconds
-    if _acquisition_task is None or _acquisition_task.done():
-        _driver, _sample_period_seconds = _build_driver()
-        await _driver.connect()
-        _acquisition_task = asyncio.create_task(_acquisition_loop())
+    async with _lifecycle_lock:
+        if _acquisition_task is None or _acquisition_task.done():
+            _driver, _sample_period_seconds = _build_driver()
+            await _driver.connect()
+            _acquisition_task = asyncio.create_task(_acquisition_loop())
 
 
 async def stop_acquisition() -> None:

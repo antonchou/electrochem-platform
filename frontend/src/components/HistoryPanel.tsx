@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient } from '../services/apiClient';
 import type { DataPoint, ExperimentDetail, ExperimentSummary, RawFrame } from '../types/protocol';
 import { FitPanel } from './FitPanel';
@@ -39,6 +39,8 @@ export function HistoryPanel({ api, onClose }: Props) {
   const [selected, setSelected] = useState<ExperimentDetail | null>(null);
   const [frames, setFrames] = useState<RawFrame[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  // 竞态保护：快速连点两个实验时，旧响应不得覆盖新选中的详情（同 FitPanel 模式）
+  const detailRequestIdRef = useRef(0);
 
   const loadList = useCallback(() => {
     if (!api) return;
@@ -60,6 +62,7 @@ export function HistoryPanel({ api, onClose }: Props) {
   const openDetail = useCallback(
     async (id: number) => {
       if (!api) return;
+      const requestId = ++detailRequestIdRef.current;
       setLoadingDetail(true);
       setError(null);
       try {
@@ -68,12 +71,14 @@ export function HistoryPanel({ api, onClose }: Props) {
           api.getExperiment(id),
           api.getFrames(id, 100_000),
         ]);
+        if (requestId !== detailRequestIdRef.current) return;
         setSelected(detail);
         setFrames(rawFrames);
       } catch (err) {
+        if (requestId !== detailRequestIdRef.current) return;
         setError(err instanceof Error ? err.message : '获取实验详情失败');
       } finally {
-        setLoadingDetail(false);
+        if (requestId === detailRequestIdRef.current) setLoadingDetail(false);
       }
     },
     [api],

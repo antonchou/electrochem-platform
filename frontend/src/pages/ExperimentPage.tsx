@@ -98,8 +98,10 @@ export function ExperimentPage() {
   }, [bridge.api, clearPoints, experimentId, hydrateFromFrames, start, startOptions]);
 
   const handleClear = useCallback(() => {
-    void reset();
-    clearPoints();
+    // reset 失败（后端拒绝/网络断开）时本地缓冲不能先清，否则 UI 与服务器状态错位
+    void reset().then((res) => {
+      if ('ok' in res && res.ok) clearPoints();
+    });
   }, [clearPoints, reset]);
 
   const duration =
