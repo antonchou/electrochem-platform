@@ -119,14 +119,20 @@ test: add health endpoint test
 
 ## 8. 最低验证要求
 
-后端修改至少运行：
+后端修改至少运行（在仓库根目录执行；venv 位于 `backend/.venv`）：
 
 ```bash
-source .venv/bin/activate
+# Linux / 树莓派
+cd backend && source .venv/bin/activate
+# Windows（Git Bash / PowerShell）
+cd backend && .venv/Scripts/activate
+
 python -m pip check
-python -m compileall backend
+python -m compileall app
 git diff --check
 ```
+
+完整的后端测试套件见根 `README.md`「运行测试」一节（`python -m pytest tests -q`）。
 
 涉及FastAPI接口时还应验证：
 

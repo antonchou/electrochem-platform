@@ -43,6 +43,9 @@ _sample_period_seconds = 0.1
 _lifecycle_lock = asyncio.Lock()
 _persist_notice_sent = False
 _quiet_incomplete_flags: set[tuple[str, ...]] = set()
+# 续跑去重基准：停止前最后一条落库帧的 (U, I, T) 原始三元组。
+# None 表示无待比对窗口（非续跑、或首帧已消费）。
+_resume_boundary_raws: Optional[tuple] = None
 
 PERSIST_DEGRADED_MESSAGE = (
     "落库失败：实时曲线仍在更新，但历史和导出将缺帧。请重启后端恢复落库。"
@@ -91,12 +94,13 @@ def _build_driver() -> tuple[DeviceDriver, float]:
 
 
 async def start_acquisition() -> None:
-    """启动单一采集任务（幂等）。"""
+    """启动单一采集任务（幂等）。与实验接口共用 _lifecycle_lock，防止并发重入双建任务。"""
     global _acquisition_task, _driver, _sample_period_seconds
-    if _acquisition_task is None or _acquisition_task.done():
-        _driver, _sample_period_seconds = _build_driver()
-        await _driver.connect()
-        _acquisition_task = asyncio.create_task(_acquisition_loop())
+    async with _lifecycle_lock:
+        if _acquisition_task is None or _acquisition_task.done():
+            _driver, _sample_period_seconds = _build_driver()
+            await _driver.connect()
+            _acquisition_task = asyncio.create_task(_acquisition_loop())
 
 
 async def stop_acquisition() -> None:
@@ -191,6 +195,10 @@ async def _acquisition_loop() -> None:
                     await asyncio.sleep(_sample_period_seconds)
                     continue
                 frame = _build_frame(elapsed, reading)
+                if _consume_resume_duplicate(frame):
+                    # 续跑首帧重采样了停止前的边界读数 → 丢弃（不占 seq、不落库、不广播）
+                    await asyncio.sleep(_sample_period_seconds)
+                    continue
                 # 先入队再推送。入队失败（持久化已降级）仍广播，并打 PERSIST_DROPPED。
                 accepted = _enqueue_frame(frame)
                 if not accepted:
@@ -363,6 +371,49 @@ def _reset_persist_notice() -> None:
     _quiet_incomplete_flags.clear()
 
 
+async def _load_resume_boundary(exp_id: int) -> None:
+    """装载续跑去重基准：停止前最后一条落库帧的 (U, I, T) 原始三元组。
+
+    CSV 类确定性源按 elapsed 回放，续跑首帧会重新采样停止前的边界源行
+    （elapsed 从停点续上），不去重就会以新 seq_no 重复落一条相同样本。
+    Mock 类噪声源每次读数不同，不会命中比对。
+    """
+    global _resume_boundary_raws
+    rows = await asyncio.to_thread(storage.get_recent_frames, exp_id, limit=1)
+    if rows:
+        r = rows[0]
+        _resume_boundary_raws = (
+            r.get("voltage_raw_v"),
+            r.get("current_raw_a"),
+            r.get("temperature_raw"),
+        )
+    else:
+        _resume_boundary_raws = None
+
+
+def _clear_resume_boundary() -> None:
+    global _resume_boundary_raws
+    _resume_boundary_raws = None
+
+
+def _consume_resume_duplicate(frame: dict) -> bool:
+    """一次性窗口：续跑首帧若与停止前最后一条落库帧 U/I/T 完全一致则丢弃。
+
+    只判第一帧——命中说明重采样到了边界源行；未命中（读数已前进）或
+    已消费过则窗口关闭，后续保持帧语义不变（慢速源正常持有同值帧）。
+    """
+    ref = _resume_boundary_raws
+    if ref is None:
+        return False
+    _clear_resume_boundary()
+    raws = (
+        frame.get("voltage_raw_v"),
+        frame.get("current_raw_a"),
+        frame.get("temperature_raw_c"),
+    )
+    return raws == ref
+
+
 async def _flush_frames_best_effort() -> bool:
     """Flush queued frames. False if persistence already failed or flush raises."""
     if persist.degraded:
@@ -421,6 +472,7 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
             reopened = await persist.reopen_experiment(exp_id)
             if reopened and await state.resume():
                 _reset_persist_notice()
+                await _load_resume_boundary(exp_id)
                 await broadcast({"status": "running", "experiment_id": exp_id})
                 if persist.degraded:
                     await _notify_persist_degraded()
@@ -499,6 +551,7 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
             return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
         _reset_persist_notice()
+        _clear_resume_boundary()
         await broadcast({"status": "running", "experiment_id": exp_id})
         if persist.degraded:
             await _notify_persist_degraded()
@@ -551,10 +604,12 @@ async def _compute_and_store_qc(exp_id: int) -> None:
         rows = await asyncio.to_thread(storage.get_recent_frames, exp_id, limit=500)
         if not rows:
             return
-        kappa25, flags = stability.qc_series_from_frames(rows)
+        kappa25, flags, qc_ts = stability.qc_series_from_frames(rows)
         if len(kappa25) < 3:
             return
-        result = stability.check_stability(kappa25, quality_flags=flags)
+        # slope 阈值按真实采样率换算，判定与数据源速率（Mock 10Hz / CSV 50Hz…）无关
+        cfg = stability.rate_scaled_config(qc_ts)
+        result = stability.check_stability(kappa25, quality_flags=flags, config=cfg)
         sample_id = rows[-1].get("sample_id") or state.sample_id
         sensor_path_id = rows[-1].get("sensor_path_id") or state.sensor_path_id
         await persist.update_sample_qc(
@@ -585,6 +640,7 @@ async def reset() -> ControlResponse:
                 await _finish_experiment_best_effort(exp_id, "aborted")
         await state.reset()
         _reset_persist_notice()
+        _clear_resume_boundary()
         payload: dict = {"status": "idle"}
         message = None
         if not persist_ok:

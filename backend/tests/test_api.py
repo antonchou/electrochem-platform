@@ -456,3 +456,19 @@ def test_burst_broadcasts_only_no_persist(client):
     detail = client.get(f"/api/experiments/{exp_id}").json()
     # 注入的 20 帧不得落库：frame_count 远小于注入量，仅含采集循环真实帧
     assert detail["frame_count"] < 20
+
+
+def test_start_request_field_bounds():
+    """ExperimentStartRequest 限长/限界：超限直接 422，不进库不回显。"""
+    from pydantic import ValidationError
+
+    from app.schemas import ExperimentStartRequest
+
+    with pytest.raises(ValidationError):
+        ExperimentStartRequest(sample_id="x" * 65)
+    with pytest.raises(ValidationError):
+        ExperimentStartRequest(objective="y" * 501)
+    with pytest.raises(ValidationError):
+        ExperimentStartRequest(concentration_mmol_l=10_001)
+    ok = ExperimentStartRequest(sample_id="BLANK", concentration_mmol_l=0)
+    assert ok.concentration_mmol_l == 0
