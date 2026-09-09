@@ -99,9 +99,12 @@ export function IVChart({ pointsRef, analysis, status }: Props) {
     };
   }, []);
 
+  // 运行中：固定节流间隔重绘（analysis 经 ref 读取，避免每帧变化的重算依赖
+  // 把 effect 打成 10Hz 同步重绘、节流失效）；非运行中：analysis 变化时补画一次
+  // （覆盖停止后统计更新、续跑历史水合等场景）。
   useEffect(() => {
     const chart = chartRef.current;
-    if (!chart) return;
+    if (!chart || status !== 'running') return;
     const scale = iUnit === 'mA' ? 1e3 : 1e6;
     const apply = () => {
       const fit = analysisRef.current;
@@ -116,10 +119,25 @@ export function IVChart({ pointsRef, analysis, status }: Props) {
       });
     };
     apply();
-    if (status !== 'running') return;
     const id = window.setInterval(apply, config.chart.updateIntervalMs);
     return () => window.clearInterval(id);
-  }, [pointsRef, status, iUnit, analysis.n, analysis.linearOk, analysis.fitLine]);
+  }, [pointsRef, status, iUnit]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || status === 'running') return;
+    const scale = iUnit === 'mA' ? 1e3 : 1e6;
+    const fit = analysisRef.current;
+    const scatter = scatterPairs(pointsRef.current, scale);
+    const line =
+      fit.linearOk && fit.fitLine
+        ? fit.fitLine.map(([v, i]) => [v, i * scale] as [number, number])
+        : [];
+    chart.setOption({
+      yAxis: { name: `电流 I (${iUnit})` },
+      series: [{ data: scatter }, { data: line }],
+    });
+  }, [pointsRef, status, iUnit, analysis]);
 
   const equation =
     analysis.linearOk && analysis.slopeS != null && analysis.interceptA != null

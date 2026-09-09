@@ -11,7 +11,7 @@ React 18 + TypeScript + Vite + Apache ECharts + CSS Modules + 原生 WebSocket�
 | 层 | 技术 |
 |---|---|
 | UI | React 18, CSS Modules |
-| 构建 | Vite 5 |
+| 构建 | Vite 8 |
 | 图表 | Apache ECharts（按需引入，lttb 采样） |
 | 实时通信 | 原生 WebSocket |
 | 控制通道 | REST API（fetch） |

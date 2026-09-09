@@ -98,13 +98,20 @@ export function ExperimentPage() {
   }, [bridge.api, clearPoints, experimentId, hydrateFromFrames, start, startOptions]);
 
   const handleClear = useCallback(() => {
-    void reset();
-    clearPoints();
+    // reset 失败（后端拒绝/网络断开）时本地缓冲不能先清，否则 UI 与服务器状态错位
+    void reset().then((res) => {
+      if ('ok' in res && res.ok) clearPoints();
+    });
   }, [clearPoints, reset]);
 
   const duration =
     latest && runStartTRef.current !== null ? Math.max(0, latest.t - runStartTRef.current) : 0;
-  const sampleRateHz = count > 1 && duration > 0.2 ? (count - 1) / duration : null;
+  // 采样率按缓冲首末点跨度算：缓冲封顶后 count 不再增长而 duration 持续变大，
+  // 用实验总时长会把采样率越算越低；封顶时缓冲会从前端裁剪，首末跨度与 count 同步。
+  const ptsForRate = pointsRef.current;
+  const rateSpan =
+    latest && ptsForRate.length > 0 ? Math.max(0, latest.t - ptsForRate[0].t) : 0;
+  const sampleRateHz = count > 1 && rateSpan > 0.2 ? (count - 1) / rateSpan : null;
   const shownError = actionError ?? error;
   const currentDisplay = latest?.current_raw_a != null ? formatCurrentA(latest.current_raw_a) : null;
   const simulated = latest?.quality_flags?.includes('SIMULATED') ?? false;

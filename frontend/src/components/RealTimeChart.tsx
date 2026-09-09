@@ -35,6 +35,9 @@ function paddedYAxisBounds(dataMin: number, dataMax: number): AxisBounds {
   };
 }
 
+/** 全量重建的滞回余量：序列超过 上限×1.2 才触发，见定时器内注释。 */
+const REBUILD_HEADROOM = 1.2;
+
 interface Props {
   /** 数据缓冲（由 useRealtimeData 提供，ref 保证读到最新） */
   pointsRef: React.MutableRefObject<DataPoint[]>;
@@ -168,9 +171,16 @@ export function RealTimeChart({ pointsRef }: Props) {
       }
       if (lastRenderedPoint === pts[pts.length - 1]) return;
 
-      const lastIndex = lastRenderedPoint ? pts.indexOf(lastRenderedPoint) : -1;
+      // lastIndexOf 从尾部反向找：封顶后 lastRenderedPoint 紧贴缓冲尾部，
+      // 前向 indexOf 会退化为每 tick O(n) 全扫。
+      const lastIndex = lastRenderedPoint ? pts.lastIndexOf(lastRenderedPoint) : -1;
       const newPoints = lastIndex >= 0 ? pts.slice(lastIndex + 1) : pts;
-      if (lastIndex < 0 || renderedCount + newPoints.length > config.chart.maxPoints) {
+      // 滞回重建：序列超出上限一定余量才全量重建，否则 appendData 增量。
+      // 缓冲封顶后 renderedCount 恒等于上限，若按“超出即重建”判定，
+      // 每个 tick 都会触发 2 万点全量 setOption（B2）。余量取上限的 20%，
+      // 即约每 4000 点（10Hz 下 ~6.7 分钟）重建一次。
+      const rebuildLimit = Math.ceil(config.chart.maxPoints * REBUILD_HEADROOM);
+      if (lastIndex < 0 || renderedCount + newPoints.length > rebuildLimit) {
         replaceAll(pts);
         return;
       }

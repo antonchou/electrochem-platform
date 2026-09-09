@@ -15,12 +15,14 @@ from __future__ import annotations
 import csv
 import io
 import json
+import tempfile
 import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "data" / "fixtures" / "ingest"
-CACHE = Path("/tmp/ec-data/raw")
+# 跨平台临时目录：POSIX 绝对路径在 Windows 上会解析成当前盘 	mp，缓存永不命中
+CACHE = Path(tempfile.gettempdir()) / "ec-data" / "raw"
 
 BRAUN_URL = "https://zenodo.org/records/6985321/files/Experimental_data_fresh_cell.csv?download=1"
 RAHMANIAN_URL = "https://zenodo.org/records/7244939/files/Conductivtiy_experiment.csv?download=1"

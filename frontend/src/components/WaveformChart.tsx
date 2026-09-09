@@ -6,32 +6,10 @@ import { CanvasRenderer } from 'echarts/renderers';
 import type { DataPoint } from '../types/protocol';
 import { config } from '../config/config';
 import { strideSample } from '../lib/units';
+import { mergeAxisBounds, paddedBounds, type AxisBounds } from '../lib/axis';
 import styles from './WaveformChart.module.css';
 
 echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
-
-interface AxisBounds {
-  min: number;
-  max: number;
-}
-
-function niceStep(span: number): number {
-  const roughStep = Math.max(span / 6, Number.EPSILON);
-  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
-  const normalized = roughStep / magnitude;
-  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-  return multiplier * magnitude;
-}
-
-function paddedBounds(dataMin: number, dataMax: number, minSpan: number): AxisBounds {
-  const center = (dataMin + dataMax) / 2;
-  const span = Math.max((dataMax - dataMin) * 1.2, Math.abs(center) * 0.02, minSpan);
-  const step = niceStep(span);
-  return {
-    min: Math.floor((center - span / 2) / step) * step,
-    max: Math.ceil((center + span / 2) / step) * step,
-  };
-}
 
 interface Props {
   pointsRef: React.MutableRefObject<DataPoint[]>;
@@ -143,15 +121,14 @@ export function WaveformChart({ pointsRef }: Props) {
 
       if (Number.isFinite(minV) && Number.isFinite(maxV)) {
         const next = paddedBounds(minV, maxV, 0.05);
-        vBounds = vBounds
-          ? { min: Math.min(vBounds.min, next.min), max: Math.max(vBounds.max, next.max) }
-          : next;
+        vBounds = mergeAxisBounds(vBounds, next);
       }
       if (Number.isFinite(minI) && Number.isFinite(maxI)) {
-        const next = paddedBounds(minI * iScale, maxI * iScale, iUnit === 'mA' ? 0.05 : 5);
-        iBounds = iBounds
-          ? { min: Math.min(iBounds.min, next.min), max: Math.max(iBounds.max, next.max) }
-          : next;
+        // 边界统一以安培（基础单位）计算与合并，显示单位只在渲染时换算，
+        // 否则 μA↔mA 换挡后旧量纲数值会把轴钉死、曲线消失。
+        const minSpanA = iUnit === 'mA' ? 5e-5 : 5e-6;
+        const next = paddedBounds(minI, maxI, minSpanA);
+        iBounds = mergeAxisBounds(iBounds, next);
       }
 
       try {
@@ -164,7 +141,7 @@ export function WaveformChart({ pointsRef }: Props) {
             },
             {
               name: `电流 I (${iUnit})`,
-              ...(iBounds ? { min: iBounds.min, max: iBounds.max } : {}),
+              ...(iBounds ? { min: iBounds.min * iScale, max: iBounds.max * iScale } : {}),
             },
           ],
           series: [
@@ -183,8 +160,8 @@ export function WaveformChart({ pointsRef }: Props) {
           delete el.dataset.chartVMax;
         }
         if (iBounds) {
-          el.dataset.chartIMin = String(iBounds.min);
-          el.dataset.chartIMax = String(iBounds.max);
+          el.dataset.chartIMin = String(iBounds.min * iScale);
+          el.dataset.chartIMax = String(iBounds.max * iScale);
         } else {
           delete el.dataset.chartIMin;
           delete el.dataset.chartIMax;
