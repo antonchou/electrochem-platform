@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     host: true, // 允许树莓派局域网内访问
     port: 5173,
+    strictPort: true, // E2E 与地址推导都依赖 5173；端口被占时显式报错而非静默漂移（P1-2/P3-1）
   },
   build: {
     outDir: 'dist',
