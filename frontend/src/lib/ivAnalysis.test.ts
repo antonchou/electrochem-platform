@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { DataPoint } from '../types/protocol.ts';
+import { buildFitPoints } from './fitPoints.ts';
 import {
   analyzeIV,
   formatIVEquation,
   ivReasonMessage,
+  rawFrameToPoint,
   MIN_VOLTAGE_SPAN_V,
 } from './ivAnalysis.ts';
 
@@ -87,6 +89,42 @@ test('curved I-V is flagged nonlinear instead of forcing G', () => {
   assert.equal(result.linearOk, false);
   assert.equal(result.reason, 'nonlinear');
   assert.equal(result.fitLine, null);
+});
+
+test('constant current no longer reports a fake perfect fit (T-13)', () => {
+  // 电流恒定（ssTot≈0）：修复前 r2 硬编码 1 → linearOk=true，得出 G≈0 的假结论
+  const points = [0.2, 0.5, 0.9, 1.0].map((v, i) =>
+    pt({ t: i, voltage_raw_v: v, current_raw_a: 0.002 }),
+  );
+  const result = analyzeIV(points);
+  assert.equal(result.reason, 'undetermined');
+  assert.equal(result.linearOk, false);
+  assert.equal(result.r2, null);
+  // 电导回退到各点 I/U 的平均，而不是拟合斜率
+  assert.ok(result.conductanceS != null && result.conductanceS > 0);
+  assert.equal(result.fitLine, null);
+  assert.ok(ivReasonMessage('undetermined').length > 0);
+});
+
+test('rawFrameToPoint maps missing t_seconds to NaN so fit filters it (T-04)', () => {
+  const frame = {
+    id: 1,
+    sample_id: 'S1',
+    sensor_path_id: 'MOCK_EC_IV',
+    seq_no: 1,
+    timestamp_utc: null,
+    monotonic_ms: null,
+    t_seconds: null,
+    ec_raw: 1413,
+    temperature_raw: 25,
+    k25: 1413,
+    quality_flags: null,
+    status: 'running',
+  };
+  const point = rawFrameToPoint(frame);
+  assert.equal(Number.isFinite(point.t), false);
+  // buildFitPoints 不得产出 x=0 假点
+  assert.equal(buildFitPoints([point], 'time').length, 0);
 });
 
 test('missing U/I yields no_data and does not invent results', () => {

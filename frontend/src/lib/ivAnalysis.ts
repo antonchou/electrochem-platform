@@ -10,6 +10,7 @@ export type IVFitReason =
   | 'insufficient_samples'
   | 'voltage_span_too_small'
   | 'nonlinear'
+  | 'undetermined'
   | 'ok';
 
 export interface IVAnalysis {
@@ -68,7 +69,8 @@ function isFiniteNumber(value: unknown): value is number {
 
 export function rawFrameToPoint(frame: RawFrame): DataPoint {
   return {
-    t: frame.t_seconds ?? 0,
+    // t_seconds 缺失给 NaN（而非 0）让下游 buildFitPoints 过滤，避免 (0, ec) 假点（T-04）
+    t: frame.t_seconds ?? Number.NaN,
     ec: frame.kappa_25_us_cm ?? frame.k25 ?? frame.ec_raw,
     tc: frame.temperature_raw,
     voltage_raw_v: frame.voltage_raw_v ?? undefined,
@@ -190,7 +192,7 @@ export function analyzeIV(points: readonly DataPoint[]): IVAnalysis {
       const dI = p.i - meanI;
       ssTot += dI * dI;
     }
-    r2 = ssTot < 1e-30 ? 1 : 1 - ssRes / ssTot;
+    r2 = ssTot < 1e-30 ? null : 1 - ssRes / ssTot;
     if (!Number.isFinite(slopeS) || !Number.isFinite(interceptA) || !Number.isFinite(r2)) {
       slopeS = null;
       interceptA = null;
@@ -202,7 +204,11 @@ export function analyzeIV(points: readonly DataPoint[]): IVAnalysis {
   let linearOk = false;
   if (vSpan < MIN_VOLTAGE_SPAN_V) {
     reason = 'voltage_span_too_small';
-  } else if (r2 == null || r2 < MIN_LINEAR_R2) {
+  } else if (r2 == null) {
+    // 电流恒定（ssTot≈0）时线性度不可判定（T-13）：不得把 r2 硬编码 1 当成
+    // “完美拟合”得出 G≈0 的假结论。电导回退用各点 I/U 的平均。
+    reason = 'undetermined';
+  } else if (r2 < MIN_LINEAR_R2) {
     reason = 'nonlinear';
   } else {
     linearOk = true;
@@ -255,6 +261,8 @@ export function ivReasonMessage(reason: IVFitReason): string {
       return '当前激励电压几乎不变，不是电压扫描，不能用 I–V 斜率当电导。电导改用各点 I/U 的平均；κ 来自后端计算链。';
     case 'nonlinear':
       return 'I–V 明显不是直线，不强制给出线性电导。请检查电极、激励或溶液是否稳定。';
+    case 'undetermined':
+      return '电流几乎不变，线性度无法判定；电导改用各点 I/U 的平均，κ 来自后端计算链。';
     case 'ok':
       return 'I–V 近似直线，电导 G 取拟合斜率。';
   }
