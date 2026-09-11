@@ -631,16 +631,27 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
 
     v2 之后 raw_frames 带 I–V 计算链列；旧帧（无新字段）插入时这些列保持 NULL。
     对缺失字段自动补 None，兼容历史测试/旧调用方的简化帧。
+    缺 experiment_id 的畸形帧整行跳过：单帧问题不应让整批失败进而永久降级持久化（T-05）。
     """
     if not frames:
         return
-    rows = [{col: f.get(col) for col in _FRAME_COLUMNS} for f in frames]
+    # experiment_id / sensor_path_id / temperature_raw 为 NOT NULL 列，缺失即畸形行
+    valid = [
+        f
+        for f in frames
+        if f.get("experiment_id") is not None
+        and f.get("sensor_path_id") is not None
+        and f.get("temperature_raw") is not None
+    ]
+    if not valid:
+        return
+    rows = [{col: f.get(col) for col in _FRAME_COLUMNS} for f in valid]
     measured = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     with _conn() as conn:
         conn.executemany(_INSERT_FRAMES_SQL, rows)
         # 必须按完整样品链路聚合；同一样品编号可能同时走 WIDE/NARROW 等不同通道。
         counts: Dict[tuple[int, str, str], int] = {}
-        for f in frames:
+        for f in valid:
             sample_id = f.get("sample_id")
             if sample_id is None:
                 continue
@@ -837,6 +848,23 @@ def export_csv(experiment_id: int) -> str:
             ]
         )
     return buf.getvalue()
+
+
+def export_json(experiment_id: int) -> str:
+    """导出完整实验（元信息 + 全部帧）为 JSON 文本。
+
+    取数与序列化都在本函数内完成，调用方用 to_thread 放到线程池执行，
+    避免大实验的 json.dumps 长时间阻塞事件循环（T-07）。
+    """
+    exp = get_experiment(experiment_id)
+    if exp is None:
+        raise LookupError(f"experiment {experiment_id} not found")
+    frames = get_frames(experiment_id, limit=1_000_000)
+    total = count_frames(experiment_id)
+    exp["frames"] = frames
+    exp["truncated"] = total > len(frames)
+    exp["frame_count_total"] = total
+    return json.dumps(exp, ensure_ascii=False)
 
 
 # ---------------- 校准记录（REQ-C-001 软件侧） ----------------

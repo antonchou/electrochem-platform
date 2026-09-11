@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 import statistics
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Literal
 
 QcStatus = Literal["NONE", "PASS", "WARN", "FAIL"]
@@ -85,23 +85,6 @@ class StabilityResult:
     representative_value: float | None = None
 
 
-@dataclass(slots=True)
-class _Window:
-    """简单滑动窗口（数值序列）。"""
-
-    values: list[float] = field(default_factory=list)
-    maxlen: int = 30
-
-    def push(self, value: float) -> None:
-        self.values.append(value)
-        if len(self.values) > self.maxlen:
-            self.values.pop(0)
-
-    @property
-    def size(self) -> int:
-        return len(self.values)
-
-
 def _linear_slope(xs: list[float], ys: list[float]) -> float:
     """一元线性回归斜率（least squares），按 x 单位。x 无变化时返回 0。"""
     n = len(xs)
@@ -146,8 +129,16 @@ def check_stability(
     else:
         window_ts = list(range(n))
 
-    # 硬异常：饱和/开路/短路/欠量程等质量标志出现在窗口内 → FAIL
-    hard_flags = ("SATURATED", "OPEN_CIRCUIT", "SHORT_CIRCUIT", "UNDER_RANGE", "OUT_OF_RANGE")
+    # 硬异常：饱和/开路/短路/欠量程/电流归零等质量标志出现在窗口内 → FAIL。
+    # CURRENT_ZERO（模拟器故障注入，T-16）语义上属硬失效，判稳不得给出 PASS/WARN。
+    hard_flags = (
+        "SATURATED",
+        "OPEN_CIRCUIT",
+        "SHORT_CIRCUIT",
+        "UNDER_RANGE",
+        "OUT_OF_RANGE",
+        "CURRENT_ZERO",
+    )
     if quality_flags:
         window_flags = quality_flags[-cfg.window :]
         bad = sorted({f for flags in window_flags if flags for f in flags.split("|") if f in hard_flags})
