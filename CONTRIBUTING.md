@@ -129,10 +129,10 @@ cd backend && .venv/Scripts/activate
 
 python -m pip check
 python -m compileall app
+# 后端测试为强制项（T-27）：不是"可选的完整套件"，任何后端改动都必须通过
+python -m pytest tests -q
 git diff --check
 ```
-
-完整的后端测试套件见根 `README.md`「运行测试」一节（`python -m pytest tests -q`）。
 
 涉及FastAPI接口时还应验证：
 
