@@ -19,6 +19,10 @@ export function useConnection(bridge: ExperimentBridge) {
       if (ev.type === 'error') {
         setError(ev.message);
       }
+      // 数据流恢复：自清「数据流超时」横幅（T-10）
+      if (ev.type === 'stale-clear') {
+        setError(null);
+      }
     });
     bridge.connect();
     return () => {
