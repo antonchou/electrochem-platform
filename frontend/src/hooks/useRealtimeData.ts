@@ -25,7 +25,16 @@ export function useRealtimeData(bridge: ExperimentBridge) {
 
   const hydrateFromFrames = useCallback((frames: RawFrame[]) => {
     const converted = frames.map(rawFrameToPoint);
-    const lastT = converted.length > 0 ? converted[converted.length - 1].t : Number.NEGATIVE_INFINITY;
+    // 去重基准取最后一个"有限 t"（P2-3）：t_seconds 为 null 的历史帧经 rawFrameToPoint
+    // 变成 NaN，若它排在末尾，NaN 作基准会让 p.t > lastT 恒为 false，内存中的
+    // 实时帧被整段丢弃。一个有限 t 都没有时取 -Infinity（全保留）。
+    let lastT = Number.NEGATIVE_INFINITY;
+    for (let i = converted.length - 1; i >= 0; i--) {
+      if (Number.isFinite(converted[i].t)) {
+        lastT = converted[i].t;
+        break;
+      }
+    }
     const extra = pointsRef.current.filter((p) => p.t > lastT);
     const merged = converted.concat(extra);
     // 历史帧可能远超缓冲上限（DB 里 >2 万帧的实验），只保留最新一段，
@@ -42,6 +51,8 @@ export function useRealtimeData(bridge: ExperimentBridge) {
     const unsub = bridge.subscribe((ev) => {
       if (ev.type === 'message') {
         const { frame } = ev;
+        // frame.timestamp 经 parseServerMessage 校验必为有限数（P3-4 口径：
+        // 实时入口在上游拒绝非法帧；历史入口 rawFrameToPoint 对 null 给 NaN 交给下游过滤）
         const p: DataPoint = {
           t: frame.timestamp,
           ec: frame.ec ?? frame.kappa_25_us_cm ?? null,

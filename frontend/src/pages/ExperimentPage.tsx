@@ -108,9 +108,13 @@ export function ExperimentPage() {
     latest && runStartTRef.current !== null ? Math.max(0, latest.t - runStartTRef.current) : 0;
   // 采样率按缓冲首末点跨度算：缓冲封顶后 count 不再增长而 duration 持续变大，
   // 用实验总时长会把采样率越算越低；封顶时缓冲会从前端裁剪，首末跨度与 count 同步。
+  // 首/末点 t 必须有限（P2-11）：NaN 会让 rateSpan 为 NaN → 恒显 "--"
   const ptsForRate = pointsRef.current;
+  const firstT = ptsForRate[0]?.t;
   const rateSpan =
-    latest && ptsForRate.length > 0 ? Math.max(0, latest.t - ptsForRate[0].t) : 0;
+    latest && firstT != null && Number.isFinite(firstT) && Number.isFinite(latest.t)
+      ? Math.max(0, latest.t - firstT)
+      : 0;
   const sampleRateHz = count > 1 && rateSpan > 0.2 ? (count - 1) / rateSpan : null;
   const shownError = actionError ?? error;
   const currentDisplay = latest?.current_raw_a != null ? formatCurrentA(latest.current_raw_a) : null;
