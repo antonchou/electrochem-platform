@@ -25,6 +25,7 @@ OUT = REPO / "data" / "fixtures" / "ingest"
 CACHE = Path(tempfile.gettempdir()) / "ec-data" / "raw"
 
 BRAUN_URL = "https://zenodo.org/records/6985321/files/Experimental_data_fresh_cell.csv?download=1"
+# 拼写 "Conductivtiy" 为 Zenodo 7244939 上游原始文件名（2026-09-11 经 API 核对），勿“修正”
 RAHMANIAN_URL = "https://zenodo.org/records/7244939/files/Conductivtiy_experiment.csv?download=1"
 ECHEMDB_CSV = (
     "https://raw.githubusercontent.com/echemdb/electrochemistry-data/main/"

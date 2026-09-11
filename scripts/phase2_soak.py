@@ -72,7 +72,7 @@ def _execute_session(args: argparse.Namespace, db_path: Path) -> dict[str, objec
         with client.websocket_connect("/ws/stream") as websocket:
             started = client.post(
                 "/api/experiment/start",
-                json={"sample_id": "PHASE2_SOAK", "sensor_path_id": "MOCK_EC_01"},
+                json={"sample_id": "PHASE2_SOAK", "sensor_path_id": "MOCK_EC_IV"},
             )
             started.raise_for_status()
             body = started.json()
