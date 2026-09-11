@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
 from .persistence import persist
 from .routes import router, start_acquisition, stop_acquisition
 from .state import state
@@ -50,7 +51,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="溶液导电性相对比较 · 模拟数据源",
     description="供前端联调与演示；真实后端接入后仅需更换前端连接地址。",
-    version="2.0.0",
+    # 版本单一来源：backend/app/__init__.py（T-22）
+    version=__version__,
     lifespan=lifespan,
 )
 
