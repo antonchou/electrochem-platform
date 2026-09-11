@@ -1,29 +1,39 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { ExperimentFrame } from './protocol.ts';
 import { parseServerMessage } from './protocol.ts';
 
+/** 断言解析结果是数据帧并收窄联合类型（TestClient 风格的窄化辅助） */
+function expectFrame(parsed: ReturnType<typeof parseServerMessage>): ExperimentFrame {
+  assert.ok(parsed, 'parseServerMessage 应返回结果');
+  assert.ok('ec' in parsed, '应为数据帧而非状态帧');
+  return parsed;
+}
+
 test('parses a complete mock frame', () => {
-  const parsed = parseServerMessage({
-    timestamp: 1.2,
-    ec: 1413.1,
-    temperature: 25.0,
-    status: 'running',
-  });
-  assert.ok(parsed && 'ec' in parsed);
+  const parsed = expectFrame(
+    parseServerMessage({
+      timestamp: 1.2,
+      ec: 1413.1,
+      temperature: 25.0,
+      status: 'running',
+    }),
+  );
   assert.equal(parsed.ec, 1413.1);
 });
 
 test('accepts COMPUTE_INVALID frames with null ec', () => {
-  const parsed = parseServerMessage({
-    timestamp: 0.5,
-    ec: null,
-    temperature: 27.0,
-    status: 'running',
-    voltage_raw_v: -0.4,
-    current_raw_a: 0.001,
-    quality_flags: 'CSV|COMPUTE_INVALID',
-  });
-  assert.ok(parsed && 'timestamp' in parsed);
+  const parsed = expectFrame(
+    parseServerMessage({
+      timestamp: 0.5,
+      ec: null,
+      temperature: 27.0,
+      status: 'running',
+      voltage_raw_v: -0.4,
+      current_raw_a: 0.001,
+      quality_flags: 'CSV|COMPUTE_INVALID',
+    }),
+  );
   assert.equal(parsed.ec, null);
   assert.equal(parsed.voltage_raw_v, -0.4);
   assert.equal(parsed.quality_flags, 'CSV|COMPUTE_INVALID');
