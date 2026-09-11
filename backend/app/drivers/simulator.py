@@ -11,6 +11,7 @@ enable with EC_DRIVER=simulator so production mock/kiosk behavior is unchanged.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from .base import DeviceDriver, DriverReading
+
+logger = logging.getLogger("app.drivers.simulator")
 
 
 class SimulatorMode(str, Enum):
@@ -236,6 +239,7 @@ class SimulatorDriver(DeviceDriver):
         self._read_count = 0
         self._i_filt = 0.0
         self._last_elapsed: float | None = None
+        self._dropout_zero_warned = False
 
     @property
     def connected(self) -> bool:
@@ -274,7 +278,17 @@ class SimulatorDriver(DeviceDriver):
         if cfg.fault_kind is FaultKind.NONE or elapsed < cfg.fault_start_s:
             return None
         kind = cfg.fault_kind
-        if kind is FaultKind.DROPOUT and cfg.dropout_every_n > 0:
+        if kind is FaultKind.DROPOUT:
+            if cfg.dropout_every_n <= 0:
+                # 显式 dropout + dropout_every_n=0 语义是“不丢帧”（T-17）；
+                # 不得落入下方隔帧分支变成 index % 2 丢帧。只警告一次防刷屏。
+                if not self._dropout_zero_warned:
+                    self._dropout_zero_warned = True
+                    logger.warning(
+                        "fault_kind=dropout with dropout_every_n=0 means no dropout; "
+                        "set dropout_every_n >= 1 to inject dropouts"
+                    )
+                return None
             if (index + 1) % cfg.dropout_every_n == 0:
                 return FaultKind.DROPOUT
             return None
