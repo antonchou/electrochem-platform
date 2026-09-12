@@ -60,6 +60,12 @@ class PersistService:
             queue.put_nowait(_STOP)
         try:
             await asyncio.shield(task)
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            # writer 带异常退出时不得把异常抛回 lifespan 的 finally 块：
+            # 那会掩盖关停原始异常并跳过后续 state.reset()（T-19）
+            logger.exception("persistence writer stopped with error")
         finally:
             self._task = None
             self._queue = None
@@ -100,6 +106,22 @@ class PersistService:
             return True
         return False
 
+    def _resolve_trailing_barriers(self) -> None:
+        """Drain leftover queue items after _STOP and settle every flush barrier."""
+        queue = self._queue
+        if queue is None:
+            return
+        while True:
+            try:
+                item = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            if isinstance(item, _FlushBarrier) and not item.completed.done():
+                if self._error is not None:
+                    item.completed.set_exception(self._error)
+                else:
+                    item.completed.set_result(None)
+
     async def _commit_batch(self, batch: List[Dict[str, Any]]) -> None:
         """Write one batch. On failure, stop accepting so RAM cannot grow unbounded."""
         if not batch:
@@ -137,6 +159,9 @@ class PersistService:
                         await self._commit_batch(batch)
                     except Exception:
                         pass
+                # 关停窗口内仍可能排在 _STOP 之后的 flush barrier：必须逐一 resolve，
+                # 否则并发调用的 flush() 会无条件 await 永久挂起（T-01）
+                self._resolve_trailing_barriers()
                 return
             if isinstance(item, _FlushBarrier):
                 try:
