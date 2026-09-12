@@ -121,6 +121,13 @@ def check_stability(
             "quality_flags must be the same length as values "
             f"(got {len(quality_flags)} flags for {len(values)} values)"
         )
+    if timestamps is not None and len(timestamps) != len(values):
+        # 与 quality_flags 对称的等长断言（P2-6）：错配时 _linear_slope 的 zip
+        # 会按较短序列静默截断，产出错误斜率进而污染 QC 判定。
+        raise ValueError(
+            "timestamps must be the same length as values "
+            f"(got {len(timestamps)} timestamps for {len(values)} values)"
+        )
 
     window_values = values[-cfg.window :]
     n = len(window_values)

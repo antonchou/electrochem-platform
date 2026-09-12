@@ -113,14 +113,14 @@ def test_insert_frames_all_malformed_is_noop(tmp_path, monkeypatch):
     storage.insert_frames([{"sample_id": "X", "t_seconds": 0.0}])  # 不抛异常即可
 
 
-# ---------------- T-06：校准溯源一致性 ----------------
+# ---------------- T-06 / P2-5：校准溯源一致性 ----------------
 
-def test_calibration_claimed_follows_calibration_id(monkeypatch):
+def test_calibration_claimed_follows_calibration_id_when_driver_silent(monkeypatch):
+    """T-06：驱动未显式声明 claimed 时，有效校准 id 推导 claimed=True。"""
     cfg = SimpleNamespace(
         cell_constant_per_cm=1.0,
         alpha_per_c=0.02,
         calibration_id=None,
-        calibration_claimed=False,
     )
     fake_driver = SimpleNamespace(config=cfg)
     monkeypatch.setattr(routes, "_driver", fake_driver)
@@ -131,6 +131,24 @@ def test_calibration_claimed_follows_calibration_id(monkeypatch):
         monkeypatch.setattr(state, "calibration_id", None)
     assert params["calibration_id"] == "ENV-CAL-01"
     assert params["calibration_claimed"] is True
+
+
+def test_calibration_claimed_explicit_false_wins(monkeypatch):
+    """P2-5：驱动显式 calibration_claimed=False（有编号但未校准）不得被覆盖。"""
+    cfg = SimpleNamespace(
+        cell_constant_per_cm=1.0,
+        alpha_per_c=0.02,
+        calibration_id="SIM-KCELL-1.0",
+        calibration_claimed=False,
+    )
+    fake_driver = SimpleNamespace(config=cfg)
+    monkeypatch.setattr(routes, "_driver", fake_driver)
+    monkeypatch.setattr(state, "calibration_id", "SIM-KCELL-1.0")
+    try:
+        params = routes._measurement_params()
+    finally:
+        monkeypatch.setattr(state, "calibration_id", None)
+    assert params["calibration_claimed"] is False
 
 
 # ---------------- T-07：export.json 语义 ----------------

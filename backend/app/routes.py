@@ -135,14 +135,15 @@ def _measurement_params() -> dict:
     if isinstance(driver_cal_id, str):
         driver_cal_id = driver_cal_id.strip() or None
     claimed = getattr(config, "calibration_claimed", None)
-    if claimed is None:
-        claimed = bool(driver_cal_id) and driver_cal_id != "UNCALIBRATED"
     cal_id = state.calibration_id if state.calibration_id is not None else driver_cal_id
-    if cal_id and cal_id != "UNCALIBRATED":
-        # 溯源一致性（T-06）：帧携带真实 calibration_id 时不得再标 UNCALIBRATED，
-        # 否则 EC_CALIBRATION_ID 覆盖 / 带校准 id 的驱动会产出自相矛盾的溯源链。
-        # "UNCALIBRATED" 是驱动的“未校准”哨兵值，不算已声明。
-        claimed = True
+    if claimed is None:
+        # 驱动未显式声明时才从校准 id 推导（P2-5）：显式 calibration_claimed=False
+        # 是"有编号但未校准"的声明，不得被覆盖——与"尊重显式 fault_kind"同一原则。
+        # T-06 的场景（EC_CALIBRATION_ID 环境覆盖无声明驱动）在此分支生效。
+        if cal_id and cal_id != "UNCALIBRATED":
+            # 溯源一致性：帧携带真实 calibration_id 时不得再标 UNCALIBRATED。
+            # "UNCALIBRATED" 是驱动的"未校准"哨兵值，不算已声明。
+            claimed = True
     return {
         "cell_constant_per_cm": cell,
         "alpha_per_c": alpha,
@@ -772,23 +773,26 @@ async def fit(body: FitRequest) -> dict:
         exp = await asyncio.to_thread(storage.get_experiment, body.experiment_id)
         if exp is None:
             raise HTTPException(status_code=404, detail="experiment not found")
-        payload = {
-            "experiment_id": body.experiment_id,
-            "x_axis": body.x_axis,
-            "best": results[0]["model"] if results else None,
-            "models": results,
-        }
-        derived_path = await asyncio.to_thread(
-            storage.write_fit_report, body.experiment_id, payload
-        )
-        sample_id = exp.get("sample_id")
-        await persist.insert_fit_results(
-            experiment_id=body.experiment_id,
-            x_axis=body.x_axis,
-            models=results,
-            sample_id=sample_id,
-            derived_path=derived_path,
-        )
+        if results:
+            # 空结果不落库（P1-4）：insert_fit_results 会先 DELETE 同轴既有记录，
+            # 空列表 + 落库 = 用一次失败拟合清空历史结果；derived 报告同理不覆写。
+            payload = {
+                "experiment_id": body.experiment_id,
+                "x_axis": body.x_axis,
+                "best": results[0]["model"] if results else None,
+                "models": results,
+            }
+            derived_path = await asyncio.to_thread(
+                storage.write_fit_report, body.experiment_id, payload
+            )
+            sample_id = exp.get("sample_id")
+            await persist.insert_fit_results(
+                experiment_id=body.experiment_id,
+                x_axis=body.x_axis,
+                models=results,
+                sample_id=sample_id,
+                derived_path=derived_path,
+            )
     return {
         "best": results[0]["model"] if results else None,
         "models": results,

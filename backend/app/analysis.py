@@ -170,9 +170,11 @@ def _pack(
     residuals = [yi - yh for yi, yh in zip(y, y_hat)]
     ss_res = sum(r * r for r in residuals)
     ss_tot = sum((yi - mean) ** 2 for yi in y)
-    if ss_tot < 1e-12:
+    if ss_tot <= 1e-12 * mean * mean * n:
         # y 恒定（退化数据）：任何模型都“完美贴合”，R²=1 并列排序会产出误导性
         # 最优结论并持久化污染 fit_results（T-14）。判为该模型无效，由 fit_all 跳过。
+        # 阈值是相对口径（相对波动 < 1e-6 视为恒定），与前端 ivAnalysis 同判据；
+        # 绝对阈值会误杀小量级真实信号（如 y~1e-6 的电流轴，P1-5）。
         raise ValueError("degenerate data: y is constant")
     r2 = 1.0 - ss_res / ss_tot
     rmse = math.sqrt(ss_res / n) if n else 0.0

@@ -124,8 +124,8 @@ test: add health endpoint test
 ```bash
 # Linux / 树莓派
 cd backend && source .venv/bin/activate
-# Windows（Git Bash / PowerShell）
-cd backend && .venv/Scripts/activate
+# Windows（Git Bash）——必须 source，直接执行 activate 会在子进程里跑、不注入当前 shell（P2-7）
+cd backend && source .venv/Scripts/activate
 
 python -m pip check
 python -m compileall app
@@ -133,6 +133,8 @@ python -m compileall app
 python -m pytest tests -q
 git diff --check
 ```
+
+PowerShell 激活命令不同（P2-7）：`.venv\Scripts\Activate.ps1`（`.venv\Scripts\activate` 在 PowerShell 下不可用）。
 
 涉及FastAPI接口时还应验证：
 
