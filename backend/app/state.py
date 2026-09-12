@@ -87,6 +87,9 @@ class ExperimentState:
             self.experiment_db_id = None
             self.experiment_uid = None
             self.calibration_id = None
+            # 样品/链路一并还原默认值，避免上一轮输入泄漏到 /api/experiment/current（T-20）
+            self.sample_id = DEFAULT_SAMPLE_ID
+            self.sensor_path_id = DEFAULT_SENSOR_PATH_ID
 
     def next_seq(self) -> int:
         """Monotonic seq for the current experiment. Safe if a second task appears."""
