@@ -1,7 +1,8 @@
 /**
  * 集中配置：后端地址、数据源模式、曲线参数。
  * 切换「模拟数据源」与「真实后端」只需改环境变量，核心业务代码零改动。
- * 生产由 FastAPI 在 :8000 同源托管 dist；开发时 Vite :5173 仍默认连 :8000。
+ * 生产由 FastAPI 同源托管 dist（任意端口/反向代理均自动成立）；
+ * 开发时 Vite :5173 默认连本机 :8000。可用 VITE_WS_URL / VITE_API_BASE 覆盖。
  * 详见 .env.example
  */
 
@@ -34,12 +35,15 @@ function defaultServerUrls(): { wsUrl: string; apiBase: string } {
   if (typeof window === 'undefined') {
     return { wsUrl: 'ws://localhost:8000/ws/stream', apiBase: 'http://localhost:8000' };
   }
-  const secure = window.location.protocol === 'https:';
-  const host = window.location.hostname || 'localhost';
-  return {
-    wsUrl: `${secure ? 'wss' : 'ws'}://${host}:8000/ws/stream`,
-    apiBase: `${secure ? 'https' : 'http'}://${host}:8000`,
-  };
+  // 生产由 FastAPI 同源托管 dist（任意端口/反代/HTTPS 都成立，T-11）；
+  // 仅 Vite 开发服务器（:5173）没有后端，回落到本机 :8000。
+  const isViteDevServer = window.location.port === '5173';
+  const apiBase = isViteDevServer
+    ? `${window.location.protocol === 'https:' ? 'https' : 'http'}://${
+        window.location.hostname || 'localhost'
+      }:8000`
+    : window.location.origin;
+  return { wsUrl: `${apiBase.replace(/^http/, 'ws')}/ws/stream`, apiBase };
 }
 
 const defaultServer = defaultServerUrls();

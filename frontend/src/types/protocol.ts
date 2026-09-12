@@ -220,7 +220,7 @@ export interface DataPoint {
   ec: number | null;
   /** °C */
   tc: number;
-  /** 浓度 mmol/L（可选）。实时帧/历史帧暂无该字段；浓度轴拟合时缺省用序号 1..N 占位 */
+  /** 浓度 mmol/L（可选）。实时帧无该字段（可由样品元数据补充）；无浓度的点不参与浓度轴拟合 */
   concentration?: number;
   // ---- I–V 测量链路（REQ-U-001 分层显示，可选） ----
   /** 原始电压 V */
@@ -251,7 +251,9 @@ export type ClientEvent =
       persistence?: string;
     }
   | { type: 'connection'; status: ConnectionStatus }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  /** 数据流恢复：客户端此前报过「数据流超时」，UI 据此自清横幅（T-10） */
+  | { type: 'stale-clear' };
 
 const VALID_STATUS: readonly ExperimentStatus[] = ['idle', 'running', 'stopped', 'error'];
 

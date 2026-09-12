@@ -100,7 +100,11 @@ export class WebSocketClient implements DataClient {
 
     ws.onmessage = (event: MessageEvent) => {
       this.lastMessageAt = Date.now();
-      this.staleAlerted = false;
+      // 数据流恢复后通知 UI 清掉「数据流超时」横幅，否则红色横幅常驻误导（T-10）
+      if (this.staleAlerted) {
+        this.staleAlerted = false;
+        this.emit({ type: 'stale-clear' });
+      }
       const parsed: ServerMessage | null = parseServerMessage(event.data);
       if (!parsed) {
         // 坏数据：丢弃该帧并提示，页面不崩溃（F10）
@@ -137,7 +141,8 @@ export class WebSocketClient implements DataClient {
   private scheduleReconnect(): void {
     if (this.manualClosed || this.reconnectTimer !== null) return;
     this.reconnectAttempts += 1;
-    const delay = Math.min(1000 * this.reconnectAttempts, 5000);
+    // 指数退避：1s, 2s, 4s, … 截断 5s（与注释及 docs/接口说明.md 一致，T-10）
+    const delay = Math.min(1000 * 2 ** (this.reconnectAttempts - 1), 5000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.open();
