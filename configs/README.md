@@ -14,7 +14,8 @@ configs/
 
 ## 约定
 
-- 每个配置带 `schema_version` 与 `created_at`，变更走迁移脚本（`scripts/`），不手工改表。
+- 每个配置带 `schema_version`；`created_at` 目前仅是规划——现存 `configs/devices/*.json` 均未携带
+  （驱动解析器会拒绝未知字段，补加须同步 `from_mapping` 白名单），变更走迁移脚本（`scripts/`），不手工改表。
 - 敏感字段（Wi-Fi 密码、令牌、私钥）**禁止**放这里——放 `.env` / 机密存储，且不入 Git（rule 37）。
 
 ## 示例
