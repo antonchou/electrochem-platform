@@ -23,6 +23,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: python -m pip install -r requirements-dev.txt
+      - name: Compile check (CONTRIBUTING §8)
+        run: python -m compileall app -q
       - name: Test
         run: python -m pytest tests -q
 

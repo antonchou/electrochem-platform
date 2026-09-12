@@ -19,9 +19,10 @@ export function useConnection(bridge: ExperimentBridge) {
       if (ev.type === 'error') {
         setError(ev.message);
       }
-      // 数据流恢复：自清「数据流超时」横幅（T-10）
+      // 数据流恢复：只清「数据流超时」横幅（P2-2）。
+      // error 通道里还有别的消息（如"收到非法数据帧"），不得被一并清掉。
       if (ev.type === 'stale-clear') {
-        setError(null);
+        setError((prev) => (prev != null && prev.includes('数据流超时') ? null : prev));
       }
     });
     bridge.connect();

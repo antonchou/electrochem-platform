@@ -192,8 +192,17 @@ export function analyzeIV(points: readonly DataPoint[]): IVAnalysis {
       const dI = p.i - meanI;
       ssTot += dI * dI;
     }
-    r2 = ssTot < 1e-30 ? null : 1 - ssRes / ssTot;
-    if (!Number.isFinite(slopeS) || !Number.isFinite(interceptA) || !Number.isFinite(r2)) {
+    // 退化判据（P1-5）：电流恒定时线性度不可判定 → r2 置 null（T-13）。
+    // 阈值用相对口径（与后端 analysis._pack 一致）：ssTot ≤ 1e-12·mean²·n，
+    // 即相对波动 < 1e-6 视为恒定；绝对阈值会误杀小量级真实信号（电流 A ~1e-6）。
+    r2 = ssTot <= 1e-12 * meanI * meanI * n ? null : 1 - ssRes / ssTot;
+    // 只拒绝非有限数值；r2 为 null（不可判定）不得并入该分支——
+    // Number.isFinite(null) === false，混在一起会把有效的 slopeS/interceptA 一并清掉（P1-3）
+    if (
+      !Number.isFinite(slopeS) ||
+      !Number.isFinite(interceptA) ||
+      (r2 !== null && !Number.isFinite(r2))
+    ) {
       slopeS = null;
       interceptA = null;
       r2 = null;

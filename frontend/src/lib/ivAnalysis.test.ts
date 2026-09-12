@@ -106,6 +106,36 @@ test('constant current no longer reports a fake perfect fit (T-13)', () => {
   assert.ok(ivReasonMessage('undetermined').length > 0);
 });
 
+test('undetermined r2 keeps valid slopeS/interceptA (P1-3)', () => {
+  // r2 = null 不得并入"非有限值"守卫：Number.isFinite(null) === false，
+  // 修复前会把可计算的斜率/截距一并清成 null，展示组件全部变空
+  const points = [0.2, 0.5, 0.9, 1.0].map((v, i) =>
+    pt({ t: i, voltage_raw_v: v, current_raw_a: 0.002 }),
+  );
+  const result = analyzeIV(points);
+  assert.ok(result.slopeS != null && Math.abs(result.slopeS) < 1e-9);
+  assert.ok(result.interceptA != null && Math.abs(result.interceptA - 0.002) < 1e-12);
+});
+
+test('small-magnitude real signal is not judged degenerate (P1-5)', () => {
+  // 电流 ~1e-6 A 且带真实线性成分：相对判据下必须正常判线性，
+  // 绝对阈值（旧后端口径 1e-12 / 旧前端口径 1e-30 风格）会误杀
+  const i0 = 1e-6;
+  const points = [0.2, 0.5, 0.9, 1.0].map((v, i) =>
+    pt({
+      t: i,
+      voltage_raw_v: v,
+      current_raw_a: i0 + 2e-7 * v,
+      kappa_25_us_cm: 100,
+      ec: 100,
+    }),
+  );
+  const result = analyzeIV(points);
+  assert.equal(result.reason, 'ok');
+  assert.equal(result.linearOk, true);
+  assert.ok(result.r2 != null);
+});
+
 test('rawFrameToPoint maps missing t_seconds to NaN so fit filters it (T-04)', () => {
   const frame = {
     id: 1,

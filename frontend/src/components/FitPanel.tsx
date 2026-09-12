@@ -126,13 +126,16 @@ export function FitPanel({ api, points, experimentId, testIdPrefix = 'fit', btnT
     setFitError(null);
   };
 
-  // 数据一变旧拟合即失效（T-03）：同一 experiment 内 stop→拟合→继续→再停止时
-  // points 已更新，残留上一段数据的拟合结论（最优模型 / R² / 叠加曲线）属于误导。
-  // 依赖 points 的引用相等性：父组件须用 useMemo 稳定该 prop（现有两处调用均如此）。
+  // 数据一变旧拟合即失效（T-03）：points 内容变化时清空上一段数据的拟合结论
+  // （最优模型 / R² / 叠加曲线），避免数据更新后残留误导结果。
+  // 依赖是"内容签名"而非数组引用（P2-1）：父组件重建等内容数组（如 ResultPanel
+  // 停止后详情刷新导致 sample 引用更新）不应误清用户刚算出的结果；
+  // 内容真实变化（追加帧 / 换数据集）则必须失效。签名 = 点数 + 首末点时间。
+  const pointsSignature = `${points.length}|${points[0]?.t ?? ''}|${points[points.length - 1]?.t ?? ''}`;
   useEffect(() => {
     invalidateFit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [points]);
+  }, [pointsSignature]);
 
   const toggleModel = (key: string) => {
     setSelectedModels((prev) =>

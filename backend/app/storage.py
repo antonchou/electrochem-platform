@@ -12,11 +12,14 @@ import csv
 import datetime
 import io
 import json
+import logging
 import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
+
+logger = logging.getLogger("app.storage")
 
 # 仓库约定：原始数据不可变，统一存 data/raw/（backend/app/storage.py → 仓库根/data/raw/ec.db）
 DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "ec.db"
@@ -636,13 +639,28 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
     if not frames:
         return
     # experiment_id / sensor_path_id / temperature_raw 为 NOT NULL 列，缺失即畸形行
-    valid = [
-        f
-        for f in frames
-        if f.get("experiment_id") is not None
-        and f.get("sensor_path_id") is not None
-        and f.get("temperature_raw") is not None
-    ]
+    valid: List[Dict[str, Any]] = []
+    dropped = 0
+    first_bad: Optional[Dict[str, Any]] = None
+    for f in frames:
+        if (
+            f.get("experiment_id") is not None
+            and f.get("sensor_path_id") is not None
+            and f.get("temperature_raw") is not None
+        ):
+            valid.append(f)
+        else:
+            dropped += 1
+            if first_bad is None:
+                first_bad = f
+    if dropped:
+        # 丢弃必须留痕（P2-4）：静默消失比整批失败更难排查
+        logger.warning(
+            "insert_frames skipped %d malformed frame(s) (need experiment_id/"
+            "sensor_path_id/temperature_raw); first bad frame keys=%s",
+            dropped,
+            sorted(first_bad.keys()) if isinstance(first_bad, dict) else None,
+        )
     if not valid:
         return
     rows = [{col: f.get(col) for col in _FRAME_COLUMNS} for f in valid]
@@ -859,6 +877,8 @@ def export_json(experiment_id: int) -> str:
     exp = get_experiment(experiment_id)
     if exp is None:
         raise LookupError(f"experiment {experiment_id} not found")
+    # get_frames 的 storage 级上界是 1_000_000 行；导出属显式的单实验全量操作
+    # （P3-6），超长实验由 truncated 标志告知调用方，而非静默截断。
     frames = get_frames(experiment_id, limit=1_000_000)
     total = count_frames(experiment_id)
     exp["frames"] = frames
@@ -927,6 +947,10 @@ def insert_fit_results(
     derived_path: Optional[str] = None,
 ) -> List[int]:
     """Persist one fit run (one row per model)."""
+    if not models:
+        # 空结果不动库（P1-4）：下面的 DELETE 会清掉同轴既有记录，
+        # 调用方（routes.fit）已跳过空结果，这里兜底防御。
+        return []
     ids: List[int] = []
     with _conn() as conn:
         conn.execute(

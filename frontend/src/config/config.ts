@@ -35,10 +35,11 @@ function defaultServerUrls(): { wsUrl: string; apiBase: string } {
   if (typeof window === 'undefined') {
     return { wsUrl: 'ws://localhost:8000/ws/stream', apiBase: 'http://localhost:8000' };
   }
-  // 生产由 FastAPI 同源托管 dist（任意端口/反代/HTTPS 都成立，T-11）；
-  // 仅 Vite 开发服务器（:5173）没有后端，回落到本机 :8000。
-  const isViteDevServer = window.location.port === '5173';
-  const apiBase = isViteDevServer
+  // 生产（build 产物）由 FastAPI 同源托管，任意端口/反代/HTTPS 自动成立；
+  // 开发服务器没有后端，回落本机 :8000。
+  // 判据用 import.meta.env.DEV（P1-2）：Vite 端口被占会漂移到 5174+，preview 是
+  // 4173，按端口号判断都会静默失效把 API 指回页面自身 origin。
+  const apiBase = import.meta.env.DEV
     ? `${window.location.protocol === 'https:' ? 'https' : 'http'}://${
         window.location.hostname || 'localhost'
       }:8000`
