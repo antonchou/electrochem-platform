@@ -2,7 +2,6 @@
 
 import asyncio
 import datetime
-import json
 import logging
 import math
 import os
@@ -98,7 +97,9 @@ async def start_acquisition() -> None:
     global _acquisition_task, _driver, _sample_period_seconds
     async with _lifecycle_lock:
         if _acquisition_task is None or _acquisition_task.done():
-            _driver, _sample_period_seconds = _build_driver()
+            # 构建（CSV 全文件读入 + 排序）与 connect（IO）都可能耗时，移出事件循环
+            # 执行，避免持锁期间阻塞所有 API/WS（T-09）
+            _driver, _sample_period_seconds = await asyncio.to_thread(_build_driver)
             await _driver.connect()
             _acquisition_task = asyncio.create_task(_acquisition_loop())
 
@@ -137,6 +138,11 @@ def _measurement_params() -> dict:
     if claimed is None:
         claimed = bool(driver_cal_id) and driver_cal_id != "UNCALIBRATED"
     cal_id = state.calibration_id if state.calibration_id is not None else driver_cal_id
+    if cal_id and cal_id != "UNCALIBRATED":
+        # 溯源一致性（T-06）：帧携带真实 calibration_id 时不得再标 UNCALIBRATED，
+        # 否则 EC_CALIBRATION_ID 覆盖 / 带校准 id 的驱动会产出自相矛盾的溯源链。
+        # "UNCALIBRATED" 是驱动的“未校准”哨兵值，不算已声明。
+        claimed = True
     return {
         "cell_constant_per_cm": cell,
         "alpha_per_c": alpha,
@@ -731,17 +737,16 @@ async def export_csv(exp_id: int) -> Response:
 
 @router.get("/api/experiments/{exp_id}/export.json")
 async def export_json(exp_id: int) -> Response:
-    """导出完整实验（元信息 + 全部帧）为 JSON。"""
-    exp = await asyncio.to_thread(storage.get_experiment, exp_id)
-    if exp is None:
+    """导出完整实验（元信息 + 全部帧）为 JSON。
+
+    取数与 json.dumps 都在工作线程完成，避免长实验序列化阻塞事件循环（T-07）。
+    """
+    try:
+        payload = await asyncio.to_thread(storage.export_json, exp_id)
+    except LookupError:
         raise HTTPException(status_code=404, detail="experiment not found")
-    frames = await asyncio.to_thread(storage.get_frames, exp_id, limit=1_000_000)
-    total = await asyncio.to_thread(storage.count_frames, exp_id)
-    exp["frames"] = frames
-    exp["truncated"] = total > len(frames)
-    exp["frame_count_total"] = total
     return Response(
-        content=json.dumps(exp, ensure_ascii=False),
+        content=payload,
         media_type="application/json; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="experiment_{exp_id}.json"'
@@ -820,11 +825,14 @@ async def burst(count: Annotated[int, Query(ge=1, le=10_000)] = 10_000) -> dict:
     """快速推送 count 帧（默认 1 万），用于验证前端大点数负载与 30 分钟模拟（P03/P04）。
 
     仅广播、不落库、不消耗 seq：注入帧不进入 raw_frames（B-3 修复，保证原始数据纯净）。
+
+    每 200 帧以 sleep(0) 让出事件循环（T-08）：broadcast 对同一 payload 只序列化一次，
+    但 1 万次 generate_frame + 序列化 + 入队若不让出，会拖慢采集周期使负载测试失真。
     """
     sent = 0
     for i in range(count):
         frame = generate_frame(i * 0.1)
         sent += await broadcast(frame)
         if i % 200 == 199:
-            await asyncio.sleep(0.002)
+            await asyncio.sleep(0)
     return {"ok": True, "sent": sent}

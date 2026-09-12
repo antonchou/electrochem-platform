@@ -8,13 +8,17 @@ COMPUTE_INVALID），原始 U/I/T 仍落库（Raw 层不可变），Derived 层�
 
 from __future__ import annotations
 
+import asyncio
 import bisect
 import csv
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
 
 from .base import DeviceDriver, DriverReading
+
+logger = logging.getLogger("app.drivers.csv_playback")
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,12 +59,23 @@ class CsvPlaybackDriver(DeviceDriver):
         self._rows: List[Tuple[float, float, float, float]] = []
         self._times: List[float] = []
         self._max_t = 0.0
+        self._degenerate_warned = False
 
     @property
     def connected(self) -> bool:
         return self._connected
 
     async def connect(self) -> None:
+        # 文件读入 + 排序可能耗时（大 CSV），放线程池执行，不阻塞事件循环（T-09）
+        rows, times, max_t = await asyncio.to_thread(self._load_rows)
+        if not rows:
+            raise ValueError(f"no valid rows in {self.config.path}")
+        self._rows = rows
+        self._times = times
+        self._max_t = max_t
+        self._connected = True
+
+    def _load_rows(self) -> Tuple[List[Tuple[float, float, float, float]], List[float], float]:
         path = Path(self.config.path)
         if not path.exists():
             raise FileNotFoundError(f"CSV not found: {path}")
@@ -76,13 +91,8 @@ class CsvPlaybackDriver(DeviceDriver):
                 except (KeyError, ValueError):
                     continue
                 rows.append((t, v, i, temp))
-        if not rows:
-            raise ValueError(f"no valid rows in {path}")
         rows.sort(key=lambda r: r[0])
-        self._rows = rows
-        self._times = [r[0] for r in rows]
-        self._max_t = rows[-1][0]
-        self._connected = True
+        return rows, [r[0] for r in rows], rows[-1][0] if rows else 0.0
 
     async def close(self) -> None:
         self._connected = False
@@ -97,7 +107,19 @@ class CsvPlaybackDriver(DeviceDriver):
         if t_eff > self._max_t:
             if not self.config.loop:
                 return DriverReading(ec=None, temperature=None, quality_flags=("CSV", "EOF"))
-            t_eff = t_eff % (self._max_t + 1e-9)
+            if self._max_t <= 0:
+                # 全部行时间戳相同（≤0）时回绕取模退化为 % 1e-9，取值病态（T-18）：
+                # 不做回绕，固定回放首行并只警告一次。
+                if not self._degenerate_warned:
+                    self._degenerate_warned = True
+                    logger.warning(
+                        "csv playback loop=true but max timestamp <= 0 (%s); "
+                        "replaying first row instead of wrapping",
+                        self._max_t,
+                    )
+                t_eff = self._times[0]
+            else:
+                t_eff = t_eff % (self._max_t + 1e-9)
         idx = bisect.bisect_right(self._times, t_eff) - 1
         if idx < 0:
             idx = 0

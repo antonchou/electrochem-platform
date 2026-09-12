@@ -69,12 +69,35 @@ def _solve_linear_system(a: List[List[float]], b: List[float]) -> List[float]:
     return [m[i][n] / m[i][i] for i in range(n)]
 
 
+def _rescale_coeffs(coeffs: List[float], x_center: float, x_scale: float) -> List[float]:
+    """把 z = (x − x_center)/x_scale 空间的升幂系数还原回原始 x 空间。"""
+    deg = len(coeffs) - 1
+    out = [0.0] * (deg + 1)
+    for k, ck in enumerate(coeffs):
+        if ck == 0.0:
+            continue
+        scale = ck / (x_scale**k)
+        for j in range(k + 1):
+            out[j] += scale * math.comb(k, j) * ((-x_center) ** (k - j))
+    return out
+
+
 def _polyfit(x: List[float], y: List[float], deg: int) -> List[float]:
-    """多项式最小二乘，返回升幂系数 [c0, c1, ..., c_deg]（解正规方程）。"""
+    """多项式最小二乘，返回原始 x 尺度的升幂系数 [c0, c1, ..., c_deg]。
+
+    先对 x 中心化 + 缩放再解正规方程（T-15）：temperature 轴 ~1e2、concentration
+    轴可达 1e4 时，x^(2deg) 项令条件数爆炸，大 x 量级下要么精度损失要么被误判
+    奇异而静默跳过模型。中心化/缩放不改变拟合结果，只改善数值条件。
+    """
     n = deg + 1
-    a = [[sum(xi ** (i + j) for xi in x) for j in range(n)] for i in range(n)]
-    b = [sum(xi**i * yi for xi, yi in zip(x, y)) for i in range(n)]
-    return _solve_linear_system(a, b)
+    x_center = sum(x) / len(x)
+    x_scale = max((abs(xi - x_center) for xi in x), default=0.0)
+    if x_scale <= 0.0:
+        x_scale = 1.0  # x 恒定：留给奇异判定报错，与旧行为一致
+    zs = [(xi - x_center) / x_scale for xi in x]
+    a = [[sum(zi ** (i + j) for zi in zs) for j in range(n)] for i in range(n)]
+    b = [sum(zi**i * yi for zi, yi in zip(zs, y)) for i in range(n)]
+    return _rescale_coeffs(_solve_linear_system(a, b), x_center, x_scale)
 
 
 def _linfit_cols(cols: List[List[float]], y: List[float]) -> List[float]:
@@ -147,7 +170,11 @@ def _pack(
     residuals = [yi - yh for yi, yh in zip(y, y_hat)]
     ss_res = sum(r * r for r in residuals)
     ss_tot = sum((yi - mean) ** 2 for yi in y)
-    r2 = 1.0 if ss_tot < 1e-12 else 1.0 - ss_res / ss_tot
+    if ss_tot < 1e-12:
+        # y 恒定（退化数据）：任何模型都“完美贴合”，R²=1 并列排序会产出误导性
+        # 最优结论并持久化污染 fit_results（T-14）。判为该模型无效，由 fit_all 跳过。
+        raise ValueError("degenerate data: y is constant")
+    r2 = 1.0 - ss_res / ss_tot
     rmse = math.sqrt(ss_res / n) if n else 0.0
     mae = sum(abs(r) for r in residuals) / n if n else 0.0
     aicc = None
