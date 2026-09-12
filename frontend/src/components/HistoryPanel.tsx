@@ -118,7 +118,9 @@ export function HistoryPanel({ api, onClose }: Props) {
       }
     }
     return frames.map((f) => ({
-      t: f.t_seconds ?? 0,
+      // t_seconds 为 null 的帧必须给 NaN 让 buildFitPoints 过滤（T-04）：
+      // `?? 0` 会造出 (0, ec) 假点，把时间轴拟合带偏
+      t: f.t_seconds ?? Number.NaN,
       tc: f.temperature_raw,
       ec: f.kappa_25_us_cm ?? f.k25 ?? f.ec_raw,
       // 浓度 0（空白样）是合法标定点，必须保留：`||` 会把 0 吞成 undefined
