@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  // 测试文件单独建 program（T-23）：主 tsconfig 排除了 *.test.ts，
+  // 不纳入则测试代码的类型错误无法在 CI / 构建前暴露。
+  "include": ["src/**/*.test.ts"],
+  "exclude": []
+}

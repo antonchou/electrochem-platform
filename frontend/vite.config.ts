@@ -14,7 +14,11 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes('node_modules/zrender')) return 'vendor-zrender';
           if (id.includes('node_modules/echarts')) return 'vendor-echarts';
-          if (id.includes('node_modules/react')) return 'vendor-react';
+          // 显式列出 react / react-dom（T-26）：旧的 includes('node_modules/react')
+          // 是子串匹配，把 react-dom 捎带进 vendor-react 属于无意行为，意图不明。
+          if (/node_modules[\\/]react(-dom)?[\\/]/.test(id)) {
+            return 'vendor-react';
+          }
         },
       },
     },
