@@ -20,6 +20,7 @@ import pytest
 from types import SimpleNamespace
 
 from app import analysis, routes, storage
+from app.drivers.base import DriverConfig
 from app.drivers.csv_playback import CsvPlaybackConfig, CsvPlaybackDriver
 from app.drivers.simulator import FaultKind, SimulatorConfig, SimulatorDriver, SimulatorMode
 from app.persistence import PersistService, _FlushBarrier, _STOP
@@ -84,7 +85,7 @@ def test_stop_swallows_writer_exception(tmp_path, monkeypatch):
 def test_insert_frames_skips_malformed_rows(tmp_path, monkeypatch):
     monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "t05.db"))
     storage.init_db()
-    exp_id = storage.create_experiment("EXP-T05", "malformed rows")
+    exp_id = storage.create_experiment_with_sample("EXP-T05", "malformed rows", "S1", "MOCK_EC_IV")
 
     good = {
         "experiment_id": exp_id,
@@ -117,11 +118,7 @@ def test_insert_frames_all_malformed_is_noop(tmp_path, monkeypatch):
 
 def test_calibration_claimed_follows_calibration_id_when_driver_silent(monkeypatch):
     """T-06：驱动未显式声明 claimed 时，有效校准 id 推导 claimed=True。"""
-    cfg = SimpleNamespace(
-        cell_constant_per_cm=1.0,
-        alpha_per_c=0.02,
-        calibration_id=None,
-    )
+    cfg = DriverConfig(calibration_id=None)
     fake_driver = SimpleNamespace(config=cfg)
     monkeypatch.setattr(routes, "_driver", fake_driver)
     monkeypatch.setattr(state, "calibration_id", "ENV-CAL-01")
@@ -135,12 +132,7 @@ def test_calibration_claimed_follows_calibration_id_when_driver_silent(monkeypat
 
 def test_calibration_claimed_explicit_false_wins(monkeypatch):
     """P2-5：驱动显式 calibration_claimed=False（有编号但未校准）不得被覆盖。"""
-    cfg = SimpleNamespace(
-        cell_constant_per_cm=1.0,
-        alpha_per_c=0.02,
-        calibration_id="SIM-KCELL-1.0",
-        calibration_claimed=False,
-    )
+    cfg = DriverConfig(calibration_id="SIM-KCELL-1.0", calibration_claimed=False)
     fake_driver = SimpleNamespace(config=cfg)
     monkeypatch.setattr(routes, "_driver", fake_driver)
     monkeypatch.setattr(state, "calibration_id", "SIM-KCELL-1.0")
@@ -156,7 +148,7 @@ def test_calibration_claimed_explicit_false_wins(monkeypatch):
 def test_storage_export_json_full_content(tmp_path, monkeypatch):
     monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "t07.db"))
     storage.init_db()
-    exp_id = storage.create_experiment("EXP-T07", "export")
+    exp_id = storage.create_experiment_with_sample("EXP-T07", "export", "S1", "MOCK_EC_IV")
     storage.insert_frames(
         [
             {

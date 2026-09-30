@@ -11,23 +11,6 @@
   line-height: 1.6;
 }
 
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.table th,
-.table td {
-  border: 1px solid var(--border);
-  padding: 6px 10px;
-  text-align: left;
-}
-
-.table th {
-  background: #f7f8fb;
-}
-
 .disabledRow td {
   color: var(--text-sub);
   background: #fafafa;

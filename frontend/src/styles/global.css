@@ -40,3 +40,22 @@ body {
 button {
   font-family: inherit;
 }
+
+/* 数据表：拟合结果、历史样品汇总、跨实验标定选点共用 */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table th,
+.data-table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.data-table th {
+  background: #f7f8fb;
+}

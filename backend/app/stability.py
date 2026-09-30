@@ -208,33 +208,6 @@ def check_stability(
     )
 
 
-def qc_series_from_frames(rows: list[dict]) -> tuple[list[float], list[str], list[float]]:
-    """Build aligned κ25 / quality-flag / t_seconds series (numeric window only).
-
-    Drops rows without κ25 and rows marked COMPUTE_INVALID so flags stay
-    aligned with the numeric window. Hard flags on the dropped rows are lost
-    here — stop-time QC therefore goes through qc_from_frames (09-30 #1).
-    The returned timestamps cover exactly the kept rows so callers can
-    estimate the sample rate (rate_scaled_config).
-    """
-    values: list[float] = []
-    flags: list[str] = []
-    timestamps: list[float] = []
-    for row in rows:
-        kappa25 = row.get("kappa_25_us_cm")
-        if kappa25 is None:
-            continue
-        flag = row.get("quality_flags") or ""
-        parts = [part for part in flag.split("|") if part]
-        if "COMPUTE_INVALID" in parts:
-            continue
-        values.append(float(kappa25))
-        flags.append(flag)
-        t = row.get("t_seconds")
-        timestamps.append(float(t) if t is not None else float("nan"))
-    return values, flags, timestamps
-
-
 def _flag_tokens(raw: str | None) -> list[str]:
     return [part for part in (raw or "").split("|") if part]
 

@@ -1,27 +1,25 @@
 """SQLite 存储层测试：生命周期、append-only 约束、样品汇总、CSV 导出。"""
 
-import os
 import sqlite3
 
 import pytest
 
 
 @pytest.fixture()
-def store(tmp_path):
-    os.environ["EC_DB_PATH"] = str(tmp_path / "storage_test.db")
+def store(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "storage_test.db"))
     from app import storage
 
     storage.init_db()
     yield storage
-    os.environ.pop("EC_DB_PATH", None)
 
 
 def test_experiment_lifecycle(store):
-    eid = store.create_experiment(
+    eid = store.create_experiment_with_sample(
         "EXP-TEST-001",
         "不同溶液导电性相对比较",
-        sample_id="NACL_004",
-        sensor_path_id="CM2_WIDE",
+        "NACL_004",
+        "CM2_WIDE",
         metadata={"c_mmol_l": 4.0},
     )
     items = store.list_experiments()
@@ -38,10 +36,10 @@ def test_experiment_lifecycle(store):
 
 def test_abort_stale_running_experiments_leaves_terminal_rows(store):
     """P1-B：启动兜底只动 running 行，stopped/aborted 不动。"""
-    leftover = store.create_experiment("EXP-STALE", "leftover")
-    stopped = store.create_experiment("EXP-STOPPED", "done")
+    leftover = store.create_experiment_with_sample("EXP-STALE", "leftover", "S", "WIDE")
+    stopped = store.create_experiment_with_sample("EXP-STOPPED", "done", "S", "WIDE")
     store.finish_experiment(stopped, "stopped")
-    aborted = store.create_experiment("EXP-ABORTED", "killed")
+    aborted = store.create_experiment_with_sample("EXP-ABORTED", "killed", "S", "WIDE")
     store.finish_experiment(aborted, "aborted")
 
     assert store.abort_stale_running_experiments() == 1
@@ -55,7 +53,7 @@ def test_abort_stale_running_experiments_leaves_terminal_rows(store):
 
 def test_raw_frames_append_only(store):
     """REQ-D-001：原始帧只追加，UPDATE/DELETE 均被拒绝。"""
-    eid = store.create_experiment("EXP-002", "t", sample_id="S", sensor_path_id="CM2_WIDE")
+    eid = store.create_experiment_with_sample("EXP-002", "t", "S", "CM2_WIDE")
     store.insert_frames(
         [
             {
@@ -89,18 +87,8 @@ def test_raw_frames_append_only(store):
     assert store.count_frames(eid) == 1
 
 
-def test_sample_upsert_accumulates(store):
-    eid = store.create_experiment("EXP-003", "t", sample_id="NACL_002", sensor_path_id="CM2_WIDE")
-    store.upsert_sample(eid, "NACL_002", "CM2_WIDE", concentration_mmol_l=2.0, frame_count_delta=5)
-    store.upsert_sample(eid, "NACL_002", "CM2_WIDE", frame_count_delta=7)
-    samples = store.get_samples(eid)
-    assert len(samples) == 1
-    assert samples[0]["frame_count"] == 12
-    assert samples[0]["concentration_mmol_l"] == 2.0
-
-
 def test_export_csv(store):
-    eid = store.create_experiment("EXP-004", "t", sample_id="NACL_006", sensor_path_id="CM2_WIDE")
+    eid = store.create_experiment_with_sample("EXP-004", "t", "NACL_006", "CM2_WIDE")
     store.insert_frames(
         [
             {
@@ -131,7 +119,7 @@ def test_export_csv(store):
 
 def test_export_csv_neutralizes_formula_injection(store):
     """sample_id 以 = + - @ 开头时导出必须前置单引号，防止 Excel 公式执行。"""
-    eid = store.create_experiment("EXP-INJ", "t", sample_id="=cmd|'/c calc'!A1", sensor_path_id="CM2_WIDE")
+    eid = store.create_experiment_with_sample("EXP-INJ", "t", "=cmd|'/c calc'!A1", "CM2_WIDE")
     store.insert_frames(
         [
             {
@@ -159,7 +147,7 @@ def test_export_csv_neutralizes_formula_injection(store):
 
 
 def test_get_recent_frames_returns_tail(store):
-    eid = store.create_experiment("EXP-TAIL", "t", sample_id="S", sensor_path_id="MOCK_EC_IV")
+    eid = store.create_experiment_with_sample("EXP-TAIL", "t", "S", "MOCK_EC_IV")
     store.insert_frames(
         [
             {
@@ -184,7 +172,7 @@ def test_get_recent_frames_returns_tail(store):
 
 
 def test_calibration_and_frame_trace_columns(store):
-    eid = store.create_experiment("EXP-CAL", "t", sample_id="S", sensor_path_id="MOCK_EC_IV")
+    eid = store.create_experiment_with_sample("EXP-CAL", "t", "S", "MOCK_EC_IV")
     rid = store.insert_calibration_record(
         experiment_id=eid,
         calibration_id="MOCK-KCELL-1.0",
@@ -234,7 +222,7 @@ def test_calibration_and_frame_trace_columns(store):
 
 def test_fit_results_replace_same_axis(store, tmp_path, monkeypatch):
     monkeypatch.setenv("EC_DERIVED_DIR", str(tmp_path / "derived"))
-    eid = store.create_experiment("EXP-FIT", "fit")
+    eid = store.create_experiment_with_sample("EXP-FIT", "fit", "S", "WIDE")
     model = {
         "model": "linear",
         "label": "线性",

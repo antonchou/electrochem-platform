@@ -84,7 +84,7 @@ def test_mock_iv_backderivation_consistent():
             base_temperature=25.0,
             cell_constant_per_cm=1.0,
             alpha_per_c=0.02,
-            excitation_voltage_v=1.0,
+            excitation_amplitude_v=1.0,
             scenario=MockScenario.STABLE,
         )
         device = MockDevice(cfg)

@@ -1,4 +1,5 @@
 import type { DataPoint, FitAxis } from '../types/protocol';
+import { downsample } from './downsample.ts';
 
 /** 后端 /api/analysis/fit 的 x/y 单数组上限（schemas.FitRequest max_length） */
 export const MAX_FIT_POINTS = 20_000;
@@ -29,19 +30,5 @@ export function fitCandidates(points: DataPoint[], axis: FitAxis): [number, numb
  * 否则长实验（>2 万帧）的拟合请求必然 422。
  */
 export function buildFitPoints(points: DataPoint[], axis: FitAxis): [number, number][] {
-  return downsample(fitCandidates(points, axis));
-}
-
-/** 等间隔降采样到 ≤ max 点，保留首末点；不超过上限时原样返回。 */
-export function downsample(
-  points: [number, number][],
-  max: number = MAX_FIT_POINTS,
-): [number, number][] {
-  if (points.length <= max) return points;
-  const out: [number, number][] = new Array(max);
-  for (let i = 0; i < max - 1; i++) {
-    out[i] = points[Math.floor((i * (points.length - 1)) / (max - 1))];
-  }
-  out[max - 1] = points[points.length - 1];
-  return out;
+  return downsample(fitCandidates(points, axis), MAX_FIT_POINTS);
 }

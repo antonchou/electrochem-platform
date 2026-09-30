@@ -5,7 +5,8 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers';
 import type { DataPoint } from '../types/protocol';
 import { config } from '../config/config';
-import { strideSample } from '../lib/units';
+import { useEChart } from '../hooks/useEChart';
+import { downsample } from '../lib/downsample';
 import { mergeAxisBounds, paddedBounds, type AxisBounds } from '../lib/axis';
 import styles from './WaveformChart.module.css';
 
@@ -22,12 +23,13 @@ const DISPLAY_POINTS = 4000;
  */
 export function WaveformChart({ pointsRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useEChart(containerRef);
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    const chart = chartRef.current;
+    if (!el || !chart) return;
 
-    const chart = echarts.init(el);
     chart.setOption({
       animation: false,
       tooltip: { trigger: 'axis' },
@@ -91,7 +93,7 @@ export function WaveformChart({ pointsRef }: Props) {
         vBounds = null;
         iBounds = null;
       }
-      const pts = strideSample(source, DISPLAY_POINTS);
+      const pts = downsample(source, DISPLAY_POINTS);
 
       const vData: [number, number][] = [];
       const iData: [number, number][] = [];
@@ -171,18 +173,8 @@ export function WaveformChart({ pointsRef }: Props) {
 
     render();
     const timer = window.setInterval(render, config.chart.updateIntervalMs);
-    const onResize = () => chart.resize();
-    window.addEventListener('resize', onResize);
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
-    observer?.observe(el);
-
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener('resize', onResize);
-      observer?.disconnect();
-      chart.dispose();
-    };
-  }, [pointsRef]);
+    return () => window.clearInterval(timer);
+  }, [chartRef, pointsRef]);
 
   return <div ref={containerRef} className={styles.chart} data-testid="realtime-chart" />;
 }

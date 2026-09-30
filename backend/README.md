@@ -14,7 +14,6 @@ backend/
 │   ├── drivers/         # DeviceDriver 接口 + 可配置 MockDevice
 │   ├── schemas.py       # 协议模型
 │   ├── state.py         # 实验状态机 + 溯源上下文
-│   ├── stream.py        # 模拟数据发生器
 │   ├── storage.py       # SQLite 存储（append-only 约束）
 │   └── persistence.py   # 后台异步落库
 ├── tests/               # pytest（存储/协议/API）

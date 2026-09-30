@@ -120,24 +120,6 @@
   gap: 8px;
 }
 
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.table th,
-.table td {
-  border: 1px solid var(--border);
-  padding: 6px 10px;
-  text-align: left;
-}
-
-.table th {
-  background: #f1f3f8;
-}
-
 .bestRow {
   background: #eef7f0;
 }
