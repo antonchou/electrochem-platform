@@ -165,6 +165,10 @@ class FakePort:
     def __init__(self, lines):
         self.lines = [line.encode() for line in lines]
         self.closed = False
+        self.written = b""
+
+    def write(self, data):
+        self.written += data
 
     def readline(self):
         if not self.lines:
@@ -178,22 +182,28 @@ class FakePort:
 def test_serial_device_parses_frames_logs_and_reconnects(monkeypatch):
     monkeypatch.setattr(devices_module, "RETRY_S", 0.01)
     ports = [FakePort(["# INFO ADS1256 正常\n", b"".decode(), firmware_line(1, 0) + "\n", firmware_line(3, 2000) + "\n"])]
+    opened = []
     attempts = []
 
     def open_port():
         attempts.append(1)
         if len(attempts) == 1:
             raise OSError("busy")
-        return ports.pop(0) if ports else FakePort([])
+        opened.append(ports.pop(0) if ports else FakePort([]))
+        return opened[-1]
 
-    events = collect(SerialDevice("/dev/ttyUSB0", open_port=open_port).stream(), limit=7)
+    events = collect(SerialDevice("/dev/ttyUSB0", open_port=open_port).stream(), limit=8)
     assert events[0] == DeviceStatus(False, "打不开串口 /dev/ttyUSB0：busy")
-    assert events[1] == DeviceStatus(True, "串口 /dev/ttyUSB0 已打开")
+    assert events[1] == DeviceStatus(True, "串口 /dev/ttyUSB0 已打开，正在重启固件")
     assert events[2] == DeviceStatus(True, "INFO ADS1256 正常")
     assert [e.device_seq for e in events[3:5]] == [1, 3]
     assert events[4].flags == (SEQ_GAP,)
     assert events[5] == DeviceStatus(False, "串口断开：device unplugged")
-    assert events[6] == DeviceStatus(True, "串口 /dev/ttyUSB0 已打开")  # 重连后序号检查重新开始
+    assert events[6] == DeviceStatus(True, "串口 /dev/ttyUSB0 已打开，正在重启固件")  # 重连后序号检查重新开始
+    assert events[7] == DeviceStatus(False, "串口断开：device unplugged")
+    # 每次打开都先让 MicroPython 软重启（Thonny 断开后板子停在 REPL，main.py 不会自己再跑）
+    assert [port.written for port in opened] == [b"\x03\x02\x04", b"\x03\x02\x04"]
+    assert all(port.closed for port in opened)
 
 
 def test_sample_capture_goes_through_the_whole_chain():
@@ -221,8 +231,7 @@ class ChunkedPort(FakePort):
     """模拟 pyserial：超时按整次调用计，帧恰好跨过超时边界时先返回半行。"""
 
     def __init__(self, chunks):
-        self.lines = [c.encode() for c in chunks]
-        self.closed = False
+        super().__init__(chunks)
 
 
 def test_serial_device_joins_lines_split_by_read_timeouts(monkeypatch):
