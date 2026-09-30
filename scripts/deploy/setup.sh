@@ -25,7 +25,7 @@ fi
 case "$EC_BIND" in
   127.0.0.1 | 0.0.0.0 | localhost) ;;
   *)
-    if [[ ! "$EC_BIND" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    if [[ ! "$EC_BIND" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$ ]]; then
       echo "错误：无效 EC_BIND=${EC_BIND}（允许 127.0.0.1、0.0.0.0、localhost 或 IPv4）"
       exit 1
     fi
@@ -96,7 +96,9 @@ chmod +x "${PROJECT_DIR}/scripts/run_backend.sh"
 cat > "$SVC_BACKEND" <<EOF
 [Unit]
 Description=EC Experiment (FastAPI + frontend)
-After=network.target
+# 绑定具体网卡 IP 时要等地址就绪，否则开机时 uvicorn 先绑定失败、靠 Restart 反复重试
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 User=${DEPLOY_USER}
