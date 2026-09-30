@@ -783,6 +783,42 @@ def get_frames(
         return [dict(r) for r in rows]
 
 
+def get_frames_even(experiment_id: int, *, max_points: int) -> List[Dict[str, Any]]:
+    """全实验等间隔抽样至多 max_points 帧（按时间正序，保留首末帧）。
+
+    历史详情的曲线/拟合要覆盖整条实验：旧做法取前 N 帧，超长实验只看得到开头（R3-6）。
+    下标取 floor(i·(n−1)/(max−1))，与前端 lib/fitPoints.downsample 同口径。
+    """
+    if not 1 <= max_points <= 1_000_000:
+        raise ValueError("max_points must be between 1 and 1000000")
+    with _conn() as conn:
+        ids = [
+            r[0]
+            for r in conn.execute(
+                "SELECT id FROM raw_frames WHERE experiment_id = ? ORDER BY id", (experiment_id,)
+            )
+        ]
+        n = len(ids)
+        if n <= max_points:
+            pick = ids
+        elif max_points == 1:
+            pick = ids[:1]
+        else:
+            pick = [ids[(i * (n - 1)) // (max_points - 1)] for i in range(max_points)]
+        rows: List[sqlite3.Row] = []
+        # 分块 IN 查询：旧版 SQLite 单语句变量上限 999
+        for start in range(0, len(pick), 500):
+            chunk = pick[start : start + 500]
+            placeholders = ",".join("?" * len(chunk))
+            rows.extend(
+                conn.execute(
+                    f"SELECT {_FRAME_READ_SQL} FROM raw_frames WHERE id IN ({placeholders}) ORDER BY id",
+                    chunk,
+                ).fetchall()
+            )
+        return [dict(r) for r in rows]
+
+
 def count_frames(experiment_id: int) -> int:
     with _conn() as conn:
         row = conn.execute(

@@ -87,4 +87,5 @@ sudo systemctl restart ec-backend
 ```
 
   前端会按 `window.location.hostname` 连 `:8000` 的 API/WebSocket。无鉴权、无 HTTPS，只用于实验室网。
+- 也可只绑某一块网卡：`EC_BIND=192.168.1.5 ./scripts/deploy/setup.sh`。此时后端不监听回环，本机 Kiosk 的就绪探测与页面地址会自动改用该 IP（2026-09-30 起；此前 Kiosk 会连不上）。
 - 未配置鉴权与 HTTPS（实验室本机 kiosk）。
