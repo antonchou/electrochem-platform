@@ -62,6 +62,20 @@ test('non-finite ec / t / tc points are dropped on every axis', () => {
   assert.equal(buildFitPoints(points, 'concentration').length, 0); // 唯一可用点无浓度
 });
 
+test('concentration axis keeps one-point-per-experiment calibration points without t/tc (09-30 #4)', () => {
+  const points: DataPoint[] = [
+    { t: Number.NaN, tc: Number.NaN, ec: 15, concentration: 0 },
+    { t: Number.NaN, tc: Number.NaN, ec: 102, concentration: 1 },
+    { t: Number.NaN, tc: Number.NaN, ec: null, concentration: 2 },
+  ];
+  assert.deepEqual(buildFitPoints(points, 'concentration'), [
+    [0, 15],
+    [1, 102],
+  ]);
+  // 时间/温度轴仍要求 t/tc 有限
+  assert.equal(buildFitPoints(points, 'time').length, 0);
+});
+
 test('frames with null t_seconds produce NaN t and are excluded, not x=0 fakes (T-04)', () => {
   const points: DataPoint[] = [
     { t: Number.NaN, tc: 25, ec: 100 },

@@ -454,9 +454,10 @@ def fit_kohlrausch(x: List[float], y: List[float], axis: str = "concentration") 
     a=κblank（背景电导）、b=Λ0（极限摩尔电导率）、K（经验常数）。
     保留截距是本模型的关键：强制过原点（旧实现 y=c·(a−b·√c)）会系统性
     高估 Λ0 与 K（评审 B-1）。对 [a, b, K] 是线性最小二乘
-    （自变量列 [1, c, −c^1.5]）。要求 c>0。
+    （自变量列 [1, c, −c^1.5]）。要求 c≥0：c=0 的空白样正是 κblank 的锚点，
+    跨实验标定常以 BLANK 为首点，旧的 c>0 限制会让本模型在最常见的标定组合里静默消失。
     """
-    if len(x) < 3 or any(xi <= 0 for xi in x):
+    if len(x) < 3 or any(xi < 0 for xi in x):
         return None
     try:
         # 特征 [1, c, −c^1.5] 中 c 与 c^1.5 高度共线，正规方程病态。

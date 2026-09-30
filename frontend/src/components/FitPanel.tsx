@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { DataPoint, FitAxis, FitResultItem } from '../types/protocol';
+import type { DataPoint, FitAxis, FitResponse, FitResultItem } from '../types/protocol';
 import type { ApiClient } from '../services/apiClient';
 import { buildFitPoints, fitCandidates } from '../lib/fitPoints';
 import { StaticChart, type ChartOverlay } from './StaticChart';
@@ -15,7 +15,13 @@ interface Props {
   testIdPrefix?: string;
   /** 开始拟合按钮的 testid（ResultPanel 保持历史值 btn-fit） */
   btnTestId?: string;
+  /** 可选的 X 轴（默认三轴全开）；跨实验标定只开浓度轴 */
+  axes?: FitAxis[];
+  /** 自定义拟合请求（默认 /api/analysis/fit；跨实验标定改走 /api/analysis/calibration） */
+  fitRunner?: (points: [number, number][], models: string[], axis: FitAxis) => Promise<FitResponse>;
 }
+
+const ALL_AXES: FitAxis[] = ['time', 'temperature', 'concentration'];
 
 /** X 轴语义 → 该轴可用的化学模型池（与后端 analysis.MODELS 对齐） */
 const AXIS_MODELS: Record<FitAxis, { key: string; label: string }[]> = {
@@ -65,10 +71,18 @@ function fmtParams(params: Record<string, number>): string {
  * 化学公式拟合面板：X 轴语义（时间/温度/浓度）→ 模型池 → 拟合 → 结果表 + 曲线叠加。
  * 供结果区（ResultPanel）与历史详情（HistoryPanel）复用；后端走 /api/analysis/fit。
  */
-export function FitPanel({ api, points, experimentId, testIdPrefix = 'fit', btnTestId }: Props) {
-  const [xAxis, setXAxis] = useState<FitAxis>('time');
+export function FitPanel({
+  api,
+  points,
+  experimentId,
+  testIdPrefix = 'fit',
+  btnTestId,
+  axes = ALL_AXES,
+  fitRunner,
+}: Props) {
+  const [xAxis, setXAxis] = useState<FitAxis>(axes[0]);
   const [selectedModels, setSelectedModels] = useState<string[]>(
-    AXIS_MODELS.time.map((m) => m.key),
+    AXIS_MODELS[axes[0]].map((m) => m.key),
   );
   const [fitResults, setFitResults] = useState<FitResultItem[] | null>(null);
   const [fitLoading, setFitLoading] = useState(false);
@@ -106,8 +120,13 @@ export function FitPanel({ api, points, experimentId, testIdPrefix = 'fit', btnT
     const requestId = ++fitRequestIdRef.current;
     setFitLoading(true);
     setFitError(null);
+    const client = api;
+    const run =
+      fitRunner ??
+      ((pairs: [number, number][], models: string[], axis: FitAxis) =>
+        client.fitPoints(pairs, models, axis, experimentId));
     try {
-      const res = await api.fitPoints(fitPoints, selectedModels, xAxis, experimentId);
+      const res = await run(fitPoints, selectedModels, xAxis);
       if (requestId !== fitRequestIdRef.current) return;
       setFitResults(res.models);
     } catch (err) {
@@ -177,7 +196,7 @@ export function FitPanel({ api, points, experimentId, testIdPrefix = 'fit', btnT
 
       <div className={styles.axisRow} data-testid={`${testIdPrefix}-axis`}>
         <span className={styles.axisLabel}>X 轴</span>
-        {(Object.keys(AXIS_MODELS) as FitAxis[]).map((axis) => (
+        {axes.map((axis) => (
           <button
             key={axis}
             type="button"
@@ -192,13 +211,15 @@ export function FitPanel({ api, points, experimentId, testIdPrefix = 'fit', btnT
 
       {xAxis === 'concentration' && !hasRealConcentration && (
         <div className={styles.axisNote} data-testid={`${testIdPrefix}-concentration-note`}>
-          浓度轴需真实浓度数据：开始实验时填写浓度 mmol/L；当前数据无浓度字段，「开始拟合」已禁用
+          浓度轴需真实浓度数据：开始实验时填写浓度 mmol/L；当前数据无浓度字段，「开始拟合」已禁用。
+          多个浓度的标定曲线请用「历史实验 → 跨实验标定」
         </div>
       )}
       {xAxis === 'concentration' && hasRealConcentration && !hasUsableConcentrationAxis && (
         <div className={styles.axisNote} data-testid={`${testIdPrefix}-concentration-note`}>
-          本实验浓度为 {Array.from(uniqueConcentrations).join(', ')} mmol/L，仅{' '}
-          {uniqueConcentrations.size} 种浓度。Kohlrausch / 线性标定需要 ≥3 个不同浓度点
+          当前数据浓度为 {Array.from(uniqueConcentrations).join(', ')} mmol/L，仅{' '}
+          {uniqueConcentrations.size} 种。浓度轴拟合需要 ≥3 个不同浓度：单个实验只有一种浓度，
+          请在「历史实验 → 跨实验标定」里组合多个实验
         </div>
       )}
 
@@ -320,6 +341,7 @@ export function FitPanel({ api, points, experimentId, testIdPrefix = 'fit', btnT
             overlays={overlays}
             height={240}
             xLabel={AXIS_CHART_LABEL[xAxis]}
+            dataStyle={xAxis === 'time' ? 'line' : 'scatter'}
           />
         </div>
       )}

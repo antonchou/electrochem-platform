@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts/core';
-import { LineChart } from 'echarts/charts';
+import { LineChart, ScatterChart } from 'echarts/charts';
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import styles from './StaticChart.module.css';
 
-echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([LineChart, ScatterChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
 export interface ChartOverlay {
   data: [number, number][];
@@ -21,10 +21,18 @@ interface Props {
   height?: number;
   /** X 轴名称（默认「时间 (s)」，调用方可按物理含义覆盖） */
   xLabel?: string;
+  /** 实测数据画法：时间序列连线；浓度/温度轴的点没有先后顺序，连线会乱成一团，用散点 */
+  dataStyle?: 'line' | 'scatter';
 }
 
 /** 静态曲线图：渲染数据点 + 可选叠加拟合/参考曲线。 */
-export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)' }: Props) {
+export function StaticChart({
+  data,
+  overlays,
+  height = 260,
+  xLabel = '时间 (s)',
+  dataStyle = 'line',
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
 
@@ -74,15 +82,23 @@ export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)
         splitLine: { lineStyle: { type: 'dashed' } },
       },
       series: [
-        {
-          name: '实测',
-          type: 'line',
-          data,
-          symbol: 'none',
-          lineStyle: { width: 1.5, color: '#2f6fed' },
-          itemStyle: { color: '#2f6fed' },
-          sampling: 'lttb',
-        },
+        dataStyle === 'scatter'
+          ? {
+              name: '实测',
+              type: 'scatter' as const,
+              data,
+              symbolSize: 8,
+              itemStyle: { color: '#2f6fed' },
+            }
+          : {
+              name: '实测',
+              type: 'line' as const,
+              data,
+              symbol: 'none',
+              lineStyle: { width: 1.5, color: '#2f6fed' },
+              itemStyle: { color: '#2f6fed' },
+              sampling: 'lttb',
+            },
         ...(overlays ?? []).map((ov, i) => ({
           name: ov.name ?? `拟合 ${i + 1}`,
           type: 'line' as const,
@@ -93,7 +109,7 @@ export function StaticChart({ data, overlays, height = 260, xLabel = '时间 (s)
         })),
       ],
     }, { notMerge: true });
-  }, [data, overlays, xLabel]);
+  }, [data, overlays, xLabel, dataStyle]);
 
   return <div ref={ref} className={styles.chart} style={{ height }} />;
 }

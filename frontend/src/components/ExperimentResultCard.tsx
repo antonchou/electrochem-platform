@@ -20,7 +20,8 @@ export function ExperimentResultCard({ analysis, sampleId }: Props) {
   const t = analysis.meanTemperature != null ? `${analysis.meanTemperature.toFixed(2)} °C` : '--';
 
   return (
-    <div className={styles.card} data-testid="iv-result-card">
+    // data-iv-n：参与 I–V 分析的点数，E2E 据此验证缓冲封顶后分析仍在更新
+    <div className={styles.card} data-testid="iv-result-card" data-iv-n={analysis.n}>
       <div className={styles.item}>
         <span className={styles.label}>溶液</span>
         <span className={styles.value}>{sampleId || '--'}</span>
