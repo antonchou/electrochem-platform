@@ -194,3 +194,24 @@ def test_serial_device_parses_frames_logs_and_reconnects(monkeypatch):
     assert events[4].flags == (SEQ_GAP,)
     assert events[5] == DeviceStatus(False, "串口断开：device unplugged")
     assert events[6] == DeviceStatus(True, "串口 /dev/ttyUSB0 已打开")  # 重连后序号检查重新开始
+
+
+def test_sample_capture_goes_through_the_whole_chain():
+    """v2/samples 里的采集文件：电极先在空气中（开路），放进 KCl 10 mM 后趋稳；尾部判稳应通过。"""
+    from pathlib import Path
+
+    from ec.qc import QcConfig, QcPoint, assess
+
+    path = Path(__file__).resolve().parents[2] / "samples" / "simulated_kcl_10mM.jsonl"
+    readings = ReplayDevice(path).load()
+    assert len(readings) == 90
+    assert all("OPEN_CIRCUIT" in r.flags for r in readings[:5])
+    points = [
+        QcPoint(float(i), derive(r.voltage_v, r.current_a, r.temperature_c, 1.0, 0.02).kappa25_us_cm, r.temperature_c, r.flags)
+        for i, r in enumerate(readings)
+    ]
+    assert assess(points[:25], QcConfig()).verdict == "FAIL"  # 前段含开路与趋稳
+    tail = assess(points, QcConfig())
+    assert tail.verdict == "PASS", tail.reasons
+    # 标称 Kcell = 1 下读数 = 真值 / 模拟器真 Kcell 1.02
+    assert tail.representative_kappa25 == pytest.approx((kcl_kappa25_us_cm(10) + 1.5) / 1.02, rel=0.003)
