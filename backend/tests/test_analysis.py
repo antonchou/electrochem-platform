@@ -6,6 +6,8 @@ Arrhenius 活化能、x_axis 模型池过滤与接口透传。
 
 import math
 
+from app import analysis, storage
+
 
 def test_linear_fit_exact():
     """线性数据应精确还原 y = 2 + 3x。"""
@@ -59,7 +61,7 @@ def test_fit_requires_positive_domain():
     assert analysis.fit_logarithmic([0.0, 1.0, 2.0], [1.0, 2.0, 3.0]) is None
     assert analysis.fit_power([0.0, 1.0, 2.0], [1.0, 2.0, 4.0]) is None
     assert analysis.fit_exponential([0.0, 1.0, 2.0], [0.0, 2.0, 4.0]) is None
-    # Kohlrausch 要求 c≥0（c=0 空白样合法，见 test_review_round_2026_09_30）
+    # Kohlrausch 要求 c≥0（c=0 空白样合法，见本文件 test_kohlrausch_accepts_blank_sample_and_rejects_negative）
     assert analysis.fit_kohlrausch([-1.0, 1.0, 2.0], [1.0, 2.0, 3.0]) is None
     # Arrhenius 要求 y>0
     assert analysis.fit_arrhenius([15.0, 20.0, 25.0], [0.0, 1.0, 2.0]) is None
@@ -303,3 +305,106 @@ def test_result_is_finite_gate():
         {"param_ci": {"a": [float("inf"), 1.5]}},
     ):
         assert not _result_is_finite({**ok, **mutate}), mutate
+
+
+# ---------------- 退化数据、数值稳定性与 Kohlrausch ----------------
+
+
+def _start(client) -> int:
+    r = client.post("/api/experiment/start", json={"sample_id": "R2"})
+    assert r.json()["ok"], r.text
+    return r.json()["experiment_id"]
+
+
+def test_empty_fit_result_keeps_existing_fit_results(client):
+    """P1-4：先有效拟合入库，再提交退化数据（空结果）——既有记录必须保留。"""
+    exp_id = _start(client)
+
+    good = {
+        "x": [0.0, 1.0, 2.0, 3.0, 4.0],
+        "y": [100.0, 102.0, 104.0, 106.0, 108.0],
+        "models": ["linear"],
+        "x_axis": "time",
+        "experiment_id": exp_id,
+    }
+    r1 = client.post("/api/analysis/fit", json=good)
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["models"], "有效数据必须产出拟合结果"
+    assert storage.get_fit_results(exp_id), "有效拟合应写入 fit_results"
+
+    # 退化数据（y 恒定，P1-5 后稳定返回空列表）
+    degenerate = {**good, "y": [105.0] * 5}
+    r2 = client.post("/api/analysis/fit", json=degenerate)
+    assert r2.status_code == 200
+    assert r2.json()["models"] == []
+
+    # 修复前：空结果触发 DELETE + 空插入 → 既有记录被清空
+    assert storage.get_fit_results(exp_id), "空拟合结果不得清空既有 fit_results"
+
+
+def test_small_magnitude_signal_fits_on_all_models(client):
+    """P1-5：y~1e-6 且带真实斜率，全模型不被退化判据误杀（复审 §3.5 case 4）。"""
+    x = [float(i) for i in range(30)]
+    y = [1e-6 + 1e-9 * xi for xi in x]
+    r = client.post(
+        "/api/analysis/fit",
+        json={"x": x, "y": y, "x_axis": "time"},
+    )
+    assert r.status_code == 200
+    models = r.json()["models"]
+    assert models, "小量级真实信号不得被判退化"
+    best = models[0]
+    assert best["r2"] > 0.99
+
+
+def test_fit_all_constant_y_still_returns_empty():
+    """P1-5 反向：真正的常数 y 仍必须判退化（相对口径下 ss_tot=0 命中）。"""
+    assert analysis.fit_all(list(range(20)), [1413.0] * 20, ["linear"], "time") == []
+
+
+def test_fit_all_constant_y_returns_no_results():
+    y = [1413.0] * 20
+    x = list(range(20))
+    assert analysis.fit_all(x, y, ["linear", "quadratic"], "time") == []
+
+
+def test_fit_linear_still_works_for_normal_data():
+    res = analysis.fit_linear([1.0, 2.0, 3.0, 4.0], [2.0, 4.0, 6.0, 8.0], "time")
+    assert res is not None
+    assert abs(res["params"]["b"] - 2.0) < 1e-9
+    assert res["r2"] > 0.9999
+
+
+def test_polyfit_large_x_linear():
+    # concentration 轴可达 1e4：修复前正规方程条件数爆炸/误判奇异
+    x = [10_000.0 + 3.0 * i for i in range(30)]
+    y = [1.5 * xi + 200.0 for xi in x]
+    a, b = analysis._polyfit(x, y, 1)
+    assert abs(b - 1.5) < 1e-6
+    assert abs(a - 200.0) < 1e-3
+
+
+def test_polyfit_large_x_quadratic():
+    x = [800.0 + 0.7 * i for i in range(40)]
+    y = [0.001 * xi**2 - 0.5 * xi + 10.0 for xi in x]
+    a, b, c = analysis._polyfit(x, y, 2)
+    assert abs(c - 0.001) < 1e-9
+    assert abs(b + 0.5) < 1e-6
+    assert abs(a - 10.0) < 1e-3
+
+
+def test_fit_all_temperature_axis_large_values():
+    # 温度轴 ~1e2 量级 + y 有真实斜率：linear 温补模型必须能解出
+    x = [25.0 + 0.1 * i for i in range(50)]
+    y = [1400.0 * (1.0 + 0.02 * (xi - 25.0)) for xi in x]
+    results = analysis.fit_all(x, y, ["linear"], "temperature")
+    assert results, "linear 温补模型在大 x 量级下不应被静默跳过"
+    assert abs(results[0]["params"]["b"] - 28.0) < 1e-6
+
+
+def test_kohlrausch_accepts_blank_sample_and_rejects_negative():
+    c = [0.0, 1.0, 2.0, 4.0, 8.0]
+    res = analysis.fit_kohlrausch(c, [15 + 95 * ci - 8 * ci**1.5 for ci in c])
+    assert res is not None
+    assert abs(res["params"]["a"] - 15.0) < 1e-6  # κblank 由 c=0 空白样锚定
+    assert analysis.fit_kohlrausch([-1.0, 1.0, 2.0], [1.0, 2.0, 3.0]) is None

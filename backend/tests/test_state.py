@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from app.state import ExperimentState
+from app.state import ExperimentState, state
 
 
 def test_resume_excludes_pause_wall_clock():
@@ -35,5 +35,16 @@ def test_reset_clears_pause():
         await s.reset()
         assert s.elapsed() == 0.0
         assert s.status == "idle"
+
+    asyncio.run(scenario())
+
+
+def test_state_reset_restores_sample_and_path():
+    async def scenario():
+        await state.start(sample_id="CUSTOM", sensor_path_id="PATH_X", experiment_db_id=1)
+        await state.reset()
+        assert state.sample_id == "SAMPLE"
+        assert state.sensor_path_id == "MOCK_EC_IV"
+        assert state.experiment_db_id is None
 
     asyncio.run(scenario())
