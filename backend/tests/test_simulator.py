@@ -363,3 +363,24 @@ def test_mode_override_preserves_explicit_fields(monkeypatch, tmp_path):
     # 未显式提供的字段取新模式预设
     assert cfg.current_noise_a == 8.0e-6
     assert cfg.nonlinearity > 0
+
+
+def test_simulator_dropout_zero_means_no_dropout():
+    cfg = SimulatorConfig(
+        mode=SimulatorMode.STABLE,
+        fault_kind=FaultKind.DROPOUT,
+        dropout_every_n=0,
+        fault_start_s=0.0,
+    )
+    driver = SimulatorDriver(cfg)
+
+    async def scenario():
+        await driver.connect()
+        dropped = 0
+        for i in range(20):
+            reading = await driver.read(i * 0.1)
+            if "DROPOUT" in reading.quality_flags:
+                dropped += 1
+        return dropped
+
+    assert asyncio.run(scenario()) == 0
