@@ -146,3 +146,8 @@ class BroadcastHub:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+
+
+# 全进程共用的广播枢纽（WebSocket 端点订阅、采集任务与控制接口发布）。
+# 20_000 与前端最大点数一致，可承载 P04 的 10_000 点 burst，同时保持内存有界。
+hub = BroadcastHub(queue_size=20_000)

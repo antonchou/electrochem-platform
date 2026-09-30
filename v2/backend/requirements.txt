@@ -1,0 +1,4 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# 仅 EC_DEVICE=serial 需要；树莓派上也可 sudo apt install python3-serial
+pyserial>=3.5

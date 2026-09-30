@@ -13,6 +13,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from app import storage
+from app.acquisition import acquisition, build_driver
 from app.drivers import CsvPlaybackConfig, CsvPlaybackDriver
 from app.main import app
 
@@ -79,21 +81,20 @@ def test_playback_speed_scales_elapsed(tmp_path):
     asyncio.run(scenario())
 
 
-def test_playback_rejects_nonpositive_speed():
+@pytest.mark.parametrize("speed", [0.0, float("nan"), float("inf")])
+def test_playback_rejects_nonpositive_or_nonfinite_speed(speed):
     with pytest.raises(ValueError, match="speed"):
-        CsvPlaybackConfig(path="x.csv", speed=0.0)
+        CsvPlaybackConfig(path="x.csv", speed=speed)
 
 
 def test_incomplete_eof_logs_once(caplog):
-    from app.routes import _log_incomplete_reading, _quiet_incomplete_flags
-
-    _quiet_incomplete_flags.clear()
+    acquisition._quiet_incomplete_flags.clear()
     with caplog.at_level("INFO"):
-        _log_incomplete_reading(("CSV", "EOF"))
-        _log_incomplete_reading(("CSV", "EOF"))
+        acquisition._log_incomplete_reading(("CSV", "EOF"))
+        acquisition._log_incomplete_reading(("CSV", "EOF"))
     messages = [r.message for r in caplog.records if "回放结束" in r.message]
     assert len(messages) == 1
-    _quiet_incomplete_flags.clear()
+    acquisition._quiet_incomplete_flags.clear()
 
 
 def test_playback_eof_marks_quality(tmp_path):
@@ -237,3 +238,87 @@ def test_csv_resume_dedups_boundary_sample(constant_client):
     # 去重窗口生效：续跑段没有帧落在停止点后不足一个采样周期的区间内
     boundary = [f for f in newer if (f["t_seconds"] or 0.0) < last_t + 0.09]
     assert not boundary, f"续跑首帧未去重: {[(f['t_seconds'], f['seq_no']) for f in boundary]}"
+
+
+def test_csv_playback_loop_degenerate_timestamps(tmp_path, monkeypatch):
+    csv_path = tmp_path / "zero_t.csv"
+    csv_path.write_text(
+        "time_s,voltage_v,current,temperature_c\n"
+        "0.0,0.5,0.001,25.0\n"
+        "0.0,0.6,0.002,25.1\n",
+        encoding="utf-8",
+    )
+    driver = CsvPlaybackDriver(CsvPlaybackConfig(path=str(csv_path), loop=True))
+
+    async def scenario():
+        await driver.connect()
+        first = await driver.read(0.0)
+        later = await driver.read(3600.0)  # 远超末尾时间戳：必须回绕到首行而非病态取模
+        return first, later
+
+    first, later = asyncio.run(scenario())
+    assert "EOF" not in first.quality_flags
+    assert "EOF" not in later.quality_flags
+    assert later.voltage_v == first.voltage_v  # 固定回放首行
+    assert later.temperature == first.temperature
+
+
+def test_resume_boundary_is_loaded_before_first_resumed_frame(constant_client, monkeypatch):
+    exp_id = constant_client.post("/api/experiment/start").json()["experiment_id"]
+    time.sleep(0.3)
+    constant_client.post("/api/experiment/stop")
+
+    # 读库比一个采样周期（0.1s）还慢：旧顺序（先 resume 再装载）下，装载期间采集循环
+    # 已产出续跑首帧，比对时基准还是 None → 首帧漏检
+    real_recent = storage.get_recent_frames
+
+    def slow_recent(exp, *, limit=500):
+        if limit == 1:
+            time.sleep(0.25)
+        return real_recent(exp, limit=limit)
+
+    boundary_ready: list[bool] = []
+    real_consume = acquisition._consume_resume_duplicate
+
+    def spy(frame):
+        boundary_ready.append(acquisition._resume_boundary_raws is not None)
+        return real_consume(frame)
+
+    monkeypatch.setattr(storage, "get_recent_frames", slow_recent)
+    monkeypatch.setattr(acquisition, "_consume_resume_duplicate", spy)
+    assert constant_client.post("/api/experiment/start").json()["resumed"] is True
+    time.sleep(0.45)
+    constant_client.post("/api/experiment/stop")
+    constant_client.post("/api/experiment/reset")
+
+    assert boundary_ready, "续跑后应至少产出一帧"
+    assert boundary_ready[0] is True, f"续跑首帧比对时基准尚未装载: {boundary_ready}"
+    assert not any(boundary_ready[1:]), "一次性窗口应由首帧消费"
+
+
+def test_nonfinite_rows_are_skipped(tmp_path):
+    """nan/inf 单元格与缺列同样按坏行跳过（nan 时间戳还会打乱排序）。"""
+    path = _write_csv(
+        tmp_path,
+        [(0.0, 1.0, 1e-3, 25.0), ("nan", 1.0, 1e-3, 25.0), (0.1, 1.0, 1e-3, "nan"), (0.2, "inf", 1e-3, 25.0), (0.3, 1.1, 1.1e-3, 25.0)],
+    )
+
+    async def scenario():
+        d = CsvPlaybackDriver(CsvPlaybackConfig(path=path))
+        await d.connect()
+        return d._times
+
+    assert asyncio.run(scenario()) == [0.0, 0.3]
+
+
+def test_csv_env_parse_error_names_the_variable(tmp_path, monkeypatch):
+    path = _write_csv(tmp_path, [(0.0, 1.0, 1e-3, 25.0)])
+    monkeypatch.setenv("EC_DRIVER", "csv")
+    monkeypatch.setenv("EC_CSV_PATH", path)
+    monkeypatch.setenv("EC_CSV_SPEED", "2x")
+    with pytest.raises(ValueError, match="EC_CSV_SPEED"):
+        build_driver()
+    # 能解析成数、但校验不过的值（nan / 0）：报错同样指向 EC_CSV_* 环境变量与字段名
+    monkeypatch.setenv("EC_CSV_SPEED", "nan")
+    with pytest.raises(ValueError, match=r"EC_CSV_\*.*speed"):
+        build_driver()

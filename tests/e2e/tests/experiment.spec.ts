@@ -1,15 +1,10 @@
 import { expect, test } from '@playwright/test';
+import { API, resetExperiment } from './backend';
 
 /**
  * 面向《Web界面开发任务书》验收标准的功能测试（F01–F10）与性能冒烟（P01–P04）。
  * 运行前提：backend(8000) 与 frontend(5173) 已由 playwright.config 拉起。
  */
-
-const API = 'http://127.0.0.1:8000';
-
-async function resetExperiment(request: import('@playwright/test').APIRequestContext) {
-  await request.post(`${API}/api/experiment/reset`);
-}
 
 async function waitForPoints(page: import('@playwright/test').Page, min: number, timeout = 8000) {
   await expect

@@ -67,7 +67,6 @@ export function ExperimentPage() {
     count,
     revision,
     latest,
-    runStartTRef,
     clearPoints,
     hydrateFromFrames,
     bindExperiment,
@@ -90,7 +89,7 @@ export function ExperimentPage() {
     const options = startOptions();
     if (!options) return;
     const res = await start(options);
-    if (!res || !('ok' in res) || !res.ok) return;
+    if (!res.ok) return;
     if (res.resumed && res.experiment_id != null && bridge.api) {
       try {
         // 缓冲只留最后 2 万点：只取尾部（R3-6）。旧实现拉前 10 万帧——长实验取到的是开头，
@@ -110,12 +109,12 @@ export function ExperimentPage() {
   const handleClear = useCallback(() => {
     // reset 失败（后端拒绝/网络断开）时本地缓冲不能先清，否则 UI 与服务器状态错位
     void reset().then((res) => {
-      if ('ok' in res && res.ok) clearPoints();
+      if (res.ok) clearPoints();
     });
   }, [clearPoints, reset]);
 
-  const duration =
-    latest && runStartTRef.current !== null ? Math.max(0, latest.t - runStartTRef.current) : 0;
+  // 帧的 timestamp 就是实验开始后的运行时间（暂停不计）：续跑水合、旁观端中途加入都不影响
+  const duration = latest && Number.isFinite(latest.t) ? Math.max(0, latest.t) : 0;
   // 采样率按缓冲首末点跨度算：缓冲封顶后 count 不再增长而 duration 持续变大，
   // 用实验总时长会把采样率越算越低；封顶时缓冲会从前端裁剪，首末跨度与 count 同步。
   // 首/末点 t 必须有限（P2-11）：NaN 会让 rateSpan 为 NaN → 恒显 "--"

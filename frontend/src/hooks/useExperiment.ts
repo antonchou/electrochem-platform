@@ -142,7 +142,7 @@ export function useExperiment(bridge: ExperimentBridge) {
     async (options?: ExperimentStartOptions) => {
       // reset 未生效（网络失败/后端拒绝）时不得继续 start，否则“旧实验还在跑却开新实验”
       const resetRes = await run('reset');
-      if (!('ok' in resetRes) || !resetRes.ok) return resetRes;
+      if (!resetRes.ok) return resetRes;
       return run('start', options);
     },
     [run],

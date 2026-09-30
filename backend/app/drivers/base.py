@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,25 +24,28 @@ class DriverReading:
     current_a: float | None = None
     quality_flags: tuple[str, ...] = ()
 
+    # 完整性按“有限数”判定：NaN/inf（如温度探头读失败）等同缺失，整帧跳过，
+    # 否则 NaN 会被 SQLite 存成 NULL、撞上 temperature_raw NOT NULL，让整批落库失败并永久降级。
+
     @property
     def complete_for_conductivity(self) -> bool:
-        return self.ec is not None and self.temperature is not None
+        return _finite(self.ec) and _finite(self.temperature)
 
     @property
     def complete_for_iv(self) -> bool:
-        """I–V 链路完整性：U/I/T 齐备才可走计算链。"""
-        return (
-            self.voltage_v is not None
-            and self.current_a is not None
-            and self.temperature is not None
-        )
+        """I–V 链路完整性：U/I/T 齐备且为有限数才可走计算链。"""
+        return _finite(self.voltage_v) and _finite(self.current_a) and _finite(self.temperature)
+
+
+def _finite(value: float | None) -> bool:
+    return value is not None and math.isfinite(value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DriverConfig:
     """各驱动 config 共有的采样率、计算参数与协议/校准元数据。
 
-    routes 直接读这些字段组帧、写校准记录；各驱动按需覆盖默认值。
+    acquisition.measurement_params 读这些字段组帧、写校准记录；各驱动按需覆盖默认值。
     calibration_claimed=None 表示驱动未声明是否已校准，由 calibration_id 推导。
     """
 
@@ -61,6 +65,13 @@ class DriverConfig:
 
     def __post_init__(self) -> None:
         # 子类是 slots dataclass，无参 super() 不可用，须显式调用 DriverConfig.__post_init__(self)
+        # 所有浮点字段（含子类的）都须有限，子类的 <= 0 等检查因此不必再各自防 NaN：
+        # nan 采样率会让采集周期变成 nan、调度循环从不睡眠而空转；nan 激励参数会随帧
+        # 元数据以裸 NaN 广播（json.dumps 默认 allow_nan），前端整帧解析失败。
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"{f.name} must be finite, got {value!r}")
         if self.sample_rate_hz <= 0:
             raise ValueError("sample_rate_hz must be positive")
         if self.cell_constant_per_cm <= 0:

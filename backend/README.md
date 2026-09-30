@@ -10,6 +10,7 @@ backend/
 ├── app/
 │   ├── main.py          # FastAPI 入口（lifespan 启停持久化）
 │   ├── routes.py        # WS 实时流 + REST 控制 + 历史/导出
+│   ├── acquisition.py   # 单一采集任务（驱动构建、节拍、组帧、落库、广播）
 │   ├── broadcast.py     # 每客户端独立有界队列，隔离慢连接
 │   ├── drivers/         # DeviceDriver 接口 + 可配置 MockDevice
 │   ├── schemas.py       # 协议模型
@@ -46,7 +47,7 @@ python3 -m venv .venv
 | `simulator` | `SimulatorDriver` | 无硬件时做电压扫描与 I–V 算法验收 |
 | `csv` | `CsvPlaybackDriver` | 回放 4 列历史 CSV |
 
-未来 ADS1256 实现同一个 `DeviceDriver`，在 `_build_driver()` 再加一个分支即可。
+未来 ADS1256 实现同一个 `DeviceDriver`，在 `acquisition.build_driver()` 再加一个分支即可。
 
 ## Mock 驱动配置
 

@@ -1,11 +1,10 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
+import { API } from './backend';
 
 /**
  * 跨实验浓度标定（09-30 审查 #4）：单个实验只有一种浓度，浓度轴拟合只能跨实验做。
  * 用 API 跑 3 个不同浓度的实验（含 c=0 空白样），再在历史面板里勾选并拟合。
  */
-
-const API = 'http://127.0.0.1:8000';
 
 async function runExperiment(
   request: APIRequestContext,

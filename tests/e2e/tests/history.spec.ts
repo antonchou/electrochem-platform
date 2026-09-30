@@ -1,16 +1,11 @@
 import { expect, test } from '@playwright/test';
+import { API, resetExperiment } from './backend';
 
 /**
  * Phase 7 验收：历史实验 + 样品溯源 + 导出。
  * 流程：带样品号跑一轮 → 停止 → 结果区显示样品/导出 → 历史面板可见 →
  *       详情含样品与帧 → CSV 可下载且内容正确。
  */
-
-const API = 'http://127.0.0.1:8000';
-
-async function resetExperiment(request: import('@playwright/test').APIRequestContext) {
-  await request.post(`${API}/api/experiment/reset`);
-}
 
 test.beforeEach(async ({ page, request }) => {
   await resetExperiment(request);

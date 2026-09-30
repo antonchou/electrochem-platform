@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DataPoint, ExperimentDetail, ExperimentStatus, SampleSummary } from '../types/protocol';
 import type { ApiClient } from '../services/apiClient';
+import { fmtFixed } from '../lib/units';
 import { ExportLink } from './ExportLink';
 import { FitPanel } from './FitPanel';
 import styles from './ResultPanel.module.css';
@@ -20,10 +21,6 @@ function qcBadgeClass(status: string | null | undefined): string {
   if (status === 'WARN') return `${styles.qcBadge} ${styles.qcWarn}`;
   if (status === 'FAIL') return `${styles.qcBadge} ${styles.qcFail}`;
   return `${styles.qcBadge} ${styles.qcNone}`;
-}
-
-function fmtNum(value: number | null | undefined, digits = 2): string {
-  return value != null && Number.isFinite(value) ? value.toFixed(digits) : '--';
 }
 
 /**
@@ -117,12 +114,12 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
         <span className={styles.label}>代表值</span>
         <span data-testid="result-qc-value">
           {sample?.representative_value != null
-            ? `${fmtNum(sample.representative_value)} μS/cm`
+            ? `${fmtFixed(sample.representative_value, 2)} μS/cm`
             : '--'}
         </span>
         <span className={styles.label}>中位数</span>
         <span>
-          {sample?.k25_median != null ? `${fmtNum(sample.k25_median)} μS/cm` : '--'}
+          {sample?.k25_median != null ? `${fmtFixed(sample.k25_median, 2)} μS/cm` : '--'}
         </span>
         <span className={styles.label}>原因</span>
         <span data-testid="result-qc-reason">{sample?.qc_reason ?? '--'}</span>

@@ -5,6 +5,14 @@ import threading
 import time
 
 import pytest
+from fastapi.testclient import TestClient
+
+from app import storage
+from app.main import app
+from app.persistence import persist
+from app.state import state
+
+SENSOR = "MOCK_EC_IV"
 
 
 @pytest.fixture()
@@ -464,3 +472,162 @@ def test_start_request_field_bounds():
         ExperimentStartRequest(concentration_mmol_l=10_001)
     ok = ExperimentStartRequest(sample_id="BLANK", concentration_mmol_l=0)
     assert ok.concentration_mmol_l == 0
+
+
+# ---------------- 协议字段与帧查询 ----------------
+
+
+def test_frames_carry_experiment_id_and_status_frames_carry_sample_id(client):
+    with client.websocket_connect("/ws/stream") as ws:
+        exp_id = client.post("/api/experiment/start", json={"sample_id": "OBS_B"}).json()[
+            "experiment_id"
+        ]
+        running = frame = None
+        for _ in range(20):
+            msg = ws.receive_json()
+            if "ec" in msg:
+                frame = msg
+                break
+            if msg.get("status") == "running":
+                running = msg
+        assert running == {"status": "running", "experiment_id": exp_id, "sample_id": "OBS_B"}
+        assert frame is not None and frame["experiment_id"] == exp_id
+
+        client.post("/api/experiment/stop")
+        stopped = None
+        for _ in range(50):
+            msg = ws.receive_json()
+            if "ec" not in msg and msg.get("status") == "stopped":
+                stopped = msg
+                break
+        assert stopped is not None
+        assert (stopped["experiment_id"], stopped["sample_id"]) == (exp_id, "OBS_B")
+    client.post("/api/experiment/reset")
+
+
+def _insert_frames(exp_id: int, n: int) -> None:
+    storage.insert_frames(
+        [
+            {
+                "experiment_id": exp_id,
+                "sample_id": "S",
+                "sensor_path_id": SENSOR,
+                "seq_no": i + 1,
+                "t_seconds": round(i * 0.1, 1),
+                "ec_raw": 1413.0,
+                "temperature_raw": 25.0,
+                "kappa_25_us_cm": 1413.0,
+            }
+            for i in range(n)
+        ]
+    )
+
+
+def test_frames_modes_head_tail_even(client):
+    exp = storage.create_experiment_with_sample(
+        experiment_id="EXP-FR", title="t", sample_id="S", sensor_path_id=SENSOR
+    )
+    _insert_frames(exp, 1000)
+    url = f"/api/experiments/{exp}/frames"
+
+    head = client.get(url, params={"limit": 50})
+    assert head.headers["content-type"].startswith("application/json")
+    body = head.json()
+    assert (len(body["frames"]), body["total"], body["mode"]) == (50, 1000, "head")
+    assert body["frames"][0]["t_seconds"] == 0.0
+
+    # tail：最新 N 条，按时间正序（续跑水合只需要尾部）
+    tail = client.get(url, params={"limit": 100, "mode": "tail"}).json()
+    ts = [f["t_seconds"] for f in tail["frames"]]
+    assert (len(ts), ts[0], ts[-1]) == (100, 90.0, 99.9)
+    assert ts == sorted(ts)
+
+    # even：全实验等间隔，保留首末帧（与前端 downsample 同口径 floor(i·(n−1)/(max−1))）
+    even = client.get(url, params={"limit": 10, "mode": "even"}).json()
+    seqs = [f["seq_no"] for f in even["frames"]]
+    assert seqs == [1 + (i * 999) // 9 for i in range(10)]
+    assert (seqs[0], seqs[-1], even["total"]) == (1, 1000, 1000)
+
+    # 上限超过总数：全量返回
+    assert len(client.get(url, params={"limit": 5000, "mode": "even"}).json()["frames"]) == 1000
+    # offset 只属于 head 分页
+    assert client.get(url, params={"limit": 10, "mode": "tail", "offset": 5}).status_code == 400
+    assert client.get(url, params={"mode": "bogus"}).status_code == 422
+
+
+def test_get_frames_even_edge_cases(client):
+    exp = storage.create_experiment_with_sample(
+        experiment_id="EXP-EV", title="t", sample_id="S", sensor_path_id=SENSOR
+    )
+    assert storage.get_frames_even(exp, max_points=10) == []
+    _insert_frames(exp, 3)
+    assert [f["seq_no"] for f in storage.get_frames_even(exp, max_points=1)] == [1]
+    assert [f["seq_no"] for f in storage.get_frames_even(exp, max_points=2)] == [1, 3]
+    with pytest.raises(ValueError):
+        storage.get_frames_even(exp, max_points=0)
+
+
+# ---------------- 进程生命周期（lifespan）与版本 ----------------
+
+
+def test_start_storage_failure_does_not_enter_running(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "start-failure.db"))
+
+    async def fail_create(**_kwargs):
+        raise RuntimeError("injected create failure")
+
+    with TestClient(app) as client:
+        monkeypatch.setattr(persist, "create_experiment_with_sample", fail_create)
+        with pytest.raises(RuntimeError, match="injected create failure"):
+            client.post("/api/experiment/start")
+        assert client.get("/health").json()["experiment"] == "idle"
+        assert storage.list_experiments() == []
+
+
+def test_startup_aborts_leftover_running_row(tmp_path, monkeypatch):
+    """P1-B：进程启动时把历史遗留 running 行标 aborted，不影响已结束行与新实验。"""
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "stale-running.db"))
+    storage.init_db()
+    leftover = storage.create_experiment_with_sample("EXP-STALE", "crash leftover", "S", "WIDE")
+    stopped = storage.create_experiment_with_sample("EXP-OK", "already stopped", "S", "WIDE")
+    storage.finish_experiment(stopped, "stopped")
+    assert storage.get_experiment(leftover)["status"] == "running"
+    assert storage.get_experiment(leftover)["ended_at_utc"] is None
+
+    with TestClient(app) as client:
+        stale = storage.get_experiment(leftover)
+        assert stale["status"] == "aborted"
+        assert stale["ended_at_utc"] is not None
+        assert storage.get_experiment(stopped)["status"] == "stopped"
+        assert client.get("/health").json()["experiment"] == "idle"
+        started = client.post("/api/experiment/start").json()
+        assert started["ok"] is True
+        assert started["experiment_id"] != leftover
+        client.post("/api/experiment/reset")
+
+
+def test_lifespan_aborts_leaked_run_and_resets_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "lifespan.db"))
+    with TestClient(app) as client:
+        exp_id = client.post("/api/experiment/start").json()["experiment_id"]
+        assert state.status == "running"
+
+    assert state.status == "idle"
+    assert storage.get_experiment(exp_id)["status"] == "aborted"
+
+
+def test_version_single_source():
+    from app import __version__
+    from app.main import app
+
+    assert app.version == __version__
+
+
+def test_ws_ignores_binary_client_messages(client):
+    """客户端发来的二进制消息不应让订阅端点退出：连接保持，后续广播照常送达。"""
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.send_bytes(bytes([0, 1]))
+        ws.send_text("ping")
+        client.post("/api/debug/bad-frame")
+        msg = _receive_json_with_timeout(ws, 3.0)
+        assert msg["ec"] == "abc"
