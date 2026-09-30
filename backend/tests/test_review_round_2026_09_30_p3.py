@@ -44,13 +44,6 @@ def _insert_frames(exp_id: int, n: int) -> None:
 # ---------------- R3-6 帧查询 ----------------
 
 
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "p3.db"))
-    with TestClient(app) as c:
-        yield c
-
-
 def test_frames_modes_head_tail_even(client):
     exp = storage.create_experiment_with_sample(
         experiment_id="EXP-FR", title="t", sample_id="S", sensor_path_id=SENSOR

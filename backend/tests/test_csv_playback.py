@@ -8,7 +8,6 @@
 
 import asyncio
 import csv
-import os
 import time
 
 import pytest
@@ -140,8 +139,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("EC_CSV_PATH", path)
     with TestClient(app) as c:
         yield c
-    for k in ("EC_DB_PATH", "EC_ENABLE_DEBUG_ENDPOINTS", "EC_DRIVER", "EC_CSV_PATH"):
-        monkeypatch.delenv(k, raising=False)
 
 
 def test_csv_resume_continues_timeline(client):
@@ -210,8 +207,6 @@ def constant_client(tmp_path, monkeypatch):
     monkeypatch.setenv("EC_CSV_PATH", path)
     with TestClient(app) as c:
         yield c
-    for k in ("EC_DB_PATH", "EC_ENABLE_DEBUG_ENDPOINTS", "EC_DRIVER", "EC_CSV_PATH"):
-        monkeypatch.delenv(k, raising=False)
 
 
 def test_csv_resume_dedups_boundary_sample(constant_client):
