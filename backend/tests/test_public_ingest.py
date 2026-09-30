@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+import io
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,39 @@ BRAUN = FIXTURES / "braun_2022_lib_cell.csv"
 RAHMANIAN = FIXTURES / "rahmanian_2022_eis_bm169.csv"
 ECHEMDB = FIXTURES / "echemdb_hermann_2021_cv.csv"
 RAHMANIAN_KCELL = 4.72026
+
+
+def _load_ingest_script(monkeypatch, tmp_path, body: str):
+    """离线加载导入脚本：缓存/输出目录指到 tmp_path，下载换成内存里的 body。"""
+    spec = importlib.util.spec_from_file_location("ingest_public_datasets", REPO / "scripts" / "ingest_public_datasets.py")
+    ingest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ingest)
+    monkeypatch.setattr(ingest, "CACHE", tmp_path / "cache")
+    monkeypatch.setattr(ingest, "OUT", tmp_path / "out")
+    monkeypatch.setattr(ingest, "_open", lambda url: io.BytesIO(body.encode("utf-8")))
+    ingest.CACHE.mkdir()
+    return ingest
+
+
+def _data_rows(path: Path) -> int:
+    return len(path.read_text(encoding="utf-8").splitlines()) - 1
+
+
+def test_ingest_cache_is_keyed_by_max_seconds(monkeypatch, tmp_path):
+    """缓存只含前 max_seconds+5 行：换更长的 max_seconds 不得命中短缓存而静默截断。"""
+    body = "Time,Current,Voltage,Temperature\n" + "".join(f"{t},0.1,3.7,25\n" for t in range(30))
+    ingest = _load_ingest_script(monkeypatch, tmp_path, body)
+    assert _data_rows(ingest.convert_braun(max_seconds=3)) == 4  # t = 0..3
+    assert _data_rows(ingest.convert_braun(max_seconds=10)) == 11  # t = 0..10
+
+
+def test_ingest_missing_experiment_is_not_cached(monkeypatch, tmp_path):
+    body = "experimentID;temperature;EIS_conductivity\nOTHER;25;0.01\n"
+    ingest = _load_ingest_script(monkeypatch, tmp_path, body)
+    with pytest.raises(ValueError, match="not found"):
+        ingest.convert_rahmanian()
+    assert not list(ingest.CACHE.iterdir()), "空结果不得写入缓存"
+    assert not ingest.OUT.exists(), "不得拿空表覆盖夹具"
 
 
 def test_fixtures_exist():

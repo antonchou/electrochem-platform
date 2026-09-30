@@ -4,7 +4,14 @@ import asyncio
 
 import pytest
 
-from app.drivers import DriverReading, MockDevice, MockDeviceConfig, MockScenario, load_mock_config
+from app.drivers import (
+    DriverReading,
+    MockDevice,
+    MockDeviceConfig,
+    MockScenario,
+    SimulatorConfig,
+    load_mock_config,
+)
 
 
 def test_mock_device_is_seeded_and_repeatable():
@@ -69,19 +76,25 @@ def test_mock_env_error_names_the_invalid_variable(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
+    ("config_cls", "field", "value"),
     [
-        ("sample_rate_hz", float("nan")),
-        ("sample_rate_hz", float("inf")),
-        ("sample_rate_hz", 0.0),
-        ("cell_constant_per_cm", float("nan")),
-        ("cell_constant_per_cm", -1.0),
+        (MockDeviceConfig, "sample_rate_hz", float("nan")),
+        (MockDeviceConfig, "sample_rate_hz", float("inf")),
+        (MockDeviceConfig, "sample_rate_hz", 0.0),
+        (MockDeviceConfig, "cell_constant_per_cm", float("nan")),
+        (MockDeviceConfig, "cell_constant_per_cm", -1.0),
+        # 帧元数据字段：nan 会以裸 NaN 广播，前端整帧解析失败
+        (MockDeviceConfig, "excitation_frequency_hz", float("nan")),
+        (MockDeviceConfig, "alpha_per_c", float("inf")),
+        # 子类字段同样覆盖：Mock 的激励电压、Simulator 的扫描电压原先只查 <= 0
+        (MockDeviceConfig, "excitation_amplitude_v", float("nan")),
+        (SimulatorConfig, "sweep_start_v", float("nan")),
     ],
 )
-def test_driver_config_rejects_nonpositive_or_nonfinite(field, value):
+def test_driver_config_rejects_nonpositive_or_nonfinite(config_cls, field, value):
     """nan 采样率会让采集周期变成 nan，调度循环从不睡眠而空转；配置层就要挡住。"""
     with pytest.raises(ValueError, match=field):
-        MockDeviceConfig(**{field: value})
+        config_cls(**{field: value})
 
 
 def test_nonfinite_values_make_reading_incomplete():
