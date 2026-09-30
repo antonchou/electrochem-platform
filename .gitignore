@@ -50,3 +50,7 @@ credentials.json
 # ===== 系统 =====
 .DS_Store
 Thumbs.db
+
+# ===== 本机 AI 工具的配置/记忆目录（不入库）=====
+.workbuddy/
+.zcodeignore
