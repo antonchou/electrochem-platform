@@ -72,7 +72,12 @@ def build_driver() -> tuple[DeviceDriver, float]:
                     kwargs[field] = float(raw)
                 except ValueError as exc:
                     raise ValueError(f"invalid {env_name}={raw!r}; expected a number") from exc
-        cfg = CsvPlaybackConfig(**kwargs)
+        try:
+            cfg = CsvPlaybackConfig(**kwargs)
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid CSV playback configuration (EC_CELL_CONSTANT / EC_CSV_*): {exc}"
+            ) from exc
         return CsvPlaybackDriver(cfg), 1.0 / cfg.sample_rate_hz
     if kind == "simulator":
         config = load_simulator_config()

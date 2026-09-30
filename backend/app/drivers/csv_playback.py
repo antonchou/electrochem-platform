@@ -36,8 +36,8 @@ class CsvPlaybackConfig(DriverConfig):
 
     def __post_init__(self) -> None:
         DriverConfig.__post_init__(self)
-        if not (math.isfinite(self.speed) and self.speed > 0):
-            raise ValueError("speed must be a positive finite number")
+        if self.speed <= 0:
+            raise ValueError("speed must be positive")
 
 
 class CsvPlaybackDriver(DeviceDriver):

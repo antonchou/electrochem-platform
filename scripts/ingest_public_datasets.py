@@ -27,6 +27,8 @@ CACHE = Path(tempfile.gettempdir()) / "ec-data" / "raw"
 BRAUN_URL = "https://zenodo.org/records/6985321/files/Experimental_data_fresh_cell.csv?download=1"
 # 拼写 "Conductivtiy" 为 Zenodo 7244939 上游原始文件名（2026-09-11 经 API 核对），勿“修正”
 RAHMANIAN_URL = "https://zenodo.org/records/7244939/files/Conductivtiy_experiment.csv?download=1"
+# 输出夹具 rahmanian_2022_eis_bm169.* 只对应这一个实验；换实验要连输出文件名一起换
+RAHMANIAN_EXPERIMENT_ID = "PYA_25082021_BM169_1"
 ECHEMDB_CSV = (
     "https://raw.githubusercontent.com/echemdb/electrochemistry-data/main/"
     "literature/source_data/hermann_2021_effect_138279/"
@@ -87,9 +89,9 @@ def convert_braun(max_seconds: float = 600.0) -> Path:
     return out
 
 
-def convert_rahmanian(experiment_id: str = "PYA_25082021_BM169_1") -> Path:
+def convert_rahmanian() -> Path:
     """EIS conductivity (S/cm) vs T → assumed 1 V excitation + published Kcell."""
-    # 缓存只含该 experiment_id 的记录，文件名按 id 区分
+    experiment_id = RAHMANIAN_EXPERIMENT_ID
     cached = CACHE / f"rahmanian_{experiment_id}.json"
     records: list[dict]
     if cached.exists():
@@ -104,6 +106,9 @@ def convert_rahmanian(experiment_id: str = "PYA_25082021_BM169_1") -> Path:
                         break
                     continue
                 records.append(rec)
+        if not records:
+            # 不缓存空结果，也不拿空表覆盖已入库的夹具
+            raise ValueError(f"experiment {experiment_id!r} not found in {RAHMANIAN_URL}")
         cached.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
     rows: list[tuple[float, float, float, float]] = []
     kcell = 4.72026

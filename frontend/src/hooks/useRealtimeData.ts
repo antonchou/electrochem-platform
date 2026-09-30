@@ -77,15 +77,9 @@ export function useRealtimeData(bridge: ExperimentBridge) {
         );
         sync();
       }
-      if (ev.type === 'status') {
-        if (ev.status === 'idle') {
-          // 复位到 idle 清空。续跑同一实验（同 id 的 running 状态帧）绝不能清曲线。
-          buffer.clear();
-          sync();
-        } else if (buffer.bindExperiment(ev.experiment_id)) {
-          // 别的客户端开了新实验（旁观端）：先清掉旧实验的点
-          sync();
-        }
+      if (ev.type === 'status' && buffer.applyStatus(ev.status, ev.experiment_id)) {
+        // 规则见 RealtimeBuffer.applyStatus：idle 复位清空；换了实验先清旧点
+        sync();
       }
       if (ev.type === 'connection' && ev.status === 'connected' && bridge.api) {
         // 重连后对齐归属：断线/后端重启期间可能已换了实验（规则见 RealtimeBuffer.alignToCurrent）

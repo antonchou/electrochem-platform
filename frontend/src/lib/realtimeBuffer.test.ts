@@ -66,6 +66,23 @@ test('clear() unbinds and generation changes whenever ownership changes', () => 
   assert.ok(buf.generation > g1);
 });
 
+test('status frames: idle resets everything, running only clears on a new id', () => {
+  const buf = new RealtimeBuffer(100);
+  buf.push(pt(0), 7);
+  // 续跑同一实验：不清
+  assert.equal(buf.applyStatus('running', 7), false);
+  assert.deepEqual(ts(buf), [0]);
+  // 旁观端看到别处开了新实验：先清旧点
+  assert.equal(buf.applyStatus('running', 8), true);
+  assert.equal(buf.points.length, 0);
+  assert.equal(buf.experimentId, 8);
+  // idle 是复位：连未归属的点（调试 burst 帧）一起清
+  const unbound = new RealtimeBuffer(100);
+  unbound.push(pt(0));
+  assert.equal(unbound.applyStatus('idle', null), true);
+  assert.equal(unbound.points.length, 0);
+});
+
 test('reconnect alignment: idle clears only a bound buffer, running rebinds', () => {
   // 后端重启后回到 idle：旧实验的点要清掉
   const bound = new RealtimeBuffer(100);

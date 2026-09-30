@@ -318,3 +318,7 @@ def test_csv_env_parse_error_names_the_variable(tmp_path, monkeypatch):
     monkeypatch.setenv("EC_CSV_SPEED", "2x")
     with pytest.raises(ValueError, match="EC_CSV_SPEED"):
         build_driver()
+    # 能解析成数、但校验不过的值（nan / 0）：报错同样指向 EC_CSV_* 环境变量与字段名
+    monkeypatch.setenv("EC_CSV_SPEED", "nan")
+    with pytest.raises(ValueError, match=r"EC_CSV_\*.*speed"):
+        build_driver()
