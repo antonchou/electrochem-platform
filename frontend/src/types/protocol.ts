@@ -95,6 +95,11 @@ export interface ExperimentSummary {
   started_at_utc: string;
   ended_at_utc: string | null;
   frame_count: number;
+  // 主样品（首个样品）摘要：跨实验标定选点用（一实验一点）
+  concentration_mmol_l?: number | null;
+  qc_status?: string | null;
+  representative_value?: number | null;
+  k25_median?: number | null;
 }
 
 /** 样品汇总 */
@@ -206,6 +211,24 @@ export interface FitResultItem {
 export interface FitResponse {
   best: string | null;
   models: FitResultItem[];
+}
+
+/** 跨实验标定的一个点（服务端从库里取，一实验一点） */
+export interface CalibrationPoint {
+  experiment_id: number;
+  experiment_uid: string;
+  sample_id: string;
+  concentration_mmol_l: number;
+  kappa25_us_cm: number;
+  /** representative = QC PASS 代表值；median = QC WARN 时取窗口中位数 */
+  source: 'representative' | 'median';
+  qc_status: string;
+}
+
+/** 跨实验标定响应：拟合结果 + 实际使用的点 + 报告路径 */
+export interface CalibrationResponse extends FitResponse {
+  points: CalibrationPoint[];
+  derived_path: string | null;
 }
 
 /** WebSocket 连接状态 */

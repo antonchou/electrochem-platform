@@ -23,7 +23,13 @@ from .drivers import (
     load_simulator_config,
 )
 from .persistence import persist
-from .schemas import ControlResponse, CurrentExperimentResponse, ExperimentStartRequest, FitRequest
+from .schemas import (
+    CalibrationRequest,
+    ControlResponse,
+    CurrentExperimentResponse,
+    ExperimentStartRequest,
+    FitRequest,
+)
 from .state import DEFAULT_SAMPLE_ID, DEFAULT_SENSOR_PATH_ID, state
 from .stream import generate_frame
 
@@ -801,6 +807,38 @@ async def fit(body: FitRequest) -> dict:
         "models": results,
         "derived_path": derived_path,
     }
+
+
+@router.post("/api/analysis/calibration")
+async def calibration(body: CalibrationRequest) -> dict:
+    """跨实验浓度标定：每个实验取一个点（κ25 代表值 vs 浓度），按浓度轴模型池拟合。
+
+    单个实验只有一种浓度，浓度轴拟合只能跨实验做（09-30 审查 #4）。取点在服务端从库里
+    读（不信任前端传值），结果报告写 data/derived/calibration_*.json，内含成员实验以便溯源。
+    """
+    ids = list(dict.fromkeys(body.experiment_ids))
+    points, problems = await asyncio.to_thread(storage.calibration_points, ids)
+    if problems:
+        raise HTTPException(status_code=400, detail="；".join(problems))
+    if len({p["concentration_mmol_l"] for p in points}) < 3:
+        raise HTTPException(status_code=400, detail="跨实验标定至少需要 3 个不同浓度")
+    x = [p["concentration_mmol_l"] for p in points]
+    y = [p["kappa25_us_cm"] for p in points]
+    results = await asyncio.to_thread(analysis.fit_all, x, y, body.models, "concentration")
+    best = results[0]["model"] if results else None
+    derived_path = None
+    if results:
+        payload = {
+            "kind": "calibration",
+            "x_axis": "concentration",
+            "created_at_utc": _utc_now(),
+            "experiment_ids": ids,
+            "points": points,
+            "best": best,
+            "models": results,
+        }
+        derived_path = await asyncio.to_thread(storage.write_calibration_report, ids, payload)
+    return {"best": best, "models": results, "points": points, "derived_path": derived_path}
 
 
 # ---------- 调试接口（仅模拟源使用；用于验收 F08/F09/F10/P04） ----------

@@ -82,6 +82,13 @@ class FitRequest(BaseModel):
     experiment_id: Optional[int] = None  # 提供则把本轮拟合写入 fit_results / data/derived
 
 
+class CalibrationRequest(BaseModel):
+    """跨实验浓度标定：选 ≥3 个已停止、有浓度、QC 为 PASS/WARN 的实验，一实验一点。"""
+
+    experiment_ids: list[int] = Field(..., min_length=3, max_length=200)
+    models: Optional[list[str]] = None  # 缺省 = 浓度轴全部模型
+
+
 class FitResultItem(BaseModel):
     """单模型拟合结果。"""
 
