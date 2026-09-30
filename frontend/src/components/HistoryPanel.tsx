@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient } from '../services/apiClient';
 import type { DataPoint, ExperimentDetail, ExperimentSummary, RawFrame } from '../types/protocol';
+import { MAX_FIT_POINTS } from '../lib/fitPoints';
 import { CalibrationPanel } from './CalibrationPanel';
 import { FitPanel } from './FitPanel';
 import { StaticChart } from './StaticChart';
@@ -69,10 +70,11 @@ export function HistoryPanel({ api, onClose }: Props) {
       setLoadingDetail(true);
       setError(null);
       try {
-        // P2-7 修复：拉取全部帧（而非前 3000 帧），曲线降采样显示、拟合用全量
+        // 全实验等间隔抽样至多 2 万帧（= 拟合点上限，R3-6）。旧实现拉前 10 万帧：超长实验
+        // 只看得到开头、提示却写“拟合基于全部帧”，单次传输也可达 63MB。
         const [detail, rawFrames] = await Promise.all([
           api.getExperiment(id),
-          api.getFrames(id, 100_000),
+          api.getFrames(id, MAX_FIT_POINTS, 'even'),
         ]);
         if (requestId !== detailRequestIdRef.current) return;
         setSelected(detail);
@@ -101,7 +103,7 @@ export function HistoryPanel({ api, onClose }: Props) {
     [frames],
   );
 
-  // P2-7：曲线最多降采样到 2000 点显示（保趋势、防卡顿）；拟合仍用全量帧
+  // P2-7：曲线最多降采样到 2000 点显示（保趋势、防卡顿）；拟合用已加载的全部帧（≤2 万，全实验等间隔抽样）
   const displayData: [number, number][] = useMemo(
     () =>
       chartData.length > MAX_CHART_POINTS
@@ -265,10 +267,13 @@ export function HistoryPanel({ api, onClose }: Props) {
                 <div className={styles.hint}>加载中…</div>
               ) : chartData.length > 0 ? (
                 <>
-                  {chartData.length > MAX_CHART_POINTS && (
+                  {(selected.frame_count > frames.length ||
+                    chartData.length > MAX_CHART_POINTS) && (
                     <div className={styles.hint} data-testid="history-downsample-note">
-                      共 {chartData.length} 帧，曲线按 {MAX_CHART_POINTS} 点降采样显示；拟合基于全部{' '}
-                      {chartData.length} 帧
+                      {selected.frame_count > frames.length
+                        ? `共 ${selected.frame_count} 帧，按全实验等间隔抽样 ${frames.length} 帧（保留首末帧）用于拟合；`
+                        : `共 ${chartData.length} 帧，拟合基于全部帧；`}
+                      曲线按 {MAX_CHART_POINTS} 点降采样显示
                     </div>
                   )}
                   <StaticChart data={displayData} />
