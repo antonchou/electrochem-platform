@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DataPoint, FitAxis, FitResponse, FitResultItem } from '../types/protocol';
 import type { ApiClient } from '../services/apiClient';
 import { buildFitPoints, fitCandidates } from '../lib/fitPoints';
+import { fmtFixed } from '../lib/units';
 import { StaticChart, type ChartOverlay } from './StaticChart';
 import styles from './FitPanel.module.css';
 
@@ -307,8 +308,8 @@ export function FitPanel({
                   <td className={styles.params}>{fmtParams(r.params)}</td>
                   <td>{r.r2.toFixed(4)}</td>
                   <td>{r.rmse.toFixed(4)}</td>
-                  <td>{r.mae != null && Number.isFinite(r.mae) ? r.mae.toFixed(4) : '--'}</td>
-                  <td>{r.aicc != null && Number.isFinite(r.aicc) ? r.aicc.toFixed(2) : '--'}</td>
+                  <td>{fmtFixed(r.mae, 4)}</td>
+                  <td>{fmtFixed(r.aicc, 2)}</td>
                   <td>{r.n}</td>
                 </tr>
               ))}

@@ -1,3 +1,8 @@
+/** 有限数按位数格式化；null / NaN / ±Infinity 一律显示 "--"（脏数据不得直接显示成 NaN）。 */
+export function fmtFixed(value: number | null | undefined, digits: number): string {
+  return value != null && Number.isFinite(value) ? value.toFixed(digits) : '--';
+}
+
 /** 按数量级选择电导率单位：μS/cm 或 mS/cm。 */
 export function formatConductivityUsCm(usCm: number, digits?: number): { value: number; unit: 'μS/cm' | 'mS/cm'; text: string } {
   if (!Number.isFinite(usCm)) {

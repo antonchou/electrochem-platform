@@ -14,7 +14,6 @@ import type { DataPoint } from '../types/protocol';
 export class RealtimeBuffer {
   points: DataPoint[] = [];
   experimentId: number | null = null;
-  runStartT: number | null = null;
   revision = 0;
   generation = 0;
   readonly maxPoints: number;
@@ -40,7 +39,6 @@ export class RealtimeBuffer {
     if (this.points.length > this.maxPoints) {
       this.points.splice(0, this.points.length - this.maxPoints);
     }
-    if (this.runStartT === null) this.runStartT = point.t;
     this.revision += 1;
   }
 
@@ -73,7 +71,6 @@ export class RealtimeBuffer {
 
   private replacePoints(next: DataPoint[]): void {
     this.points = next;
-    this.runStartT = next.length > 0 ? next[0].t : null;
     this.revision += 1;
   }
 }

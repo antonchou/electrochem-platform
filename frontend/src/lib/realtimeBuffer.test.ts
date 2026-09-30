@@ -26,7 +26,6 @@ test('a frame from another experiment clears the old data first (09-30 #3)', () 
   buf.push(pt(0), 8);
   assert.equal(buf.experimentId, 8);
   assert.deepEqual(ts(buf), [0]);
-  assert.equal(buf.runStartT, 0);
   // 换了新数组：图表据引用变化重建坐标轴
   assert.notEqual(buf.points, oldArray);
 });
@@ -64,7 +63,6 @@ test('clear() unbinds and generation changes whenever ownership changes', () => 
   buf.clear();
   assert.equal(buf.experimentId, null);
   assert.equal(buf.points.length, 0);
-  assert.equal(buf.runStartT, null);
   assert.ok(buf.generation > g1);
 });
 
@@ -77,7 +75,6 @@ test('hydrate merges history with newer live points, clamps, and keeps the bindi
   buf.hydrate([pt(1), pt(2), pt(3), pt(5), pt(Number.NaN)], 7);
   assert.deepEqual(ts(buf), [3, 5, Number.NaN, 6]);
   assert.equal(buf.experimentId, 7);
-  assert.equal(buf.runStartT, 3);
 
   // 水合的是另一个实验：旧内存帧不得混入
   buf.hydrate([pt(1)], 8);

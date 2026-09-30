@@ -5,7 +5,7 @@ import { GridComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { useEChart } from '../hooks/useEChart';
 import type { IVAnalysis } from '../lib/ivAnalysis';
-import { formatConductanceS, formatConductivityUsCm, formatOhms } from '../lib/units';
+import { fmtFixed, formatConductanceS, formatConductivityUsCm, formatOhms } from '../lib/units';
 import styles from './SolutionCompare.module.css';
 
 echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer]);
@@ -212,7 +212,7 @@ export function SolutionCompare({
                   <td>{fmtR(row.resistanceOhm)}</td>
                   <td>{fmtKappa(row.kappa25)}</td>
                   <td>{row.temperatureC != null ? `${row.temperatureC.toFixed(2)} °C` : '--'}</td>
-                  <td>{row.r2 != null && Number.isFinite(row.r2) ? row.r2.toFixed(3) : '--'}</td>
+                  <td>{fmtFixed(row.r2, 3)}</td>
                 </tr>
               ))
             )}

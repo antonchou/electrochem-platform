@@ -17,7 +17,6 @@ import { RealtimeBuffer } from '../lib/realtimeBuffer';
 export function useRealtimeData(bridge: ExperimentBridge) {
   const [buffer] = useState(() => new RealtimeBuffer(config.chart.maxPoints));
   const pointsRef = useRef<DataPoint[]>(buffer.points);
-  const runStartTRef = useRef<number | null>(null);
   const [count, setCount] = useState(0);
   const [revision, setRevision] = useState(0);
   const [latest, setLatest] = useState<DataPoint | null>(null);
@@ -26,7 +25,6 @@ export function useRealtimeData(bridge: ExperimentBridge) {
   const sync = useCallback(() => {
     const pts = buffer.points;
     pointsRef.current = pts;
-    runStartTRef.current = buffer.runStartT;
     setCount(pts.length);
     setRevision(buffer.revision);
     setLatest(pts.length > 0 ? pts[pts.length - 1] : null);
@@ -96,7 +94,14 @@ export function useRealtimeData(bridge: ExperimentBridge) {
         bridge.api
           .getCurrentExperiment()
           .then((cur) => {
-            if (buffer.generation === generation) bindExperiment(cur.experiment_id);
+            if (buffer.generation !== generation) return;
+            if (cur.status === 'idle') {
+              // 缓冲仍归属某个旧实验，但后端已无实验上下文（重启后旧实验被标 aborted、或别处已复位）：
+              // 与收到 idle 状态帧同义，清空旧实验的点。未归属的点（调试 burst 帧）不动。
+              if (buffer.experimentId !== null) clearPoints();
+            } else {
+              bindExperiment(cur.experiment_id);
+            }
           })
           .catch(() => {
             /* 查询失败不阻断实时流；下一帧自带实验 id 仍会对齐 */
@@ -104,14 +109,13 @@ export function useRealtimeData(bridge: ExperimentBridge) {
       }
     });
     return unsub;
-  }, [bridge, buffer, sync, bindExperiment]);
+  }, [bridge, buffer, sync, bindExperiment, clearPoints]);
 
   return {
     pointsRef,
     count,
     revision,
     latest,
-    runStartTRef,
     clearPoints,
     hydrateFromFrames,
     bindExperiment,
