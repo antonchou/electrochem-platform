@@ -55,6 +55,11 @@ def compute_chain(
     conductance_s = current_a / voltage_v
     kappa_t_us_cm = cell_constant_per_cm * conductance_s * 1e6
     kappa_25_us_cm = kappa_t_us_cm / denominator
+    if not all(math.isfinite(x) for x in (conductance_s, kappa_t_us_cm, kappa_25_us_cm)):
+        # 如 U→0⁺ 时 I/U 溢出：inf 进帧会让 JSON 非法、帧查询接口序列化失败
+        raise ValueError(
+            f"computed conductivity is not finite (U={voltage_v}, I={current_a}); cannot compute kappa25"
+        )
     return MeasurementResult(
         conductance_s=conductance_s,
         kappa_t_us_cm=kappa_t_us_cm,

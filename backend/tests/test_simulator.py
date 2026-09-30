@@ -22,7 +22,7 @@ from app.drivers import (
     load_simulator_config,
 )
 from app.measurement import compute_chain
-from app.routes import _build_driver
+from app.acquisition import build_driver
 
 
 def _ols_slope(x: list[float], y: list[float]) -> tuple[float, float]:
@@ -187,7 +187,7 @@ def test_load_simulator_mode_override(monkeypatch, tmp_path):
 def test_build_driver_unknown_kind(monkeypatch):
     monkeypatch.setenv("EC_DRIVER", "ads1256")
     with pytest.raises(ValueError, match="unknown EC_DRIVER"):
-        _build_driver()
+        build_driver()
 
 
 def test_example_config_file_loads():
@@ -363,3 +363,24 @@ def test_mode_override_preserves_explicit_fields(monkeypatch, tmp_path):
     # 未显式提供的字段取新模式预设
     assert cfg.current_noise_a == 8.0e-6
     assert cfg.nonlinearity > 0
+
+
+def test_simulator_dropout_zero_means_no_dropout():
+    cfg = SimulatorConfig(
+        mode=SimulatorMode.STABLE,
+        fault_kind=FaultKind.DROPOUT,
+        dropout_every_n=0,
+        fault_start_s=0.0,
+    )
+    driver = SimulatorDriver(cfg)
+
+    async def scenario():
+        await driver.connect()
+        dropped = 0
+        for i in range(20):
+            reading = await driver.read(i * 0.1)
+            if "DROPOUT" in reading.quality_flags:
+                dropped += 1
+        return dropped
+
+    assert asyncio.run(scenario()) == 0

@@ -17,7 +17,6 @@ import { RealtimeBuffer } from '../lib/realtimeBuffer';
 export function useRealtimeData(bridge: ExperimentBridge) {
   const [buffer] = useState(() => new RealtimeBuffer(config.chart.maxPoints));
   const pointsRef = useRef<DataPoint[]>(buffer.points);
-  const runStartTRef = useRef<number | null>(null);
   const [count, setCount] = useState(0);
   const [revision, setRevision] = useState(0);
   const [latest, setLatest] = useState<DataPoint | null>(null);
@@ -26,7 +25,6 @@ export function useRealtimeData(bridge: ExperimentBridge) {
   const sync = useCallback(() => {
     const pts = buffer.points;
     pointsRef.current = pts;
-    runStartTRef.current = buffer.runStartT;
     setCount(pts.length);
     setRevision(buffer.revision);
     setLatest(pts.length > 0 ? pts[pts.length - 1] : null);
@@ -79,24 +77,17 @@ export function useRealtimeData(bridge: ExperimentBridge) {
         );
         sync();
       }
-      if (ev.type === 'status') {
-        if (ev.status === 'idle') {
-          // 复位到 idle 清空。续跑同一实验（同 id 的 running 状态帧）绝不能清曲线。
-          buffer.clear();
-          sync();
-        } else if (buffer.bindExperiment(ev.experiment_id)) {
-          // 别的客户端开了新实验（旁观端）：先清掉旧实验的点
-          sync();
-        }
+      if (ev.type === 'status' && buffer.applyStatus(ev.status, ev.experiment_id)) {
+        // 规则见 RealtimeBuffer.applyStatus：idle 复位清空；换了实验先清旧点
+        sync();
       }
       if (ev.type === 'connection' && ev.status === 'connected' && bridge.api) {
-        // 重连后对齐归属：断线/后端重启期间可能已换了实验，错过的 running 广播不会重发。
-        // 请求在途时若帧或状态帧已对齐过归属（generation 变了），以它们为准。
+        // 重连后对齐归属：断线/后端重启期间可能已换了实验（规则见 RealtimeBuffer.alignToCurrent）
         const generation = buffer.generation;
         bridge.api
           .getCurrentExperiment()
           .then((cur) => {
-            if (buffer.generation === generation) bindExperiment(cur.experiment_id);
+            if (buffer.alignToCurrent(cur, generation)) sync();
           })
           .catch(() => {
             /* 查询失败不阻断实时流；下一帧自带实验 id 仍会对齐 */
@@ -104,14 +95,13 @@ export function useRealtimeData(bridge: ExperimentBridge) {
       }
     });
     return unsub;
-  }, [bridge, buffer, sync, bindExperiment]);
+  }, [bridge, buffer, sync]);
 
   return {
     pointsRef,
     count,
     revision,
     latest,
-    runStartTRef,
     clearPoints,
     hydrateFromFrames,
     bindExperiment,

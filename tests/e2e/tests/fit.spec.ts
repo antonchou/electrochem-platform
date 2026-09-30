@@ -1,14 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { API, resetExperiment } from './backend';
 
 /**
  * 化学公式拟合功能验收：停止实验后，选 X 轴（时间/温度）→ 选模型 → 拟合 → 出结果与曲线。
  */
-
-const API = 'http://127.0.0.1:8000';
-
-async function resetExperiment(request: import('@playwright/test').APIRequestContext) {
-  await request.post(`${API}/api/experiment/reset`);
-}
 
 test.beforeEach(async ({ page, request }) => {
   await resetExperiment(request);

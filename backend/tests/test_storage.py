@@ -1,8 +1,13 @@
 """SQLite 存储层测试：生命周期、append-only 约束、样品汇总、CSV 导出。"""
 
+import logging
 import sqlite3
 
 import pytest
+
+from app import storage
+
+SENSOR = "MOCK_EC_IV"
 
 
 @pytest.fixture()
@@ -243,3 +248,172 @@ def test_fit_results_replace_same_axis(store, tmp_path, monkeypatch):
     assert path.endswith("experiment_%s_fit_time.json" % eid)
     store.write_fit_report(eid, {"x_axis": "time", "models": [{"n": 1}]})
     assert len(list((tmp_path / "derived").glob("*.json"))) == 1
+
+
+# ---------------- 帧写入、导出与 QC 写回 ----------------
+
+
+def _frame(experiment_id: int, sensor_path_id: str) -> dict:
+    return {
+        "experiment_id": experiment_id,
+        "sample_id": "SAME",
+        "sensor_path_id": sensor_path_id,
+        "seq_no": 1,
+        "timestamp_utc": "2026-08-21T00:00:00Z",
+        "monotonic_ms": 1,
+        "t_seconds": 0.1,
+        "ec_raw": 100.0,
+        "temperature_raw": 25.0,
+        "k25": None,
+        "quality_flags": None,
+        "status": "running",
+    }
+
+
+def test_frame_count_isolated_by_sensor_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "paths.db"))
+    storage.init_db()
+    exp_id = storage.create_experiment_with_sample("EXP-PATHS", "paths", "SAME", "NARROW")
+
+    storage.insert_frames([_frame(exp_id, "WIDE")])
+
+    samples = {item["sensor_path_id"]: item["frame_count"] for item in storage.get_samples(exp_id)}
+    assert samples == {"WIDE": 1, "NARROW": 0}
+
+
+def test_insert_frames_upserts_missing_sample(tmp_path, monkeypatch):
+    """P0-2：帧写入时样品行不存在则补建并累计 frame_count。"""
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "upsert-count.db"))
+    storage.init_db()
+    exp_id = storage.create_experiment_with_sample("EXP-UPSERT", "upsert", "SAME", "NARROW")
+    storage.insert_frames([_frame(exp_id, "WIDE")])
+    storage.insert_frames([_frame(exp_id, "WIDE")])
+    samples = {item["sensor_path_id"]: item["frame_count"] for item in storage.get_samples(exp_id)}
+    assert samples == {"NARROW": 0, "WIDE": 2}
+
+
+def test_experiment_and_sample_creation_rolls_back_together(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "atomic.db"))
+    storage.init_db()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        storage.create_experiment_with_sample(
+            "EXP-ATOMIC",
+            "atomic",
+            None,  # type: ignore[arg-type]  # 强制触发 samples.sample_id NOT NULL
+            "WIDE",
+        )
+
+    assert storage.list_experiments() == []
+
+
+def test_insert_frames_skips_malformed_rows(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "t05.db"))
+    storage.init_db()
+    exp_id = storage.create_experiment_with_sample("EXP-T05", "malformed rows", "S1", "MOCK_EC_IV")
+
+    good = {
+        "experiment_id": exp_id,
+        "sample_id": "S1",
+        "sensor_path_id": "MOCK_EC_IV",
+        "t_seconds": 0.1,
+        "ec_raw": 100.0,
+        "temperature_raw": 25.0,
+    }
+    missing_exp = {k: v for k, v in good.items() if k != "experiment_id"}
+    missing_temp = {k: v for k, v in good.items() if k != "temperature_raw"}
+
+    # 修复前：KeyError / IntegrityError → 整批失败 → 持久化永久降级
+    storage.insert_frames([good, missing_exp, missing_temp])
+
+    frames = storage.get_frames(exp_id)
+    assert len(frames) == 1
+    assert frames[0]["t_seconds"] == 0.1
+    samples = {s["sample_id"]: s["frame_count"] for s in storage.get_samples(exp_id)}
+    assert samples == {"S1": 1}
+
+
+def test_insert_frames_all_malformed_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "t05b.db"))
+    storage.init_db()
+    storage.insert_frames([{"sample_id": "X", "t_seconds": 0.0}])  # 不抛异常即可
+
+
+def test_storage_export_json_full_content(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "t07.db"))
+    storage.init_db()
+    exp_id = storage.create_experiment_with_sample("EXP-T07", "export", "S1", "MOCK_EC_IV")
+    storage.insert_frames(
+        [
+            {
+                "experiment_id": exp_id,
+                "sample_id": "S1",
+                "sensor_path_id": "MOCK_EC_IV",
+                "t_seconds": float(i),
+                "ec_raw": 100.0 + i,
+                "temperature_raw": 25.0,
+            }
+            for i in range(5)
+        ]
+    )
+    import json
+
+    payload = json.loads(storage.export_json(exp_id))
+    assert payload["id"] == exp_id
+    assert payload["experiment_id"] == "EXP-T07"
+    assert payload["truncated"] is False
+    assert payload["frame_count_total"] == 5
+    assert len(payload["frames"]) == 5
+
+
+def test_storage_export_json_missing_raises_lookup(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "t07b.db"))
+    storage.init_db()
+    with pytest.raises(LookupError):
+        storage.export_json(99999)
+
+
+def test_insert_frames_malformed_drop_is_logged(tmp_path, monkeypatch, caplog):
+    """P2-4：畸形帧被丢弃时必须留 warning（带条数），不得静默消失。"""
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "r2-log.db"))
+    storage.init_db()
+    exp_id = storage.create_experiment_with_sample("EXP-R2", "logging", "S1", "MOCK_EC_IV")
+    good = {
+        "experiment_id": exp_id,
+        "sample_id": "S1",
+        "sensor_path_id": "MOCK_EC_IV",
+        "t_seconds": 0.1,
+        "ec_raw": 100.0,
+        "temperature_raw": 25.0,
+    }
+    malformed = {k: v for k, v in good.items() if k != "temperature_raw"}
+
+    with caplog.at_level(logging.WARNING, logger="app.storage"):
+        storage.insert_frames([good, malformed, dict(malformed)])
+
+    assert any(
+        "skipped 2 malformed frame" in rec.message for rec in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+    assert len(storage.get_frames(exp_id)) == 1
+
+
+def test_update_sample_qc_overwrites_stale_representative(tmp_path, monkeypatch):
+    """续跑后第二次停止判 FAIL：不得留着第一次 PASS 的代表值（界面会显示 FAIL + 代表值）。"""
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "qc.db"))
+    storage.init_db()
+    exp = storage.create_experiment_with_sample(
+        experiment_id="EXP-QC", title="t", sample_id="S", sensor_path_id=SENSOR
+    )
+    common = {"experiment_id": exp, "sample_id": "S", "sensor_path_id": SENSOR}
+    storage.update_sample_qc(
+        **common, qc_status="PASS", qc_reason="stable", representative_value=1413.0,
+        k25_median=1413.0, k25_mean=1413.0, k25_sd=0.1,
+    )
+    storage.update_sample_qc(
+        **common, qc_status="FAIL", qc_reason="hard_quality_flag", representative_value=None,
+        k25_median=1500.0, k25_mean=1499.0, k25_sd=9.0,
+    )
+    s = storage.get_samples(exp)[0]
+    assert s["qc_status"] == "FAIL"
+    assert s["representative_value"] is None
+    assert s["k25_median"] == 1500.0

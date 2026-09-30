@@ -53,14 +53,14 @@ export class ApiClient {
     if (!res.ok) throw new Error(`导出失败：HTTP ${res.status}`);
     const blob = await res.blob();
     const href = URL.createObjectURL(blob);
-    try {
-      const a = document.createElement('a');
-      a.href = href;
-      a.download = filename;
-      a.click();
-    } finally {
-      URL.revokeObjectURL(href);
-    }
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = filename;
+    // 挂进文档再点击、稍后再撤销：Firefox/Safari 对游离锚点或点击后立即撤销的 blob URL 会不下载或中断下载
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(href), 30_000);
   }
 
   /** 历史实验列表 */

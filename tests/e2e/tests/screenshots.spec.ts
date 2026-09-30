@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { API } from './backend';
 
 /**
  * 交付物 #5：页面截图（运行中 / 停止 / 断线 三个典型状态）。
@@ -11,7 +12,6 @@ import path from 'node:path';
  *   E2E_SCREENSHOT_DIR=../../docs/screenshots npx playwright test tests/screenshots.spec.ts
  */
 
-const API = 'http://127.0.0.1:8000';
 const SHOT_DIR = process.env.E2E_SCREENSHOT_DIR
   ? path.resolve(process.env.E2E_SCREENSHOT_DIR)
   : path.join(tmpdir(), 'ec-e2e-results', 'screenshots');

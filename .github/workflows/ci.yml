@@ -21,6 +21,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.lock.txt
       # 按锁文件装（R3-9）：生产 setup.sh 装的是 requirements.lock.txt，
       # CI 用松版本范围会测到与部署不同的依赖组合
       - name: Install dependencies (locked)
@@ -61,6 +63,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.lock.txt
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -84,4 +88,76 @@ jobs:
         env:
           CI: true
           EC_E2E_PYTHON: python
+        run: npx playwright test
+
+  # ---- v2（v2/ 子目录的重写版本，与上面的原项目互不依赖）----
+  v2-backend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: v2/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: v2/backend/requirements-dev.lock.txt
+      - name: Install dependencies (locked)
+        run: python -m pip install -r requirements-dev.lock.txt
+      - name: Test
+        run: python -m pytest -q
+
+  v2-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v2/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: v2/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build (assert dist/index.html)
+        run: |
+          npm run build
+          test -f dist/index.html
+
+  v2-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: v2/backend/requirements.lock.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: v2/frontend/package-lock.json
+      - name: Install backend (locked)
+        run: python -m pip install -r v2/backend/requirements.lock.txt
+      - name: Install and build frontend
+        working-directory: v2/frontend
+        run: |
+          npm ci
+          npm run build
+          npx playwright install --with-deps chromium
+      - name: Run Playwright
+        working-directory: v2/frontend
+        env:
+          CI: true
+          EC_PYTHON: python
         run: npx playwright test

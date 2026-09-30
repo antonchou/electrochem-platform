@@ -27,6 +27,8 @@ CACHE = Path(tempfile.gettempdir()) / "ec-data" / "raw"
 BRAUN_URL = "https://zenodo.org/records/6985321/files/Experimental_data_fresh_cell.csv?download=1"
 # 拼写 "Conductivtiy" 为 Zenodo 7244939 上游原始文件名（2026-09-11 经 API 核对），勿“修正”
 RAHMANIAN_URL = "https://zenodo.org/records/7244939/files/Conductivtiy_experiment.csv?download=1"
+# 输出夹具 rahmanian_2022_eis_bm169.* 只对应这一个实验；换实验要连输出文件名一起换
+RAHMANIAN_EXPERIMENT_ID = "PYA_25082021_BM169_1"
 ECHEMDB_CSV = (
     "https://raw.githubusercontent.com/echemdb/electrochemistry-data/main/"
     "literature/source_data/hermann_2021_effect_138279/"
@@ -49,7 +51,8 @@ def write_ingest(path: Path, rows: list[tuple[float, float, float, float]]) -> N
 
 def convert_braun(max_seconds: float = 600.0) -> Path:
     """Li-ion pouch/cell cycling: Time, Current, Voltage, Temperature."""
-    cached = CACHE / "braun_fresh_head.csv"
+    # 缓存只含前 int(max_seconds)+5 行，文件名带上秒数，换参数不会误读旧缓存
+    cached = CACHE / f"braun_fresh_head_{int(max_seconds)}s.csv"
     if cached.exists():
         text = cached.read_text(encoding="utf-8")
     else:
@@ -67,6 +70,7 @@ def convert_braun(max_seconds: float = 600.0) -> Path:
                     lines.append(line.decode("utf-8", "replace"))
                     n += 1
         text = "\n".join(lines)
+        cached.write_text(text, encoding="utf-8")
     rows: list[tuple[float, float, float, float]] = []
     for rec in csv.DictReader(io.StringIO(text)):
         t = float(rec["Time"])
@@ -85,9 +89,10 @@ def convert_braun(max_seconds: float = 600.0) -> Path:
     return out
 
 
-def convert_rahmanian(experiment_id: str = "PYA_25082021_BM169_1") -> Path:
+def convert_rahmanian() -> Path:
     """EIS conductivity (S/cm) vs T → assumed 1 V excitation + published Kcell."""
-    cached = CACHE / "rahmanian_bm169.json"
+    experiment_id = RAHMANIAN_EXPERIMENT_ID
+    cached = CACHE / f"rahmanian_{experiment_id}.json"
     records: list[dict]
     if cached.exists():
         records = json.loads(cached.read_text(encoding="utf-8"))
@@ -101,6 +106,10 @@ def convert_rahmanian(experiment_id: str = "PYA_25082021_BM169_1") -> Path:
                         break
                     continue
                 records.append(rec)
+        if not records:
+            # 不缓存空结果，也不拿空表覆盖已入库的夹具
+            raise ValueError(f"experiment {experiment_id!r} not found in {RAHMANIAN_URL}")
+        cached.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
     rows: list[tuple[float, float, float, float]] = []
     kcell = 4.72026
     u_v = 1.0
@@ -115,7 +124,7 @@ def convert_rahmanian(experiment_id: str = "PYA_25082021_BM169_1") -> Path:
     sidecar = {
         "experiment_id": experiment_id,
         "cell_constant_per_cm": kcell,
-        "excitation_voltage_v": u_v,
+        "excitation_amplitude_v": u_v,
         "note": "U/I reconstructed from EIS_conductivity and published Kcell so compute_chain can run; not a measured I–V waveform.",
     }
     (OUT / "rahmanian_2022_eis_bm169.meta.json").write_text(
@@ -131,6 +140,7 @@ def convert_echemdb(stride: int = 10, temperature_c: float = 20.0) -> Path:
         text = cached.read_text(encoding="utf-8-sig")
     else:
         text = _open(ECHEMDB_CSV).read().decode("utf-8-sig")
+        cached.write_text(text, encoding="utf-8-sig")
     raw = list(csv.DictReader(io.StringIO(text), delimiter="\t"))
     rows: list[tuple[float, float, float, float]] = []
     t0 = float(raw[0]["Time (s)"])

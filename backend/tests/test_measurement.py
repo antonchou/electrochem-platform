@@ -105,3 +105,9 @@ def test_mock_iv_backderivation_consistent():
     import asyncio
 
     asyncio.run(scenario())
+
+
+def test_nonfinite_result_rejected():
+    """U→0⁺ 时 I/U 溢出为 inf：按计算链拒绝处理，不让 inf 进帧。"""
+    with pytest.raises(ValueError, match="not finite"):
+        compute_chain(1e-310, 1.0, 25.0, KCELL, ALPHA)

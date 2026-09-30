@@ -1,4 +1,4 @@
-import type { DataPoint } from '../types/protocol';
+import type { CurrentExperiment, DataPoint, ExperimentStatus } from '../types/protocol';
 
 /**
  * 实时数据缓冲（纯逻辑，由 useRealtimeData 包装；可直接用 node:test 测）。
@@ -14,7 +14,6 @@ import type { DataPoint } from '../types/protocol';
 export class RealtimeBuffer {
   points: DataPoint[] = [];
   experimentId: number | null = null;
-  runStartT: number | null = null;
   revision = 0;
   generation = 0;
   readonly maxPoints: number;
@@ -40,8 +39,35 @@ export class RealtimeBuffer {
     if (this.points.length > this.maxPoints) {
       this.points.splice(0, this.points.length - this.maxPoints);
     }
-    if (this.runStartT === null) this.runStartT = point.t;
     this.revision += 1;
+  }
+
+  /**
+   * 处理状态帧，返回是否清空了点。
+   * - idle：复位，连同未归属的点一起清空。
+   * - 其他状态：对齐到帧里的实验 id；别的客户端开了新实验（旁观端）会先清旧点，
+   *   续跑同一实验（同 id）绝不清。
+   */
+  applyStatus(status: ExperimentStatus, experimentId: number | null | undefined): boolean {
+    if (status !== 'idle') return this.bindExperiment(experimentId);
+    this.clear();
+    return true;
+  }
+
+  /**
+   * 重连后按「当前实验」接口的结果对齐归属，返回是否清空了点。
+   * generation 取发请求时的值：请求在途时帧或状态帧已对齐过归属（代数变了），以它们为准。
+   * - idle：后端已无实验上下文（重启后旧实验被标 aborted、或别处已复位）。缓冲仍归属某个
+   *   旧实验就清空；未归属的点（调试 burst 帧）不动——重连只是对齐、不是复位，这点与
+   *   idle 状态帧（applyStatus）不同。
+   * - 其他状态：对齐到当前实验 id（断线期间错过的 running 广播不会重发）。
+   */
+  alignToCurrent(cur: Pick<CurrentExperiment, 'status' | 'experiment_id'>, generation: number): boolean {
+    if (generation !== this.generation) return false;
+    if (cur.status !== 'idle') return this.bindExperiment(cur.experiment_id);
+    if (this.experimentId === null) return false;
+    this.clear();
+    return true;
   }
 
   /** 清空并解除归属（复位到 idle、手动清空）。 */
@@ -73,7 +99,6 @@ export class RealtimeBuffer {
 
   private replacePoints(next: DataPoint[]): void {
     this.points = next;
-    this.runStartT = next.length > 0 ? next[0].t : null;
     this.revision += 1;
   }
 }

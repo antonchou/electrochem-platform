@@ -1,3 +1,4 @@
+import { fmtFixed } from '../lib/units';
 import styles from './ValueDisplay.module.css';
 
 interface Props {
@@ -16,7 +17,7 @@ export function ValueDisplay({ label, value, unit, precision = 1, testId }: Prop
       <span className={styles.label}>{label}</span>
       <span className={styles.value} data-testid={testId ? `${testId}-num` : undefined}>
         {/* NaN / ±Infinity 一律显示 "--"：脏数据不得直接暴露到读数卡（T-12） */}
-        {value !== null && Number.isFinite(value) ? value.toFixed(precision) : '--'}
+        {fmtFixed(value, precision)}
       </span>
       <span className={styles.unit}>{unit}</span>
     </div>

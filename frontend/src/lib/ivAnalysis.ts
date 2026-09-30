@@ -86,40 +86,8 @@ export function rawFrameToPoint(frame: RawFrame): DataPoint {
 }
 
 export function analyzeIV(points: readonly DataPoint[]): IVAnalysis {
-  const pairs: Array<{
-    v: number;
-    i: number;
-    g: number | null;
-    k25: number | null;
-    kt: number | null;
-    t: number | null;
-  }> = [];
-
-  for (const p of points) {
-    const v = p.voltage_raw_v;
-    const i = p.current_raw_a;
-    if (!isFiniteNumber(v) || !isFiniteNumber(i)) continue;
-    const gFromFrame = isFiniteNumber(p.conductance_s) ? p.conductance_s : null;
-    const gFromIU = v > 0 ? i / v : null;
-    pairs.push({
-      v,
-      i,
-      g: gFromFrame ?? gFromIU,
-      k25: isFiniteNumber(p.kappa_25_us_cm)
-        ? p.kappa_25_us_cm
-        : isFiniteNumber(p.ec)
-          ? p.ec
-          : null,
-      kt: isFiniteNumber(p.kappa_t_us_cm) ? p.kappa_t_us_cm : null,
-      t: isFiniteNumber(p.tc) ? p.tc : null,
-    });
-  }
-
-  if (pairs.length === 0) return { ...EMPTY };
-  if (pairs.length < MIN_IV_POINTS) {
-    return { ...EMPTY, n: pairs.length, reason: 'insufficient_samples' };
-  }
-
+  // 每个 revision（10 Hz）对最多 2 万点重算：直接累加，不为每个点建临时对象
+  let n = 0;
   let vMin = Infinity;
   let vMax = -Infinity;
   let iMin = Infinity;
@@ -137,34 +105,45 @@ export function analyzeIV(points: readonly DataPoint[]): IVAnalysis {
   let sumVV = 0;
   let sumVI = 0;
 
-  for (const p of pairs) {
-    vMin = Math.min(vMin, p.v);
-    vMax = Math.max(vMax, p.v);
-    iMin = Math.min(iMin, p.i);
-    iMax = Math.max(iMax, p.i);
-    if (p.g != null) {
-      sumG += p.g;
+  for (const p of points) {
+    const v = p.voltage_raw_v;
+    const i = p.current_raw_a;
+    if (!isFiniteNumber(v) || !isFiniteNumber(i)) continue;
+    n += 1;
+    vMin = Math.min(vMin, v);
+    vMax = Math.max(vMax, v);
+    iMin = Math.min(iMin, i);
+    iMax = Math.max(iMax, i);
+    // G 优先取后端 conductance_s，否则取 I/U（U>0）
+    const g = isFiniteNumber(p.conductance_s) ? p.conductance_s : v > 0 ? i / v : null;
+    if (g != null) {
+      sumG += g;
       nG += 1;
     }
-    if (p.k25 != null) {
-      sumK25 += p.k25;
+    const k25 = isFiniteNumber(p.kappa_25_us_cm) ? p.kappa_25_us_cm : isFiniteNumber(p.ec) ? p.ec : null;
+    if (k25 != null) {
+      sumK25 += k25;
       nK25 += 1;
     }
-    if (p.kt != null) {
-      sumKT += p.kt;
+    if (isFiniteNumber(p.kappa_t_us_cm)) {
+      sumKT += p.kappa_t_us_cm;
       nKT += 1;
     }
-    if (p.t != null) {
-      sumT += p.t;
+    if (isFiniteNumber(p.tc)) {
+      sumT += p.tc;
       nT += 1;
     }
-    sumV += p.v;
-    sumI += p.i;
-    sumVV += p.v * p.v;
-    sumVI += p.v * p.i;
+    sumV += v;
+    sumI += i;
+    sumVV += v * v;
+    sumVI += v * i;
   }
 
-  const n = pairs.length;
+  if (n === 0) return { ...EMPTY };
+  if (n < MIN_IV_POINTS) {
+    return { ...EMPTY, n, reason: 'insufficient_samples' };
+  }
+
   const vSpan = vMax - vMin;
   const meanG = nG > 0 ? sumG / nG : null;
   const meanKappa25 = nK25 > 0 ? sumK25 / nK25 : null;
@@ -180,18 +159,22 @@ export function analyzeIV(points: readonly DataPoint[]): IVAnalysis {
   let r2: number | null = null;
   const denom = n * sumVV - sumV * sumV;
   if (Math.abs(denom) > 1e-18) {
-    slopeS = (n * sumVI - sumV * sumI) / denom;
-    interceptA = (sumI - slopeS * sumV) / n;
+    const slope = (n * sumVI - sumV * sumI) / denom;
+    const intercept = (sumI - slope * sumV) / n;
     const meanI = sumI / n;
     let ssTot = 0;
     let ssRes = 0;
-    for (const p of pairs) {
-      const hat = slopeS * p.v + interceptA;
-      const err = p.i - hat;
+    for (const p of points) {
+      const v = p.voltage_raw_v;
+      const i = p.current_raw_a;
+      if (!isFiniteNumber(v) || !isFiniteNumber(i)) continue;
+      const err = i - (slope * v + intercept);
       ssRes += err * err;
-      const dI = p.i - meanI;
+      const dI = i - meanI;
       ssTot += dI * dI;
     }
+    slopeS = slope;
+    interceptA = intercept;
     // 退化判据（P1-5）：电流恒定时线性度不可判定 → r2 置 null（T-13）。
     // 阈值用相对口径（与后端 analysis._pack 一致）：ssTot ≤ 1e-12·mean²·n，
     // 即相对波动 < 1e-6 视为恒定；绝对阈值会误杀小量级真实信号（电流 A ~1e-6）。

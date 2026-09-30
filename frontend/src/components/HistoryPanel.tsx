@@ -4,6 +4,7 @@ import type { DataPoint, ExperimentDetail, ExperimentSummary, RawFrame } from '.
 import { downsample } from '../lib/downsample';
 import { MAX_FIT_POINTS } from '../lib/fitPoints';
 import { rawFrameToPoint } from '../lib/ivAnalysis';
+import { fmtFixed } from '../lib/units';
 import { CalibrationPanel } from './CalibrationPanel';
 import { ExportLink } from './ExportLink';
 import { FitPanel } from './FitPanel';
@@ -225,9 +226,9 @@ export function HistoryPanel({ api, onClose }: Props) {
                       <td>{s.concentration_mmol_l ?? '--'}</td>
                       <td>{s.frame_count}</td>
                       <td>{s.qc_status ?? '--'}</td>
-                      <td>{s.k25_median?.toFixed(2) ?? '--'}</td>
-                      <td>{s.k25_mean?.toFixed(2) ?? '--'}</td>
-                      <td>{s.k25_sd?.toFixed(2) ?? '--'}</td>
+                      <td>{fmtFixed(s.k25_median, 2)}</td>
+                      <td>{fmtFixed(s.k25_mean, 2)}</td>
+                      <td>{fmtFixed(s.k25_sd, 2)}</td>
                     </tr>
                   ))}
                 </tbody>
