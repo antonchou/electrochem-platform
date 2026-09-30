@@ -235,6 +235,58 @@ test('诊断区仍保留 EC-t，默认不是主图', async ({ page }) => {
   await expect(page.getByTestId('ec-t-chart')).toBeVisible();
 });
 
+test('F11 旁观端：别处开新实验时清空旧曲线并同步溶液名（09-30 #3）', async ({ page, browser }) => {
+  const observer = await browser.newPage();
+  try {
+    await observer.goto('/');
+    await expect(observer.getByTestId('connection-status')).toHaveText('已连接');
+
+    await page.getByTestId('input-sample').fill('OBS_A');
+    await page.getByTestId('btn-start').click();
+    await waitForPoints(page, 20);
+    await page.getByTestId('btn-stop').click();
+    await expect(observer.getByTestId('experiment-status')).toHaveText('已停止');
+    const before = Number(await observer.getByTestId('stat-count').innerText());
+    expect(before).toBeGreaterThanOrEqual(20);
+
+    // 操作端换样品 = 开新实验；旁观端只收到 WS 广播
+    await page.getByTestId('input-sample').fill('OBS_B');
+    await page.getByTestId('btn-start').click();
+    await expect(observer.getByTestId('experiment-status')).toHaveText('运行中');
+    await expect(observer.getByTestId('experiment-meta')).toContainText('OBS_B');
+    // 点数从新实验重新计，不得是旧实验点数的延续（旧实现：旧 28 + 新 18 = 46）
+    await expect
+      .poll(async () => Number(await observer.getByTestId('stat-count').innerText()), {
+        timeout: 3000,
+      })
+      .toBeLessThan(before);
+    await page.getByTestId('btn-stop').click();
+  } finally {
+    await observer.close();
+  }
+});
+
+test('P05 缓冲封顶 2 万点后 I–V 分析继续更新（09-30 #2）', async ({ page }) => {
+  await page.getByTestId('btn-start').click();
+  await waitForPoints(page, 5);
+  // burst 帧不带 V/I，只用来把缓冲顶到上限；之后到达的实时帧逐个挤掉它们
+  await page.request.post(`${API}/api/debug/burst?count=10000`);
+  await page.request.post(`${API}/api/debug/burst?count=10000`);
+  await waitForPoints(page, 20000, 30_000);
+  const card = page.getByTestId('iv-result-card');
+  await expect(card).toBeVisible({ timeout: 5000 });
+  const n1 = Number(await card.getAttribute('data-iv-n'));
+  // 旧实现以点数做 memo 依赖，封顶后点数恒为 20000，I–V 分析从此冻结
+  await expect
+    .poll(async () => Number(await card.getAttribute('data-iv-n')), {
+      timeout: 5000,
+      message: '封顶后新到的 V/I 点应继续进入 I–V 分析',
+    })
+    .toBeGreaterThan(n1);
+  await page.getByTestId('btn-stop').click();
+  await expect(page.getByTestId('experiment-status')).toHaveText('已停止');
+});
+
 test('P04 数据规模：承载 10000 点不卡死', async ({ page }) => {
   await page.getByTestId('btn-start').click();
   await waitForPoints(page, 1);

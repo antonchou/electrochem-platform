@@ -7,20 +7,17 @@ export const MAX_FIT_POINTS = 20_000;
  *
  * 浓度轴只接受带真实浓度的点：0（空白样）是合法标定点必须保留，
  * 无浓度的点不得用序号占位混入——那会让拟合输入直接错误。
+ * 浓度轴只要求 ec 与浓度有限：跨实验标定的点是“一实验一点”，本就没有 t/tc，
+ * 不能因无关字段缺失被整点丢弃（09-30 审查 #4）。
  */
 export function fitCandidates(points: DataPoint[], axis: FitAxis): [number, number][] {
-  const usable = points.filter(
-    (p) =>
-      p.ec !== null &&
-      Number.isFinite(p.ec) &&
-      Number.isFinite(p.t) &&
-      Number.isFinite(p.tc),
-  );
+  const hasEc = (p: DataPoint) => p.ec !== null && Number.isFinite(p.ec);
   if (axis === 'concentration') {
-    return usable
-      .filter((p) => p.concentration != null && Number.isFinite(p.concentration))
+    return points
+      .filter((p) => hasEc(p) && p.concentration != null && Number.isFinite(p.concentration))
       .map((p) => [p.concentration as number, p.ec as number] as [number, number]);
   }
+  const usable = points.filter((p) => hasEc(p) && Number.isFinite(p.t) && Number.isFinite(p.tc));
   return usable.map((p) =>
     axis === 'temperature'
       ? ([p.tc, p.ec as number] as [number, number])

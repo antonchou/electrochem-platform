@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorFromControlResponse } from '../lib/controlError';
 import type { ExperimentStartOptions, ExperimentStatus } from '../types/protocol';
 import type { ExperimentBridge } from '../services';
@@ -19,6 +19,13 @@ export function useExperiment(bridge: ExperimentBridge) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [persistDegraded, setPersistDegraded] = useState(false);
+  // 同步镜像 experimentId：applyCurrent 是稳定回调，要靠它判断“是否换了实验”
+  const experimentIdRef = useRef<number | null>(null);
+
+  const setExp = useCallback((id: number | null) => {
+    experimentIdRef.current = id;
+    setExperimentId(id);
+  }, []);
 
   const applyCurrent = useCallback(
     (payload: {
@@ -32,19 +39,24 @@ export function useExperiment(bridge: ExperimentBridge) {
       else if (payload.persistence === 'ok') setPersistDegraded(false);
       if (payload.status === 'idle') {
         setStartedAt(null);
-        setExperimentId(null);
+        setExp(null);
         setSampleId('');
         return;
       }
-      if (payload.experiment_id !== undefined && payload.experiment_id !== null) {
-        setExperimentId(payload.experiment_id);
+      const id = payload.experiment_id;
+      if (id !== undefined && id !== null && id !== experimentIdRef.current) {
+        // 换了实验（旁观端看到别处开新实验 / 重连后已是另一条实验）：
+        // 开始时间不能沿用上一条实验的，按本端首次看到重算（09-30 审查 #3）
+        const switched = experimentIdRef.current !== null;
+        setExp(id);
+        if (switched) setStartedAt(payload.status === 'running' ? new Date() : null);
       }
       if (payload.sample_id) setSampleId(payload.sample_id);
       if (payload.status === 'running') {
         setStartedAt((prev) => prev ?? new Date());
       }
     },
-    [],
+    [setExp],
   );
 
   useEffect(() => {
@@ -53,6 +65,7 @@ export function useExperiment(bridge: ExperimentBridge) {
         applyCurrent({
           status: ev.status,
           experiment_id: ev.experiment_id,
+          sample_id: ev.sample_id,
           persistence: ev.persistence,
         });
         if (ev.status === 'idle' && !ev.message) setActionError(null);
@@ -95,16 +108,16 @@ export function useExperiment(bridge: ExperimentBridge) {
         if (action === 'start') {
           if (!res.resumed) setStartedAt(new Date());
           if (res.experiment_id !== undefined && res.experiment_id !== null) {
-            setExperimentId(res.experiment_id);
+            setExp(res.experiment_id);
           }
           if (res.sample_id !== undefined) setSampleId(res.sample_id);
         }
         if (action === 'stop' && res.experiment_id !== undefined && res.experiment_id !== null) {
-          setExperimentId(res.experiment_id);
+          setExp(res.experiment_id);
         }
         if (action === 'reset') {
           setStartedAt(null);
-          setExperimentId(null);
+          setExp(null);
           setSampleId('');
         }
         return res;
@@ -116,7 +129,7 @@ export function useExperiment(bridge: ExperimentBridge) {
         setBusy(false);
       }
     },
-    [bridge, status],
+    [bridge, status, setExp],
   );
 
   const start = useCallback(

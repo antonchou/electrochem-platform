@@ -111,6 +111,7 @@ cd scripts/deploy && chmod +x setup.sh && ./setup.sh
 - **Phase 2 集成加固**：统一驱动接口、可配置 Mock 场景、慢客户端隔离、SQLite 长跑验收 ✅
 - **Phase 7（M3–M4 前置）**：SQLite 存储 + 历史查询 + 导出 ✅（append-only 已验证）
 - **备选公式拟合**：化学公式（一阶饱和 / Arrhenius / Kohlrausch）按 X 轴语义拟合 ✅
+- **跨实验浓度标定**：历史实验中勾选 ≥3 种浓度的实验，一实验一点拟合 κ25–浓度（线性标定 / 二次 / Kohlrausch，含空白样），报告写 `data/derived/` ✅（2026-09-30）
 - 后续：电压/电流与温度真实采集、`Kcell` 校准、温补、判稳与拟合报告（垂直切片推进）
 
 ## 已知缺口与交付阶段（冻结 SRS 未实现项）

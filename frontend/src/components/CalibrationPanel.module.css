@@ -1,0 +1,46 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-sub);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th,
+.table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.table th {
+  background: #f7f8fb;
+}
+
+.disabledRow td {
+  color: var(--text-sub);
+  background: #fafafa;
+}
+
+.summary {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.saved {
+  font-size: 12px;
+  color: var(--success);
+  word-break: break-all;
+}

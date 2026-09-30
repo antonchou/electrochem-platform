@@ -58,6 +58,8 @@ export default defineConfig({
       env: {
         EC_ENABLE_DEBUG_ENDPOINTS: '1',
         EC_DB_PATH: path.join(e2eOutputDir, 'backend.db'),
+        // 拟合/标定报告同样写临时目录，不落到仓库 data/derived（09-30 审查 P3-8）
+        EC_DERIVED_DIR: path.join(e2eOutputDir, 'derived'),
       },
       reuseExistingServer: !inCI,
       timeout: 30_000,

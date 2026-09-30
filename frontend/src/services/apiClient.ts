@@ -1,4 +1,5 @@
 import type {
+  CalibrationResponse,
   ControlAction,
   ControlResponse,
   CurrentExperiment,
@@ -95,6 +96,27 @@ export class ApiClient {
     });
     if (!res.ok) throw new Error(`拟合请求失败：HTTP ${res.status}`);
     return (await res.json()) as FitResponse;
+  }
+
+  /** 跨实验浓度标定：服务端按实验取点（一实验一点）并按浓度轴模型拟合，报告写 data/derived */
+  async fitCalibration(experimentIds: number[], models: string[]): Promise<CalibrationResponse> {
+    const res = await fetch(`${this.baseUrl}/api/analysis/calibration`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ experiment_ids: experimentIds, models }),
+    });
+    if (!res.ok) {
+      // 400 带具体原因（哪个实验不合格），比 HTTP 状态码可读
+      let detail = '';
+      try {
+        const body = (await res.json()) as { detail?: unknown };
+        if (typeof body.detail === 'string') detail = body.detail;
+      } catch {
+        /* 非 JSON 响应：退回状态码提示 */
+      }
+      throw new Error(detail ? `标定失败：${detail}` : `标定请求失败：HTTP ${res.status}`);
+    }
+    return (await res.json()) as CalibrationResponse;
   }
 
   /** CSV 导出下载地址 */

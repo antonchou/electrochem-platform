@@ -40,10 +40,26 @@ class StabilityConfig:
     cv_fail: float = 0.05       # 变异系数硬阈值（5%）
     slope_warn: float = 0.5     # 趋势斜率软阈值（μS/cm / 点，按 10 Hz 基线）
     slope_fail: float = 2.0     # 趋势斜率硬阈值（μS/cm / 点，按 10 Hz 基线）
+    # 窗口覆盖的原始帧中“无效帧”（计算链拒绝 COMPUTE_INVALID / 缺 κ25）占比，仅 qc_from_frames 使用
+    invalid_warn: float = 0.0   # 超过即 WARN（默认：出现任何无效帧）
+    invalid_fail: float = 0.2   # 达到即 FAIL（20%）
 
 
 # slope 阈值“每点”语义的基线采样率（当前 Mock/主链路为 10 Hz）。
 QC_BASELINE_RATE_HZ = 10.0
+
+# 硬异常：饱和/开路/短路/欠量程/越界/电流归零等质量标志出现在窗口内 → FAIL。
+# CURRENT_ZERO（模拟器故障注入，T-16）语义上属硬失效，判稳不得给出 PASS/WARN。
+HARD_FLAGS = frozenset(
+    {
+        "SATURATED",
+        "OPEN_CIRCUIT",
+        "SHORT_CIRCUIT",
+        "UNDER_RANGE",
+        "OUT_OF_RANGE",
+        "CURRENT_ZERO",
+    }
+)
 
 
 def rate_scaled_config(
@@ -136,19 +152,9 @@ def check_stability(
     else:
         window_ts = list(range(n))
 
-    # 硬异常：饱和/开路/短路/欠量程/电流归零等质量标志出现在窗口内 → FAIL。
-    # CURRENT_ZERO（模拟器故障注入，T-16）语义上属硬失效，判稳不得给出 PASS/WARN。
-    hard_flags = (
-        "SATURATED",
-        "OPEN_CIRCUIT",
-        "SHORT_CIRCUIT",
-        "UNDER_RANGE",
-        "OUT_OF_RANGE",
-        "CURRENT_ZERO",
-    )
     if quality_flags:
         window_flags = quality_flags[-cfg.window :]
-        bad = sorted({f for flags in window_flags if flags for f in flags.split("|") if f in hard_flags})
+        bad = sorted({f for flags in window_flags if flags for f in flags.split("|") if f in HARD_FLAGS})
         if bad:
             return StabilityResult(
                 status="FAIL",
@@ -203,10 +209,11 @@ def check_stability(
 
 
 def qc_series_from_frames(rows: list[dict]) -> tuple[list[float], list[str], list[float]]:
-    """Build aligned κ25 / quality-flag / t_seconds series for stop-time QC.
+    """Build aligned κ25 / quality-flag / t_seconds series (numeric window only).
 
     Drops rows without κ25 and rows marked COMPUTE_INVALID so flags stay
-    aligned with the numeric window. Hard flags (SATURATED, …) remain.
+    aligned with the numeric window. Hard flags on the dropped rows are lost
+    here — stop-time QC therefore goes through qc_from_frames (09-30 #1).
     The returned timestamps cover exactly the kept rows so callers can
     estimate the sample rate (rate_scaled_config).
     """
@@ -226,6 +233,81 @@ def qc_series_from_frames(rows: list[dict]) -> tuple[list[float], list[str], lis
         t = row.get("t_seconds")
         timestamps.append(float(t) if t is not None else float("nan"))
     return values, flags, timestamps
+
+
+def _flag_tokens(raw: str | None) -> list[str]:
+    return [part for part in (raw or "").split("|") if part]
+
+
+def _row_invalid(row: dict) -> bool:
+    """κ25 缺失或被计算链拒绝（COMPUTE_INVALID）的帧不能进入数值窗口。"""
+    return row.get("kappa_25_us_cm") is None or "COMPUTE_INVALID" in _flag_tokens(
+        row.get("quality_flags")
+    )
+
+
+def _window_stats(values: list[float]) -> tuple[float | None, float | None, float | None]:
+    if not values:
+        return None, None, None
+    std = statistics.stdev(values) if len(values) >= 2 else 0.0
+    return statistics.fmean(values), statistics.median(values), std
+
+
+def qc_from_frames(
+    rows: list[dict],
+    *,
+    base: StabilityConfig | None = None,
+) -> StabilityResult | None:
+    """停止时 QC：对落库原始帧（旧→新）判稳（REQ-D-003）。
+
+    数值窗口只取可计算的 κ25 帧；但“硬异常”与“无效帧占比”看的是数值窗口覆盖的
+    全部原始帧——从窗口首个有效帧到最新一帧，含其间与末尾的无效帧。计算链拒绝
+    （COMPUTE_INVALID）恰是故障最常见的形态（电压越界 U≤0、电极脱开），若随数值
+    一起过滤，其上的 OUT_OF_RANGE 等硬标志会被丢掉，故障实验反判 PASS（09-30 审查 #1）。
+
+    返回 None：原始帧不足 3 条，或从未算出过 κ25（旧 V1 帧），不写 QC。
+    """
+    if len(rows) < 3:
+        return None
+    kept_idx: list[int] = []
+    values: list[float] = []
+    flags: list[str] = []
+    timestamps: list[float] = []
+    for idx, row in enumerate(rows):
+        if _row_invalid(row):
+            continue
+        kept_idx.append(idx)
+        values.append(float(row["kappa_25_us_cm"]))
+        flags.append(row.get("quality_flags") or "")
+        t = row.get("t_seconds")
+        timestamps.append(float(t) if t is not None else float("nan"))
+    if not values and not any(
+        "COMPUTE_INVALID" in _flag_tokens(row.get("quality_flags")) for row in rows
+    ):
+        return None
+
+    # slope 阈值按真实采样率换算，判定与数据源速率（Mock 10Hz / CSV 50Hz…）无关
+    cfg = rate_scaled_config(timestamps, base) if values else (base or StabilityConfig())
+    window_values = values[-cfg.window :]
+    span = rows[kept_idx[-cfg.window :][0] :] if kept_idx else rows
+    mean, median, std = _window_stats(window_values)
+    n = len(window_values)
+
+    if any(tok in HARD_FLAGS for row in span for tok in _flag_tokens(row.get("quality_flags"))):
+        return StabilityResult(
+            status="FAIL", reason="hard_quality_flag", n=n, mean=mean, median=median, std=std
+        )
+    invalid_ratio = sum(1 for row in span if _row_invalid(row)) / len(span)
+    if len(values) < 3 or invalid_ratio >= cfg.invalid_fail:
+        return StabilityResult(
+            status="FAIL", reason="invalid_frames", n=n, mean=mean, median=median, std=std
+        )
+
+    result = check_stability(values, quality_flags=flags, config=cfg)
+    if invalid_ratio > cfg.invalid_warn and result.status == "PASS":
+        # 数值本身稳定，但窗口里夹着算不出来的帧：代表值不可信，降为 WARN
+        return replace(result, status="WARN", reason="some_invalid_frames", representative_value=None)
+    return result
 
 
 def _safe_mean(values: list[float]) -> float | None:

@@ -41,6 +41,8 @@ export interface ExperimentFrame {
   excitation_frequency_hz?: number;
   excitation_amplitude_v?: number;
   compensation_model?: string;
+  /** 所属实验（DB id）。实时缓冲据此隔离实验；调试 burst 帧与浏览器模拟不带 */
+  experiment_id?: number;
 }
 
 /** 纯状态帧（后端在某些时刻只下发状态，如 stopped） */
@@ -48,6 +50,8 @@ export interface StatusFrame {
   status: ExperimentStatus;
   timestamp?: number;
   experiment_id?: number;
+  /** running/stopped 广播带样品号：旁观端据此更新溶液名 */
+  sample_id?: string;
   message?: string;
   persistence?: string;
 }
@@ -91,6 +95,11 @@ export interface ExperimentSummary {
   started_at_utc: string;
   ended_at_utc: string | null;
   frame_count: number;
+  // 主样品（首个样品）摘要：跨实验标定选点用（一实验一点）
+  concentration_mmol_l?: number | null;
+  qc_status?: string | null;
+  representative_value?: number | null;
+  k25_median?: number | null;
 }
 
 /** 样品汇总 */
@@ -204,6 +213,24 @@ export interface FitResponse {
   models: FitResultItem[];
 }
 
+/** 跨实验标定的一个点（服务端从库里取，一实验一点） */
+export interface CalibrationPoint {
+  experiment_id: number;
+  experiment_uid: string;
+  sample_id: string;
+  concentration_mmol_l: number;
+  kappa25_us_cm: number;
+  /** representative = QC PASS 代表值；median = QC WARN 时取窗口中位数 */
+  source: 'representative' | 'median';
+  qc_status: string;
+}
+
+/** 跨实验标定响应：拟合结果 + 实际使用的点 + 报告路径 */
+export interface CalibrationResponse extends FitResponse {
+  points: CalibrationPoint[];
+  derived_path: string | null;
+}
+
 /** WebSocket 连接状态 */
 export type ConnectionStatus =
   | 'idle' // 未连接
@@ -247,6 +274,7 @@ export type ClientEvent =
       type: 'status';
       status: ExperimentStatus;
       experiment_id?: number;
+      sample_id?: string;
       message?: string;
       persistence?: string;
     }
@@ -259,6 +287,10 @@ const VALID_STATUS: readonly ExperimentStatus[] = ['idle', 'running', 'stopped',
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
+}
+
+function parseExperimentId(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
 }
 
 function parseFiniteNumber(value: unknown): number | null {
@@ -294,7 +326,9 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
 
   if (!hasTimestamp && !hasEc && !hasTemperature) {
     const frame: StatusFrame = { status: status as ExperimentStatus };
-    if (typeof raw.experiment_id === 'number') frame.experiment_id = raw.experiment_id;
+    const experimentId = parseExperimentId(raw.experiment_id);
+    if (experimentId !== undefined) frame.experiment_id = experimentId;
+    if (typeof raw.sample_id === 'string' && raw.sample_id.length > 0) frame.sample_id = raw.sample_id;
     if (typeof raw.message === 'string' && raw.message.length > 0) frame.message = raw.message;
     if (typeof raw.persistence === 'string' && raw.persistence.length > 0) {
       frame.persistence = raw.persistence;
@@ -340,5 +374,6 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
     excitation_amplitude_v: parseFiniteNumber(raw.excitation_amplitude_v) ?? undefined,
     compensation_model:
       typeof raw.compensation_model === 'string' ? raw.compensation_model : undefined,
+    experiment_id: parseExperimentId(raw.experiment_id),
   };
 }

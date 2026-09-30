@@ -73,8 +73,8 @@ def test_fit_requires_positive_domain():
     assert analysis.fit_logarithmic([0.0, 1.0, 2.0], [1.0, 2.0, 3.0]) is None
     assert analysis.fit_power([0.0, 1.0, 2.0], [1.0, 2.0, 4.0]) is None
     assert analysis.fit_exponential([0.0, 1.0, 2.0], [0.0, 2.0, 4.0]) is None
-    # Kohlrausch 要求 c>0
-    assert analysis.fit_kohlrausch([0.0, 1.0, 2.0], [1.0, 2.0, 3.0]) is None
+    # Kohlrausch 要求 c≥0（c=0 空白样合法，见 test_review_round_2026_09_30）
+    assert analysis.fit_kohlrausch([-1.0, 1.0, 2.0], [1.0, 2.0, 3.0]) is None
     # Arrhenius 要求 y>0
     assert analysis.fit_arrhenius([15.0, 20.0, 25.0], [0.0, 1.0, 2.0]) is None
 

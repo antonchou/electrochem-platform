@@ -23,7 +23,13 @@ from .drivers import (
     load_simulator_config,
 )
 from .persistence import persist
-from .schemas import ControlResponse, CurrentExperimentResponse, ExperimentStartRequest, FitRequest
+from .schemas import (
+    CalibrationRequest,
+    ControlResponse,
+    CurrentExperimentResponse,
+    ExperimentStartRequest,
+    FitRequest,
+)
 from .state import DEFAULT_SAMPLE_ID, DEFAULT_SENSOR_PATH_ID, state
 from .stream import generate_frame
 
@@ -202,6 +208,10 @@ async def _acquisition_loop() -> None:
                     await asyncio.sleep(_sample_period_seconds)
                     continue
                 frame = _build_frame(elapsed, reading)
+                if experiment_db_id is not None:
+                    # 数据帧自带所属实验：前端缓冲据此隔离实验，不依赖是否收到过状态帧
+                    # （后端重启、旁观端、断线重连都可能错过 running 广播，09-30 审查 #3）
+                    frame["experiment_id"] = experiment_db_id
                 if _consume_resume_duplicate(frame):
                     # 续跑首帧重采样了停止前的边界读数 → 丢弃（不占 seq、不落库、不广播）
                     await asyncio.sleep(_sample_period_seconds)
@@ -480,7 +490,9 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
             if reopened and await state.resume():
                 _reset_persist_notice()
                 await _load_resume_boundary(exp_id)
-                await broadcast({"status": "running", "experiment_id": exp_id})
+                await broadcast(
+                    {"status": "running", "experiment_id": exp_id, "sample_id": state.sample_id}
+                )
                 if persist.degraded:
                     await _notify_persist_degraded()
                 return ControlResponse(
@@ -559,7 +571,8 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
 
         _reset_persist_notice()
         _clear_resume_boundary()
-        await broadcast({"status": "running", "experiment_id": exp_id})
+        # 带上样品号：旁观端（其它浏览器）据此更新溶液名，不再显示自己输入框里的旧值
+        await broadcast({"status": "running", "experiment_id": exp_id, "sample_id": sample_id})
         if persist.degraded:
             await _notify_persist_degraded()
         return ControlResponse(
@@ -586,7 +599,7 @@ async def stop() -> ControlResponse:
             if persist_ok:
                 await _compute_and_store_qc(exp_id)
             await _finish_experiment_best_effort(exp_id, "stopped")
-            payload: dict = {"status": status, "experiment_id": exp_id}
+            payload: dict = {"status": status, "experiment_id": exp_id, "sample_id": state.sample_id}
             if not persist_ok:
                 payload["message"] = PERSIST_DEGRADED_MESSAGE
                 payload["persistence"] = "degraded"
@@ -606,17 +619,13 @@ async def _compute_and_store_qc(exp_id: int) -> None:
     """实验停止时，对已落库的 κ25 帧做一次判稳，把 QC 结果写回 samples（REQ-D-003）。
 
     纯增量：帧不足或计算异常时跳过写 QC，不影响 stop 主流程。
+    判稳看窗口覆盖的全部原始帧（含 COMPUTE_INVALID 帧上的硬标志），见 stability.qc_from_frames。
     """
     try:
         rows = await asyncio.to_thread(storage.get_recent_frames, exp_id, limit=500)
-        if not rows:
+        result = stability.qc_from_frames(rows)
+        if result is None:
             return
-        kappa25, flags, qc_ts = stability.qc_series_from_frames(rows)
-        if len(kappa25) < 3:
-            return
-        # slope 阈值按真实采样率换算，判定与数据源速率（Mock 10Hz / CSV 50Hz…）无关
-        cfg = stability.rate_scaled_config(qc_ts)
-        result = stability.check_stability(kappa25, quality_flags=flags, config=cfg)
         sample_id = rows[-1].get("sample_id") or state.sample_id
         sensor_path_id = rows[-1].get("sensor_path_id") or state.sensor_path_id
         await persist.update_sample_qc(
@@ -798,6 +807,38 @@ async def fit(body: FitRequest) -> dict:
         "models": results,
         "derived_path": derived_path,
     }
+
+
+@router.post("/api/analysis/calibration")
+async def calibration(body: CalibrationRequest) -> dict:
+    """跨实验浓度标定：每个实验取一个点（κ25 代表值 vs 浓度），按浓度轴模型池拟合。
+
+    单个实验只有一种浓度，浓度轴拟合只能跨实验做（09-30 审查 #4）。取点在服务端从库里
+    读（不信任前端传值），结果报告写 data/derived/calibration_*.json，内含成员实验以便溯源。
+    """
+    ids = list(dict.fromkeys(body.experiment_ids))
+    points, problems = await asyncio.to_thread(storage.calibration_points, ids)
+    if problems:
+        raise HTTPException(status_code=400, detail="；".join(problems))
+    if len({p["concentration_mmol_l"] for p in points}) < 3:
+        raise HTTPException(status_code=400, detail="跨实验标定至少需要 3 个不同浓度")
+    x = [p["concentration_mmol_l"] for p in points]
+    y = [p["kappa25_us_cm"] for p in points]
+    results = await asyncio.to_thread(analysis.fit_all, x, y, body.models, "concentration")
+    best = results[0]["model"] if results else None
+    derived_path = None
+    if results:
+        payload = {
+            "kind": "calibration",
+            "x_axis": "concentration",
+            "created_at_utc": _utc_now(),
+            "experiment_ids": ids,
+            "points": points,
+            "best": best,
+            "models": results,
+        }
+        derived_path = await asyncio.to_thread(storage.write_calibration_report, ids, payload)
+    return {"best": best, "models": results, "points": points, "derived_path": derived_path}
 
 
 # ---------- 调试接口（仅模拟源使用；用于验收 F08/F09/F10/P04） ----------

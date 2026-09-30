@@ -31,6 +31,12 @@
   font-size: 18px;
 }
 
+.headActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .close {
   border: none;
   background: transparent;

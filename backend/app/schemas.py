@@ -35,6 +35,8 @@ class Frame(BaseModel):
     excitation_frequency_hz: Optional[float] = None
     excitation_amplitude_v: Optional[float] = None
     compensation_model: Optional[str] = None
+    # 所属实验（DB id）。前端实时缓冲按它隔离实验；调试 burst 帧不带此字段
+    experiment_id: Optional[int] = None
 
 
 class ControlResponse(BaseModel):
@@ -78,6 +80,13 @@ class FitRequest(BaseModel):
     models: Optional[list[str]] = None  # 缺省 = 该轴全部模型
     x_axis: Literal["time", "temperature", "concentration"] = "time"
     experiment_id: Optional[int] = None  # 提供则把本轮拟合写入 fit_results / data/derived
+
+
+class CalibrationRequest(BaseModel):
+    """跨实验浓度标定：选 ≥3 个已停止、有浓度、QC 为 PASS/WARN 的实验，一实验一点。"""
+
+    experiment_ids: list[int] = Field(..., min_length=3, max_length=200)
+    models: Optional[list[str]] = None  # 缺省 = 浓度轴全部模型
 
 
 class FitResultItem(BaseModel):
