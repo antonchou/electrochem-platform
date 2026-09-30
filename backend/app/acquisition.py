@@ -95,35 +95,29 @@ def _join_flags(*parts: str | None) -> str | None:
     return "|".join(tokens) if tokens else None
 
 
+# raw_frames 列名与协议帧字段名不同的几列（其余列与帧字段同名）
+_ROW_FIELD_FROM_FRAME = {
+    "t_seconds": "timestamp",
+    "ec_raw": "ec",
+    "temperature_raw": "temperature",
+    "k25": "kappa_25_us_cm",  # κ25 兼容列
+}
+
+
 def _frame_to_row(frame: dict) -> dict:
-    """把一帧实时数据转成 raw_frames 行（带溯源字段与 I–V 计算列）。"""
-    return {
-        "experiment_id": state.experiment_db_id,
-        "sample_id": state.sample_id,
-        "sensor_path_id": state.sensor_path_id,
-        "seq_no": state.next_seq(),
-        "timestamp_utc": storage.utc_now(),
-        "monotonic_ms": int(time.monotonic() * 1000),
-        "t_seconds": frame.get("timestamp"),
-        "ec_raw": frame.get("ec"),
-        "temperature_raw": frame.get("temperature"),
-        "k25": frame.get("kappa_25_us_cm"),
-        "quality_flags": frame.get("quality_flags"),
-        "status": state.status,
-        "voltage_raw_v": frame.get("voltage_raw_v"),
-        "current_raw_a": frame.get("current_raw_a"),
-        "conductance_s": frame.get("conductance_s"),
-        "kappa_t_us_cm": frame.get("kappa_t_us_cm"),
-        "kappa_25_us_cm": frame.get("kappa_25_us_cm"),
-        "schema_version": frame.get("schema_version"),
-        "device_id": frame.get("device_id"),
-        "firmware_version": frame.get("firmware_version"),
-        "range_id": frame.get("range_id"),
-        "calibration_id": frame.get("calibration_id") or state.calibration_id,
-        "excitation_frequency_hz": frame.get("excitation_frequency_hz"),
-        "excitation_amplitude_v": frame.get("excitation_amplitude_v"),
-        "compensation_model": frame.get("compensation_model"),
-    }
+    """把一帧实时数据转成 raw_frames 行：列清单以 storage.FRAME_COLUMNS 为准，溯源列取当前实验上下文。"""
+    row = {col: frame.get(_ROW_FIELD_FROM_FRAME.get(col, col)) for col in storage.FRAME_COLUMNS}
+    row.update(
+        experiment_id=state.experiment_db_id,
+        sample_id=state.sample_id,
+        sensor_path_id=state.sensor_path_id,
+        seq_no=state.next_seq(),
+        timestamp_utc=storage.utc_now(),
+        monotonic_ms=int(time.monotonic() * 1000),
+        status=state.status,
+        calibration_id=frame.get("calibration_id") or state.calibration_id,
+    )
+    return row
 
 
 class Acquisition:
@@ -143,7 +137,12 @@ class Acquisition:
     # ---------- 生命周期 ----------
 
     async def start(self) -> None:
-        """启动单一采集任务（幂等，加锁防止并发重入双建任务）。"""
+        """启动单一采集任务（幂等，加锁防止并发重入双建任务）。
+
+        只在 lifespan 启动时调用，此时尚未接受请求，因此不与 routes 的实验生命周期锁串行。
+        若将来要在运行期重建驱动，必须在 routes._lifecycle_lock 内调用 stop()/start()，
+        否则驱动替换可能与 start/stop/reset 交错（校准记录与帧元数据来自不同驱动）。
+        """
         async with self._lock:
             if self._task is None or self._task.done():
                 # 构建（CSV 全文件读入 + 排序）与 connect（IO）都可能耗时，移出事件循环
@@ -153,7 +152,11 @@ class Acquisition:
                 self._task = asyncio.create_task(self.run(), name="acquisition-loop")
 
     async def stop(self) -> None:
-        """停止采集任务并关闭驱动。"""
+        """停止采集任务、关闭驱动，并复位会话状态（下次 start 从干净状态开始）。
+
+        驱动 close() 出错只记日志：关停路径上后面还有 flush、标记 aborted、停落库任务，
+        不能因为一个真实设备关不干净就全部跳过。
+        """
         if self._task is not None:
             self._task.cancel()
             try:
@@ -161,9 +164,13 @@ class Acquisition:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        if self.driver is not None:
-            await self.driver.close()
-            self.driver = None
+        driver, self.driver = self.driver, None
+        if driver is not None:
+            try:
+                await driver.close()
+            except Exception:
+                logger.exception("驱动关闭失败，继续关停")
+        self.reset_session()
 
     # ---------- 采集循环 ----------
 
@@ -250,8 +257,7 @@ class Acquisition:
             return
         # 先入队再推送。入队失败（持久化已降级）仍广播，并打 PERSIST_DROPPED。
         if not self._enqueue_frame(frame):
-            flags = frame.get("quality_flags") or ""
-            frame["quality_flags"] = f"{flags}|PERSIST_DROPPED" if flags else "PERSIST_DROPPED"
+            frame["quality_flags"] = _join_flags(frame.get("quality_flags"), "PERSIST_DROPPED")
             await self.notify_persist_degraded()
         await hub.publish(frame)
 
@@ -391,6 +397,14 @@ class Acquisition:
         """新实验/续跑/复位时重置一次性告警闩锁与静默的不完整读数记录。"""
         self._persist_notice_sent = False
         self._quiet_incomplete_flags.clear()
+
+    def reset_session(self) -> None:
+        """开新实验、复位、停止采集时调用：告警闩锁与续跑去重窗口一并清空。
+
+        续跑同一实验只调 reset_notices()：去重窗口已在进入 running 前装好，不能清。
+        """
+        self.reset_notices()
+        self.clear_resume_boundary()
 
     # ---------- 续跑边界去重 ----------
 
