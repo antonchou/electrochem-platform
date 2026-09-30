@@ -90,7 +90,7 @@ export function ExperimentPage() {
     if (!options) return;
     const res = await start(options);
     if (!res.ok) return;
-    if (res.resumed && res.experiment_id != null && bridge.api) {
+    if (res.resumed && res.experiment_id != null) {
       try {
         // 缓冲只留最后 2 万点：只取尾部（R3-6）。旧实现拉前 10 万帧——长实验取到的是开头，
         // 传输几十 MB 后又被裁掉大半，超 10 万帧时曲线中间还会断档。
@@ -205,7 +205,7 @@ export function ExperimentPage() {
             />
           </label>
         </div>
-        <ConnectionPanel status={connStatus} mode={bridge.mode} onReconnect={manualReconnect} />
+        <ConnectionPanel status={connStatus} onReconnect={manualReconnect} />
       </section>
 
       <p className={styles.metaRow} data-testid="experiment-meta">

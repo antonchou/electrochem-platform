@@ -81,7 +81,7 @@ export function useRealtimeData(bridge: ExperimentBridge) {
         // 规则见 RealtimeBuffer.applyStatus：idle 复位清空；换了实验先清旧点
         sync();
       }
-      if (ev.type === 'connection' && ev.status === 'connected' && bridge.api) {
+      if (ev.type === 'connection' && ev.status === 'connected') {
         // 重连后对齐归属：断线/后端重启期间可能已换了实验（规则见 RealtimeBuffer.alignToCurrent）
         const generation = buffer.generation;
         bridge.api
