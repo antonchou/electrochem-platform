@@ -82,6 +82,7 @@ export interface Calibration {
   created_at: string;
   cell_constant_per_cm: number;
   r2: number | null;
+  rsd_pct: number | null;
   operator: string | null;
   cell_id: string | null;
   lot: string | null;

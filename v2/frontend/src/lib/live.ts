@@ -40,6 +40,7 @@ export function reduce(state: LiveState, action: LiveAction): LiveState {
     return state.connected === action.connected ? state : { ...state, connected: action.connected };
   }
   const message = action.message;
+  if (!state.connected) state = { ...state, connected: true }; // 收到任何消息都说明连着
   switch (message.type) {
     case 'snapshot': {
       const points = message.points;

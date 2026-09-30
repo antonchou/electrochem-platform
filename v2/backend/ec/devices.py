@@ -27,6 +27,7 @@ from .settings import Settings
 logger = logging.getLogger("ec.devices")
 
 RETRY_S = 2.0
+MAX_LINE_BYTES = 4096  # 固件一帧约 300 字节；攒到这么长还没换行就是杂讯，丢弃
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,12 +205,20 @@ class SerialDevice:
                 continue
             yield DeviceStatus(True, f"串口 {self.port} 已打开")
             sequence = SequenceCheck()
+            pending = b""
             try:
                 while True:
                     raw = await asyncio.to_thread(port.readline)
                     if not raw:
                         continue  # 读超时：设备可能在自检或重启，继续等
-                    kind, payload = parse_line(raw.decode("utf-8", errors="replace"))
+                    # pyserial 的超时按整次调用计：帧恰好在超时边界到达时会先返回半行，攒齐换行再解析
+                    pending += raw
+                    if not pending.endswith(b"\n"):
+                        if len(pending) > MAX_LINE_BYTES:
+                            pending = b""
+                        continue
+                    line, pending = pending, b""
+                    kind, payload = parse_line(line.decode("utf-8", errors="replace"))
                     if kind == "frame":
                         yield _with_sequence_flags(payload, sequence)
                     elif kind == "log":

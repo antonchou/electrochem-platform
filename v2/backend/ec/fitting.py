@@ -3,7 +3,8 @@
 - 浓度线性标定：κ25 = a + b·c
 - Kohlrausch 定律（强电解质稀溶液）：Λm = Λ0 − K·√c，其中 Λm = κ25 / c
 - 温度系数：κ(T) = κ25·(1 + α·(T − 25)) = a + b·(T − 25)，于是 κ25 = a、α = b / a
-- 电池常数（标定）：κ标准 = Kcell · G25，过原点
+- 电池常数（标定）：κ标准 = Kcell · G25，过原点；另给各点 Kcell 的相对标准差（重复性）。
+  过原点拟合的 R² 只在标准液跨越量程时有参考意义，同一标准液的重复测量看 RSD
 
 参数给标准误与 95% 置信区间（t 分布）。结果只在数据覆盖的区间内有效，不做外推。
 """
@@ -11,6 +12,7 @@
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -186,10 +188,14 @@ def cell_constant_fit(points: Sequence[tuple[float, float]]) -> dict[str, Any]:
     deviations = [
         (fit.slope * g * 1e6 - k) / k * 100 if k else None for g, k in points
     ]
+    # 各点单独求出的 Kcell 的相对标准差：同一标准液重复装夹时的重复性指标（验收要求 < 1%）
+    per_point = [k * 1e-6 / g for g, k in points if g > 0]
+    rsd = statistics.stdev(per_point) / statistics.fmean(per_point) * 100 if len(per_point) >= 2 else None
     return {
         "cell_constant_per_cm": fit.slope,
         "cell_constant": fit.param(fit.slope, fit.slope_se),
         "r2": fit.r2,
+        "rsd_pct": rsd,
         "n": fit.n,
         "deviations_pct": deviations,
     }

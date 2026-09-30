@@ -7,7 +7,7 @@ import { dateTime, duration, fixed, kappaText, sig, STATUS_LABELS } from '../lib
 import type { ConcentrationAnalysis, Measurement, Param, Point, TemperatureFit } from '../lib/types.ts';
 
 interface Props {
-  refreshKey: number | null; // 有测量结束时变化，触发刷新列表
+  refreshKey: string; // 测量开始或结束时变化，触发刷新列表
   focusId: number | null;
 }
 
