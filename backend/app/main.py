@@ -10,11 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from .acquisition import acquisition
+from .broadcast import hub
 from .persistence import persist
-from .routes import router, start_acquisition, stop_acquisition
+from .routes import router
 from .state import state
 
-# 模块加载时一次性初始化根日志（避免重复配置）；供 routes 采集循环等打点使用
+# 模块加载时一次性初始化根日志（避免重复配置）；供采集循环等打点使用
 logging.basicConfig(level=logging.INFO)
 
 
@@ -25,14 +27,15 @@ async def lifespan(app: FastAPI):
     await state.reset()
     await persist.start()
     try:
-        await start_acquisition()
+        await acquisition.start()
         yield
     finally:
         active_exp_id = state.experiment_db_id
         was_running = state.status == "running"
         if was_running:
             await state.stop()
-        await stop_acquisition()
+        await acquisition.stop()
+        await hub.close_all(code=1001, reason="server shutdown")
         try:
             if was_running and active_exp_id is not None:
                 try:

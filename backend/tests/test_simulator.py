@@ -22,7 +22,7 @@ from app.drivers import (
     load_simulator_config,
 )
 from app.measurement import compute_chain
-from app.routes import _build_driver
+from app.acquisition import build_driver
 
 
 def _ols_slope(x: list[float], y: list[float]) -> tuple[float, float]:
@@ -187,7 +187,7 @@ def test_load_simulator_mode_override(monkeypatch, tmp_path):
 def test_build_driver_unknown_kind(monkeypatch):
     monkeypatch.setenv("EC_DRIVER", "ads1256")
     with pytest.raises(ValueError, match="unknown EC_DRIVER"):
-        _build_driver()
+        build_driver()
 
 
 def test_example_config_file_loads():
