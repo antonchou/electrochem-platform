@@ -4,21 +4,7 @@
 Arrhenius 活化能、x_axis 模型池过滤与接口透传。
 """
 
-import os
 import math
-
-import pytest
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-
-@pytest.fixture()
-def client(tmp_path):
-    os.environ["EC_DB_PATH"] = str(tmp_path / "fit_test.db")
-    with TestClient(app) as c:
-        yield c
-    os.environ.pop("EC_DB_PATH", None)
 
 
 def test_linear_fit_exact():

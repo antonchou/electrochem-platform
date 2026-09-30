@@ -1,19 +1,17 @@
 """SQLite 存储层测试：生命周期、append-only 约束、样品汇总、CSV 导出。"""
 
-import os
 import sqlite3
 
 import pytest
 
 
 @pytest.fixture()
-def store(tmp_path):
-    os.environ["EC_DB_PATH"] = str(tmp_path / "storage_test.db")
+def store(tmp_path, monkeypatch):
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "storage_test.db"))
     from app import storage
 
     storage.init_db()
     yield storage
-    os.environ.pop("EC_DB_PATH", None)
 
 
 def test_experiment_lifecycle(store):
