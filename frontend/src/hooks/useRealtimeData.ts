@@ -88,20 +88,12 @@ export function useRealtimeData(bridge: ExperimentBridge) {
         }
       }
       if (ev.type === 'connection' && ev.status === 'connected' && bridge.api) {
-        // 重连后对齐归属：断线/后端重启期间可能已换了实验，错过的 running 广播不会重发。
-        // 请求在途时若帧或状态帧已对齐过归属（generation 变了），以它们为准。
+        // 重连后对齐归属：断线/后端重启期间可能已换了实验（规则见 RealtimeBuffer.alignToCurrent）
         const generation = buffer.generation;
         bridge.api
           .getCurrentExperiment()
           .then((cur) => {
-            if (buffer.generation !== generation) return;
-            if (cur.status === 'idle') {
-              // 缓冲仍归属某个旧实验，但后端已无实验上下文（重启后旧实验被标 aborted、或别处已复位）：
-              // 与收到 idle 状态帧同义，清空旧实验的点。未归属的点（调试 burst 帧）不动。
-              if (buffer.experimentId !== null) clearPoints();
-            } else {
-              bindExperiment(cur.experiment_id);
-            }
+            if (buffer.alignToCurrent(cur, generation)) sync();
           })
           .catch(() => {
             /* 查询失败不阻断实时流；下一帧自带实验 id 仍会对齐 */
@@ -109,7 +101,7 @@ export function useRealtimeData(bridge: ExperimentBridge) {
       }
     });
     return unsub;
-  }, [bridge, buffer, sync, bindExperiment, clearPoints]);
+  }, [bridge, buffer, sync]);
 
   return {
     pointsRef,

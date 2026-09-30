@@ -1,4 +1,4 @@
-import type { DataPoint } from '../types/protocol';
+import type { CurrentExperiment, DataPoint } from '../types/protocol';
 
 /**
  * 实时数据缓冲（纯逻辑，由 useRealtimeData 包装；可直接用 node:test 测）。
@@ -40,6 +40,21 @@ export class RealtimeBuffer {
       this.points.splice(0, this.points.length - this.maxPoints);
     }
     this.revision += 1;
+  }
+
+  /**
+   * 重连后按「当前实验」接口的结果对齐归属，返回是否清空了点。
+   * generation 取发请求时的值：请求在途时帧或状态帧已对齐过归属（代数变了），以它们为准。
+   * - idle：后端已无实验上下文（重启后旧实验被标 aborted、或别处已复位）。缓冲仍归属某个
+   *   旧实验就清空，与收到 idle 状态帧同义；未归属的点（调试 burst 帧）不动。
+   * - 其他状态：对齐到当前实验 id（断线期间错过的 running 广播不会重发）。
+   */
+  alignToCurrent(cur: Pick<CurrentExperiment, 'status' | 'experiment_id'>, generation: number): boolean {
+    if (generation !== this.generation) return false;
+    if (cur.status !== 'idle') return this.bindExperiment(cur.experiment_id);
+    if (this.experimentId === null) return false;
+    this.clear();
+    return true;
   }
 
   /** 清空并解除归属（复位到 idle、手动清空）。 */

@@ -68,6 +68,22 @@ def test_mock_env_error_names_the_invalid_variable(monkeypatch):
         load_mock_config()
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sample_rate_hz", float("nan")),
+        ("sample_rate_hz", float("inf")),
+        ("sample_rate_hz", 0.0),
+        ("cell_constant_per_cm", float("nan")),
+        ("cell_constant_per_cm", -1.0),
+    ],
+)
+def test_driver_config_rejects_nonpositive_or_nonfinite(field, value):
+    """nan 采样率会让采集周期变成 nan，调度循环从不睡眠而空转；配置层就要挡住。"""
+    with pytest.raises(ValueError, match=field):
+        MockDeviceConfig(**{field: value})
+
+
 def test_nonfinite_values_make_reading_incomplete():
     """NaN/inf 等同缺失：整帧跳过，不能以 NaN 落库（SQLite 存成 NULL 撞 NOT NULL）或进 JSON。"""
     nan, inf = float("nan"), float("inf")

@@ -81,9 +81,10 @@ def test_playback_speed_scales_elapsed(tmp_path):
     asyncio.run(scenario())
 
 
-def test_playback_rejects_nonpositive_speed():
+@pytest.mark.parametrize("speed", [0.0, float("nan"), float("inf")])
+def test_playback_rejects_nonpositive_or_nonfinite_speed(speed):
     with pytest.raises(ValueError, match="speed"):
-        CsvPlaybackConfig(path="x.csv", speed=0.0)
+        CsvPlaybackConfig(path="x.csv", speed=speed)
 
 
 def test_incomplete_eof_logs_once(caplog):
