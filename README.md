@@ -23,7 +23,7 @@ electrochem-platform/
 │   └── e2e/          # Playwright 验收测试（F01–F10 / P01–P04 / P03 可选）
 ├── scripts/
 │   └── deploy/       # 树莓派一键部署（systemd + Chromium Kiosk）
-├── docs/             # 项目交接文档、接口说明、已知问题、三状态截图
+├── docs/             # 数据接口文档、接入数据格式、交接、已知问题、审查与修复记录、截图
 ├── .nvmrc            # Node 24 LTS
 ├── .gitignore
 └── README.md
