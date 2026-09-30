@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import csv
 import datetime
+import hashlib
 import io
 import json
 import logging
+import math
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -697,13 +699,22 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
 # ---------------- 查询 ----------------
 
 def list_experiments() -> List[Dict[str, Any]]:
+    """历史列表：实验元信息 + 帧数 + 主样品（首个样品）的浓度与 QC 摘要。
+
+    主样品字段供跨实验标定选点（一实验一点），免得前端逐个拉详情。
+    """
     with _conn() as conn:
         rows = conn.execute(
             """
-            SELECT e.*, COUNT(f.id) AS frame_count
+            SELECT e.*,
+                   (SELECT COUNT(*) FROM raw_frames f WHERE f.experiment_id = e.id) AS frame_count,
+                   s.concentration_mmol_l,
+                   s.qc_status,
+                   s.representative_value,
+                   s.k25_median
             FROM experiments e
-            LEFT JOIN raw_frames f ON f.experiment_id = e.id
-            GROUP BY e.id
+            LEFT JOIN samples s
+              ON s.id = (SELECT MIN(id) FROM samples WHERE experiment_id = e.id)
             ORDER BY e.id DESC
             """
         ).fetchall()
@@ -1011,11 +1022,85 @@ def get_fit_results(experiment_id: int) -> List[Dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
-def write_fit_report(experiment_id: int, payload: Dict[str, Any]) -> str:
-    """Write a derived JSON report under data/derived/ (gitignored). Overwrites per experiment+axis."""
+def _derived_dir() -> Path:
     root = Path(os.environ.get("EC_DERIVED_DIR", str(DEFAULT_DERIVED_DIR)))
     root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def write_fit_report(experiment_id: int, payload: Dict[str, Any]) -> str:
+    """Write a derived JSON report under data/derived/ (gitignored). Overwrites per experiment+axis."""
     axis = str(payload.get("x_axis") or "time")
-    path = root / f"experiment_{experiment_id}_fit_{axis}.json"
+    path = _derived_dir() / f"experiment_{experiment_id}_fit_{axis}.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(path)
+
+
+# ---------------- 跨实验浓度标定 ----------------
+
+CALIBRATION_QC_ALLOWED = ("PASS", "WARN")
+
+
+def calibration_points(experiment_ids: List[int]) -> tuple[List[Dict[str, Any]], List[str]]:
+    """跨实验标定取点：每个实验取主样品（首个样品）的浓度与 κ25 代表值，一实验一点。
+
+    准入：实验已停止、填了浓度、QC 为 PASS/WARN。y 取 QC PASS 的代表值（窗口均值），
+    WARN 没有代表值则取窗口中位数，来源随点返回。FAIL/未判定的实验不能作标定点。
+    返回 (points, problems)；problems 非空时调用方应整体拒绝，而不是悄悄少点。
+    """
+    points: List[Dict[str, Any]] = []
+    problems: List[str] = []
+    with _conn() as conn:
+        for exp_id in experiment_ids:
+            exp = conn.execute(
+                "SELECT id, experiment_id, status FROM experiments WHERE id = ?", (exp_id,)
+            ).fetchone()
+            if exp is None:
+                problems.append(f"实验 {exp_id} 不存在")
+                continue
+            if exp["status"] != "stopped":
+                problems.append(f"实验 {exp_id} 状态为 {exp['status']}，须为已停止")
+                continue
+            sample = conn.execute(
+                """
+                SELECT sample_id, concentration_mmol_l, qc_status, representative_value, k25_median
+                  FROM samples WHERE experiment_id = ? ORDER BY id LIMIT 1
+                """,
+                (exp_id,),
+            ).fetchone()
+            if sample is None or sample["concentration_mmol_l"] is None:
+                problems.append(f"实验 {exp_id} 未填写浓度")
+                continue
+            qc = sample["qc_status"]
+            if qc not in CALIBRATION_QC_ALLOWED:
+                problems.append(f"实验 {exp_id} 的 QC 为 {qc or '未判定'}，不能作标定点")
+                continue
+            if qc == "PASS" and sample["representative_value"] is not None:
+                y, source = sample["representative_value"], "representative"
+            else:
+                y, source = sample["k25_median"], "median"
+            if y is None or not math.isfinite(y):
+                problems.append(f"实验 {exp_id} 没有可用的 κ25 代表值")
+                continue
+            points.append(
+                {
+                    "experiment_id": exp["id"],
+                    "experiment_uid": exp["experiment_id"],
+                    "sample_id": sample["sample_id"],
+                    "concentration_mmol_l": sample["concentration_mmol_l"],
+                    "kappa25_us_cm": y,
+                    "source": source,
+                    "qc_status": qc,
+                }
+            )
+    return points, problems
+
+
+def write_calibration_report(experiment_ids: List[int], payload: Dict[str, Any]) -> str:
+    """跨实验标定报告写到 data/derived/。同一组实验（与顺序无关）覆写同一文件，
+    与单实验拟合报告“同实验同轴覆写”的语义一致；成员清单在报告内。"""
+    key = ",".join(str(i) for i in sorted(set(experiment_ids)))
+    digest = hashlib.sha1(key.encode("ascii")).hexdigest()[:12]
+    path = _derived_dir() / f"calibration_{digest}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(path)

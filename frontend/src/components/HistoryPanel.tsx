@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient } from '../services/apiClient';
 import type { DataPoint, ExperimentDetail, ExperimentSummary, RawFrame } from '../types/protocol';
+import { CalibrationPanel } from './CalibrationPanel';
 import { FitPanel } from './FitPanel';
 import { StaticChart } from './StaticChart';
 import styles from './HistoryPanel.module.css';
@@ -39,6 +40,8 @@ export function HistoryPanel({ api, onClose }: Props) {
   const [selected, setSelected] = useState<ExperimentDetail | null>(null);
   const [frames, setFrames] = useState<RawFrame[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  // 列表视图的两种模式：逐个浏览详情 / 跨实验浓度标定（勾选多个实验一起拟合）
+  const [mode, setMode] = useState<'browse' | 'calibrate'>('browse');
   // 竞态保护：快速连点两个实验时，旧响应不得覆盖新选中的详情（同 FitPanel 模式）
   const detailRequestIdRef = useRef(0);
 
@@ -151,10 +154,22 @@ export function HistoryPanel({ api, onClose }: Props) {
     <div className={styles.overlay} data-testid="history-panel">
       <div className={styles.modal}>
         <div className={styles.head}>
-          <h2>历史实验</h2>
-          <button className={styles.close} onClick={onClose} aria-label="关闭">
-            ×
-          </button>
+          <h2>{mode === 'calibrate' && !selected ? '跨实验浓度标定' : '历史实验'}</h2>
+          <div className={styles.headActions}>
+            {!selected && (
+              <button
+                type="button"
+                className={styles.back}
+                onClick={() => setMode((m) => (m === 'calibrate' ? 'browse' : 'calibrate'))}
+                data-testid="btn-calibration-mode"
+              >
+                {mode === 'calibrate' ? '返回列表' : '跨实验标定'}
+              </button>
+            )}
+            <button className={styles.close} onClick={onClose} aria-label="关闭">
+              ×
+            </button>
+          </div>
         </div>
 
         {error && <div className={styles.error}>{error}</div>}
@@ -273,6 +288,12 @@ export function HistoryPanel({ api, onClose }: Props) {
               />
             )}
           </div>
+        ) : mode === 'calibrate' ? (
+          list === null ? (
+            <div className={styles.hint}>加载中…</div>
+          ) : (
+            <CalibrationPanel api={api} experiments={list} />
+          )
         ) : (
           <div className={styles.list} data-testid="history-list">
             {loadingDetail ? (
