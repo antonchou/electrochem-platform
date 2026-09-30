@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import storage
-from app.acquisition import acquisition
+from app.acquisition import acquisition, build_driver
 from app.drivers import CsvPlaybackConfig, CsvPlaybackDriver
 from app.main import app
 
@@ -293,3 +293,27 @@ def test_resume_boundary_is_loaded_before_first_resumed_frame(constant_client, m
     assert boundary_ready, "续跑后应至少产出一帧"
     assert boundary_ready[0] is True, f"续跑首帧比对时基准尚未装载: {boundary_ready}"
     assert not any(boundary_ready[1:]), "一次性窗口应由首帧消费"
+
+
+def test_nonfinite_rows_are_skipped(tmp_path):
+    """nan/inf 单元格与缺列同样按坏行跳过（nan 时间戳还会打乱排序）。"""
+    path = _write_csv(
+        tmp_path,
+        [(0.0, 1.0, 1e-3, 25.0), ("nan", 1.0, 1e-3, 25.0), (0.1, 1.0, 1e-3, "nan"), (0.2, "inf", 1e-3, 25.0), (0.3, 1.1, 1.1e-3, 25.0)],
+    )
+
+    async def scenario():
+        d = CsvPlaybackDriver(CsvPlaybackConfig(path=path))
+        await d.connect()
+        return d._times
+
+    assert asyncio.run(scenario()) == [0.0, 0.3]
+
+
+def test_csv_env_parse_error_names_the_variable(tmp_path, monkeypatch):
+    path = _write_csv(tmp_path, [(0.0, 1.0, 1e-3, 25.0)])
+    monkeypatch.setenv("EC_DRIVER", "csv")
+    monkeypatch.setenv("EC_CSV_PATH", path)
+    monkeypatch.setenv("EC_CSV_SPEED", "2x")
+    with pytest.raises(ValueError, match="EC_CSV_SPEED"):
+        build_driver()

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from app.drivers import MockDevice, MockDeviceConfig, MockScenario, load_mock_config
+from app.drivers import DriverReading, MockDevice, MockDeviceConfig, MockScenario, load_mock_config
 
 
 def test_mock_device_is_seeded_and_repeatable():
@@ -66,3 +66,12 @@ def test_mock_env_error_names_the_invalid_variable(monkeypatch):
     monkeypatch.setenv("EC_SAMPLE_RATE_HZ", "fast")
     with pytest.raises(ValueError, match="EC_SAMPLE_RATE_HZ"):
         load_mock_config()
+
+
+def test_nonfinite_values_make_reading_incomplete():
+    """NaN/inf 等同缺失：整帧跳过，不能以 NaN 落库（SQLite 存成 NULL 撞 NOT NULL）或进 JSON。"""
+    nan, inf = float("nan"), float("inf")
+    assert not DriverReading(ec=None, temperature=nan, voltage_v=1.0, current_a=1e-3).complete_for_iv
+    assert not DriverReading(ec=None, temperature=25.0, voltage_v=inf, current_a=1e-3).complete_for_iv
+    assert not DriverReading(ec=nan, temperature=25.0).complete_for_conductivity
+    assert DriverReading(ec=None, temperature=25.0, voltage_v=-0.4, current_a=1e-3).complete_for_iv

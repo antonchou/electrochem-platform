@@ -621,3 +621,13 @@ def test_version_single_source():
     from app.main import app
 
     assert app.version == __version__
+
+
+def test_ws_ignores_binary_client_messages(client):
+    """客户端发来的二进制消息不应让订阅端点退出：连接保持，后续广播照常送达。"""
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.send_bytes(bytes([0, 1]))
+        ws.send_text("ping")
+        client.post("/api/debug/bad-frame")
+        msg = _receive_json_with_timeout(ws, 3.0)
+        assert msg["ec"] == "abc"

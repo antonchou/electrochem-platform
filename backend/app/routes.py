@@ -68,9 +68,9 @@ async def ws_stream(ws: WebSocket) -> None:
         # 晚连/刷新：一次性告警可能已发出且当时无订阅者，连接时补发。
         if persist.degraded:
             await hub.send_to(ws, acquisition.persist_degraded_payload())
-        # 客户端不发送业务消息，这里阻塞等待断连信号
-        while True:
-            await ws.receive_text()
+        # 客户端不发送业务消息：只等断连事件，收到的文本/二进制一律忽略
+        while (await ws.receive())["type"] != "websocket.disconnect":
+            pass
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
