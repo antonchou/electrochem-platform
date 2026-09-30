@@ -32,7 +32,7 @@ export class RealtimeBuffer {
     return switched;
   }
 
-  /** 追加一帧；帧带所属实验时先对齐归属（调试 burst / 浏览器模拟帧不带 id，直接追加）。 */
+  /** 追加一帧；帧带所属实验时先对齐归属（调试 burst 帧不带 id，直接追加）。 */
   push(point: DataPoint, experimentId?: number): void {
     this.bindExperiment(experimentId);
     this.points.push(point);

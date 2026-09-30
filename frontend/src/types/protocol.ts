@@ -41,7 +41,7 @@ export interface ExperimentFrame {
   excitation_frequency_hz?: number;
   excitation_amplitude_v?: number;
   compensation_model?: string;
-  /** 所属实验（DB id）。实时缓冲据此隔离实验；调试 burst 帧与浏览器模拟不带 */
+  /** 所属实验（DB id）。实时缓冲据此隔离实验；调试 burst 帧不带 */
   experiment_id?: number;
 }
 
@@ -352,7 +352,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
   }
 
   // I–V 测量链路扩展字段（REQ-M-001/REQ-U-001）：全部可选，缺字段也接受
-  // （兼容旧后端/旧浏览器模拟）。后端 v2+ 才下发，前端拿不到时显示为空。
+  // （兼容旧后端）。后端 v2+ 才下发，前端拿不到时显示为空。
   return {
     timestamp,
     ec,

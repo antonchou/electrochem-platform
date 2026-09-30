@@ -7,7 +7,7 @@ import { StaticChart, type ChartOverlay } from './StaticChart';
 import styles from './FitPanel.module.css';
 
 interface Props {
-  api: ApiClient | null;
+  api: ApiClient;
   /** 数据点（t 秒 / tc °C / ec μS·cm⁻¹），按 X 轴语义自动取 x */
   points: DataPoint[];
   /** 当前实验 id：提供则拟合结果入库 */
@@ -116,16 +116,15 @@ export function FitPanel({
   }, [fitPoints, selectedModels, xAxis]);
 
   const runFit = async () => {
-    if (!api || fitPoints.length < 3 || selectedModels.length === 0) return;
+    if (fitPoints.length < 3 || selectedModels.length === 0) return;
     if (xAxis === 'concentration' && !hasUsableConcentrationAxis) return;
     const requestId = ++fitRequestIdRef.current;
     setFitLoading(true);
     setFitError(null);
-    const client = api;
     const run =
       fitRunner ??
       ((pairs: [number, number][], models: string[], axis: FitAxis) =>
-        client.fitPoints(pairs, models, axis, experimentId));
+        api.fitPoints(pairs, models, axis, experimentId));
     try {
       const res = await run(fitPoints, selectedModels, xAxis);
       if (requestId !== fitRequestIdRef.current) return;
@@ -172,7 +171,6 @@ export function FitPanel({
   };
 
   const canFit =
-    api !== null &&
     fitPoints.length >= 3 &&
     selectedModels.length > 0 &&
     !fitLoading &&
@@ -221,12 +219,6 @@ export function FitPanel({
           当前数据浓度为 {Array.from(uniqueConcentrations).join(', ')} mmol/L，仅{' '}
           {uniqueConcentrations.size} 种。浓度轴拟合需要 ≥3 个不同浓度：单个实验只有一种浓度，
           请在「历史实验 → 跨实验标定」里组合多个实验
-        </div>
-      )}
-
-      {!api && (
-        <div className={styles.axisNote} data-testid={`${testIdPrefix}-no-api-note`}>
-          浏览器模拟模式下无后端拟合接口，「开始拟合」不可用；请切换 server 模式连接后端。
         </div>
       )}
 

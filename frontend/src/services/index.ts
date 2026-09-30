@@ -7,26 +7,23 @@ import type {
 } from '../types/protocol';
 import { WebSocketClient } from './websocketClient';
 import { ApiClient } from './apiClient';
-import { BrowserMockSource } from './browserMock';
 
 /**
  * 实验数据桥：统一「实时流 + 控制 + 历史查询」的入口。
- * - server 模式：WebSocketClient（实时流）+ ApiClient（REST 控制/历史）
- * - browser 模式：BrowserMockSource（纯浏览器模拟）
- * 上层业务只依赖本接口，切换数据源不改业务代码（任务书 §3 约束）。
+ * 实时流走 WebSocketClient，控制与历史走 ApiClient。数据来自模拟源还是真实设备由后端
+ * EC_DRIVER 决定，前端不区分（浏览器内置模拟模式已于 2026-10-01 删除：它是与后端模拟器
+ * 并行的第二套实现，行为会分叉，也没有测试覆盖）。
  */
 export interface ExperimentBridge {
   connect(): void;
   disconnect(): void;
   subscribe(listener: (ev: ClientEvent) => void): () => void;
   control(action: ControlAction, options?: ExperimentStartOptions): Promise<ControlResponse>;
-  /** 历史/导出 API（仅 server 模式可用，browser 模式为 null） */
-  readonly api: ApiClient | null;
-  readonly mode: 'server' | 'browser';
+  /** 历史 / 导出 / 拟合 API */
+  readonly api: ApiClient;
 }
 
 class ServerBridge implements ExperimentBridge {
-  readonly mode = 'server' as const;
   readonly api: ApiClient;
   private ws: WebSocketClient;
 
@@ -52,34 +49,10 @@ class ServerBridge implements ExperimentBridge {
   }
 }
 
-class BrowserBridge implements ExperimentBridge {
-  readonly mode = 'browser' as const;
-  readonly api = null;
-  private mock = new BrowserMockSource();
-
-  connect(): void {
-    this.mock.connect();
-  }
-
-  disconnect(): void {
-    this.mock.disconnect();
-  }
-
-  subscribe(listener: (ev: ClientEvent) => void): () => void {
-    return this.mock.subscribe(listener);
-  }
-
-  control(action: ControlAction, _options?: ExperimentStartOptions): Promise<ControlResponse> {
-    return this.mock.control(action);
-  }
-}
-
 let bridge: ExperimentBridge | null = null;
 
 /** 获取全局唯一的桥（浏览器中单例）。 */
 export function getBridge(): ExperimentBridge {
-  if (!bridge) {
-    bridge = config.dataSource === 'browser' ? new BrowserBridge() : new ServerBridge();
-  }
+  if (!bridge) bridge = new ServerBridge();
   return bridge;
 }
