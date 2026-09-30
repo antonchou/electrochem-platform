@@ -151,6 +151,7 @@ def test_concentration_analysis(client):
     blank = measure(client, "unknown", None)["id"]
     result = client.post("/api/analysis/concentration", json={"measurement_ids": ids}).json()
     assert result["linear"]["ok"] and result["kohlrausch"]["ok"]
+    assert result["warnings"] == []
     # 未标定时 Λ0 也偏低同一个倍数；读数经过 1.5 µS/cm 水本底，允许 2% 偏差
     assert result["kohlrausch"]["lambda0_s_cm2_per_mol"]["value"] == pytest.approx(149.8 / TRUE_KCELL, rel=0.02)
     missing = client.post("/api/analysis/concentration", json={"measurement_ids": [ids[0], blank]})
@@ -171,6 +172,9 @@ def test_calibration_round_trip(client):
     after = measure(client, "KCl again", 10.0)
     assert after["calibration_id"] == calibration["id"]
     assert after["qc"]["representative_kappa25"] == pytest.approx(1413.0, rel=0.005)
+    # 标定前后的测量混在一起拟合：κ25 有系统偏差，要给出警告
+    mixed = client.post("/api/analysis/concentration", json={"measurement_ids": [standard["id"], after["id"]]}).json()
+    assert len(mixed["warnings"]) == 1 and "未标定" in mixed["warnings"][0]
     listing = client.get("/api/calibrations").json()
     assert listing[0]["points"][0]["sample_name"] == "KCl 0.01 mol/L"
     bad = client.post("/api/calibrations", json={"points": [
