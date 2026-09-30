@@ -35,9 +35,7 @@ def _frame(experiment_id: int, sensor_path_id: str) -> dict:
 def test_frame_count_isolated_by_sensor_path(tmp_path, monkeypatch):
     monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "paths.db"))
     storage.init_db()
-    exp_id = storage.create_experiment("EXP-PATHS", "paths")
-    storage.upsert_sample(exp_id, "SAME", "WIDE")
-    storage.upsert_sample(exp_id, "SAME", "NARROW")
+    exp_id = storage.create_experiment_with_sample("EXP-PATHS", "paths", "SAME", "NARROW")
 
     storage.insert_frames([_frame(exp_id, "WIDE")])
 
@@ -49,11 +47,11 @@ def test_insert_frames_upserts_missing_sample(tmp_path, monkeypatch):
     """P0-2：帧写入时样品行不存在则补建并累计 frame_count。"""
     monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "upsert-count.db"))
     storage.init_db()
-    exp_id = storage.create_experiment("EXP-UPSERT", "upsert")
+    exp_id = storage.create_experiment_with_sample("EXP-UPSERT", "upsert", "SAME", "NARROW")
     storage.insert_frames([_frame(exp_id, "WIDE")])
     storage.insert_frames([_frame(exp_id, "WIDE")])
     samples = {item["sensor_path_id"]: item["frame_count"] for item in storage.get_samples(exp_id)}
-    assert samples == {"WIDE": 2}
+    assert samples == {"NARROW": 0, "WIDE": 2}
 
 
 def test_experiment_and_sample_creation_rolls_back_together(tmp_path, monkeypatch):
@@ -159,8 +157,8 @@ def test_startup_aborts_leftover_running_row(tmp_path, monkeypatch):
     """P1-B：进程启动时把历史遗留 running 行标 aborted，不影响已结束行与新实验。"""
     monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "stale-running.db"))
     storage.init_db()
-    leftover = storage.create_experiment("EXP-STALE", "crash leftover")
-    stopped = storage.create_experiment("EXP-OK", "already stopped")
+    leftover = storage.create_experiment_with_sample("EXP-STALE", "crash leftover", "S", "WIDE")
+    stopped = storage.create_experiment_with_sample("EXP-OK", "already stopped", "S", "WIDE")
     storage.finish_experiment(stopped, "stopped")
     assert storage.get_experiment(leftover)["status"] == "running"
     assert storage.get_experiment(leftover)["ended_at_utc"] is None

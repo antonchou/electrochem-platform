@@ -93,7 +93,7 @@ def test_insert_frames_malformed_drop_is_logged(tmp_path, monkeypatch, caplog):
     """P2-4：畸形帧被丢弃时必须留 warning（带条数），不得静默消失。"""
     monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "r2-log.db"))
     storage.init_db()
-    exp_id = storage.create_experiment("EXP-R2", "logging")
+    exp_id = storage.create_experiment_with_sample("EXP-R2", "logging", "S1", "MOCK_EC_IV")
     good = {
         "experiment_id": exp_id,
         "sample_id": "S1",

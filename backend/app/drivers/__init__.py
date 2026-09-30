@@ -1,6 +1,6 @@
 """Device-driver contracts and built-in adapters."""
 
-from .base import DeviceDriver, DriverReading
+from .base import DeviceDriver, DriverConfig, DriverReading
 from .csv_playback import CsvPlaybackConfig, CsvPlaybackDriver
 from .mock import MockDevice, MockDeviceConfig, MockScenario, load_mock_config
 from .simulator import (
@@ -13,6 +13,7 @@ from .simulator import (
 
 __all__ = [
     "DeviceDriver",
+    "DriverConfig",
     "DriverReading",
     "MockDevice",
     "MockDeviceConfig",
