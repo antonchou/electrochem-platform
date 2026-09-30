@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Mapping
 from urllib.parse import urlsplit
@@ -98,6 +99,11 @@ def create_app(settings: Settings | None = None, device: Device | None = None) -
         # 默认响应会回显输入值；输入里有 NaN 时回显本身无法编码成 JSON，422 会变成 500
         errors = [{"loc": list(e.get("loc", ())), "msg": e.get("msg"), "type": e.get("type")} for e in exc.errors()]
         return JSONResponse({"detail": errors}, status_code=422)
+
+    @app.exception_handler(sqlite3.Error)
+    async def database_error(_request: Request, exc: sqlite3.Error) -> JSONResponse:
+        # 数据库锁住、磁盘满等：给出原因，而不是一个看不出所以然的 500
+        return JSONResponse({"detail": f"数据库暂时不可用：{exc}"}, status_code=503)
 
     for error_type, status in _ERROR_STATUS.items():
         app.add_exception_handler(

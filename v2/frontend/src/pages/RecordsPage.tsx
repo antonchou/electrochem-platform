@@ -102,18 +102,28 @@ export function RecordsPage({ refreshKey, focusId }: Props) {
       </section>
 
       {chosen.length >= 2 && <Compare rows={chosen} />}
-      {detailId !== null && <Detail key={detailId} id={detailId} />}
+      {detailId !== null && <Detail key={detailId} id={detailId} refreshKey={refreshKey} />}
     </div>
   );
 }
 
-function Detail({ id }: { id: number }) {
+const RUNNING_REFRESH_MS = 3_000;
+
+function Detail({ id, refreshKey }: { id: number; refreshKey: string }) {
   const [measurement, setMeasurement] = useState<Measurement | null>(null);
   const [points, setPoints] = useState<Point[]>([]);
   const [total, setTotal] = useState(0);
   const [raw, setRaw] = useState(false);
   const [alphaFit, setAlphaFit] = useState<TemperatureFit | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const running = measurement?.status === 'running';
+
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setTick((t) => t + 1), RUNNING_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [running]);
 
   useEffect(() => {
     let alive = true;
@@ -128,7 +138,7 @@ function Detail({ id }: { id: number }) {
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [id, refreshKey, tick]);
 
   const kappaOptions = useMemo(() => kappaTimeOptions(), []);
   const rawOptions = useMemo(() => rawTimeOptions(), []);
