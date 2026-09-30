@@ -28,6 +28,10 @@ logger = logging.getLogger("ec.devices")
 
 RETRY_S = 2.0
 MAX_LINE_BYTES = 4096  # 固件一帧约 300 字节；攒到这么长还没换行就是杂讯，丢弃
+# 打开串口后发给 MicroPython 的按键：Ctrl-C 停掉在跑的程序（固件会先让电池回 0 V），Ctrl-B 退出 raw REPL，
+# Ctrl-D 软重启并重新运行 main.py。Thonny 连接时会中断 main.py，断开后板子停在 REPL，不这样做就收不到帧；
+# MicroPython 只在普通 REPL 下软重启才运行 main.py，所以 Ctrl-B 不能省。
+RESTART_FIRMWARE = b"\x03\x02\x04"
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +180,10 @@ class SimulatedCell:
 # ---------------------------------------------------------------- 串口
 
 class SerialDevice:
-    """ESP32 固件的串口帧。设备日志行（"# ..."）作为状态消息上报，前端能直接看到器件自检结果。"""
+    """ESP32 固件的串口帧。设备日志行（"# ..."）作为状态消息上报，前端能直接看到器件自检结果。
+
+    每次打开串口都先让固件软重启（RESTART_FIRMWARE），所以每次连接都从器件自检开始，设备序号从 1 起。
+    """
 
     kind = "serial"
 
@@ -203,10 +210,11 @@ class SerialDevice:
                 yield DeviceStatus(False, f"打不开串口 {self.port}：{exc}")
                 await asyncio.sleep(RETRY_S)
                 continue
-            yield DeviceStatus(True, f"串口 {self.port} 已打开")
+            yield DeviceStatus(True, f"串口 {self.port} 已打开，正在重启固件")
             sequence = SequenceCheck()
             pending = b""
             try:
+                await asyncio.to_thread(port.write, RESTART_FIRMWARE)
                 while True:
                     raw = await asyncio.to_thread(port.readline)
                     if not raw:
