@@ -51,6 +51,25 @@ test('parses status-only frames', () => {
   assert.deepEqual(parsed, { status: 'stopped' });
 });
 
+test('passes through experiment_id on data frames and sample_id on status frames', () => {
+  // 09-30 审查 #3：前端实时缓冲按帧所属实验隔离；旁观端据状态帧的样品号更新溶液名
+  const frame = expectFrame(
+    parseServerMessage({ timestamp: 1, ec: 1413, temperature: 25, status: 'running', experiment_id: 12 }),
+  );
+  assert.equal(frame.experiment_id, 12);
+  // 非整数 id 视为缺失，不得污染缓冲归属
+  const odd = expectFrame(
+    parseServerMessage({ timestamp: 1, ec: 1413, temperature: 25, status: 'running', experiment_id: '12' }),
+  );
+  assert.equal(odd.experiment_id, undefined);
+
+  assert.deepEqual(parseServerMessage({ status: 'running', experiment_id: 12, sample_id: 'NACL_010' }), {
+    status: 'running',
+    experiment_id: 12,
+    sample_id: 'NACL_010',
+  });
+});
+
 test('parses persistence warning on status frames', () => {
   const parsed = parseServerMessage({
     status: 'running',

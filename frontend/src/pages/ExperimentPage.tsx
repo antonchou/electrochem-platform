@@ -61,9 +61,17 @@ export function ExperimentPage() {
     canStop,
     canReset,
   } = useExperiment(bridge);
-  const { pointsRef, count, latest, runStartTRef, clearPoints, hydrateFromFrames } =
-    useRealtimeData(bridge);
-  const ivAnalysis = useIVAnalysis(pointsRef, count);
+  const {
+    pointsRef,
+    count,
+    revision,
+    latest,
+    runStartTRef,
+    clearPoints,
+    hydrateFromFrames,
+    bindExperiment,
+  } = useRealtimeData(bridge);
+  const ivAnalysis = useIVAnalysis(pointsRef, revision);
 
   const startOptions = useCallback(() => {
     const parsed = parseConcentrationMmolL(concentrationInput);
@@ -80,22 +88,21 @@ export function ExperimentPage() {
   const handleStart = useCallback(async () => {
     const options = startOptions();
     if (!options) return;
-    const previousId = experimentId;
     const res = await start(options);
     if (!res || !('ok' in res) || !res.ok) return;
     if (res.resumed && res.experiment_id != null && bridge.api) {
       try {
         const frames = await bridge.api.getFrames(res.experiment_id, 100_000);
-        hydrateFromFrames(frames);
+        hydrateFromFrames(frames, res.experiment_id);
       } catch {
         /* 续跑时灌入历史帧失败则继续用内存缓冲 */
       }
       return;
     }
-    if (previousId != null && res.experiment_id !== previousId) {
-      clearPoints();
-    }
-  }, [bridge.api, clearPoints, experimentId, hydrateFromFrames, start, startOptions]);
+    // 新实验：缓冲按实验隔离，id 变了才清空。WS 状态帧/数据帧通常已先一步对齐，
+    // 这里是断线等情况下的兜底。旧实现等响应回来再 clearPoints()，会把已先到的新实验首批帧一并抹掉。
+    bindExperiment(res.experiment_id);
+  }, [bindExperiment, bridge.api, hydrateFromFrames, start, startOptions]);
 
   const handleClear = useCallback(() => {
     // reset 失败（后端拒绝/网络断开）时本地缓冲不能先清，否则 UI 与服务器状态错位

@@ -35,6 +35,8 @@ class Frame(BaseModel):
     excitation_frequency_hz: Optional[float] = None
     excitation_amplitude_v: Optional[float] = None
     compensation_model: Optional[str] = None
+    # 所属实验（DB id）。前端实时缓冲按它隔离实验；调试 burst 帧不带此字段
+    experiment_id: Optional[int] = None
 
 
 class ControlResponse(BaseModel):
