@@ -67,6 +67,7 @@ def convert_braun(max_seconds: float = 600.0) -> Path:
                     lines.append(line.decode("utf-8", "replace"))
                     n += 1
         text = "\n".join(lines)
+        cached.write_text(text, encoding="utf-8")
     rows: list[tuple[float, float, float, float]] = []
     for rec in csv.DictReader(io.StringIO(text)):
         t = float(rec["Time"])
@@ -101,6 +102,7 @@ def convert_rahmanian(experiment_id: str = "PYA_25082021_BM169_1") -> Path:
                         break
                     continue
                 records.append(rec)
+        cached.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
     rows: list[tuple[float, float, float, float]] = []
     kcell = 4.72026
     u_v = 1.0
@@ -115,7 +117,7 @@ def convert_rahmanian(experiment_id: str = "PYA_25082021_BM169_1") -> Path:
     sidecar = {
         "experiment_id": experiment_id,
         "cell_constant_per_cm": kcell,
-        "excitation_voltage_v": u_v,
+        "excitation_amplitude_v": u_v,
         "note": "U/I reconstructed from EIS_conductivity and published Kcell so compute_chain can run; not a measured I–V waveform.",
     }
     (OUT / "rahmanian_2022_eis_bm169.meta.json").write_text(
@@ -131,6 +133,7 @@ def convert_echemdb(stride: int = 10, temperature_c: float = 20.0) -> Path:
         text = cached.read_text(encoding="utf-8-sig")
     else:
         text = _open(ECHEMDB_CSV).read().decode("utf-8-sig")
+        cached.write_text(text, encoding="utf-8-sig")
     raw = list(csv.DictReader(io.StringIO(text), delimiter="\t"))
     rows: list[tuple[float, float, float, float]] = []
     t0 = float(raw[0]["Time (s)"])

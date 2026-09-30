@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { API, BACKEND_PORT } from './tests/backend';
 
 const channel = process.env.E2E_BROWSER;
 const e2eOutputDir = path.join(tmpdir(), 'ec-e2e-results');
@@ -53,8 +54,8 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `cd ../../backend && ${JSON.stringify(backendPython())} -m uvicorn app.main:app --host 127.0.0.1 --port 8000`,
-      url: 'http://127.0.0.1:8000/health',
+      command: `cd ../../backend && ${JSON.stringify(backendPython())} -m uvicorn app.main:app --host 127.0.0.1 --port ${BACKEND_PORT}`,
+      url: `${API}/health`,
       env: {
         EC_ENABLE_DEBUG_ENDPOINTS: '1',
         EC_DB_PATH: path.join(e2eOutputDir, 'backend.db'),
