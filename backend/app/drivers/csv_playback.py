@@ -16,33 +16,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
 
-from .base import DeviceDriver, DriverReading
+from .base import DeviceDriver, DriverConfig, DriverReading
 
 logger = logging.getLogger("app.drivers.csv_playback")
 
 
-@dataclass(frozen=True, slots=True)
-class CsvPlaybackConfig:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CsvPlaybackConfig(DriverConfig):
     path: str
-    sample_rate_hz: float = 10.0
     loop: bool = False
     speed: float = 1.0  # 1× realtime; 2 / 10 = accelerated. Pause = experiment stop.
     device_id: str = "CSV-PLAYBACK-01"
-    firmware_version: str = "0.1.0"
     range_id: str = "CSV"
-    cell_constant_per_cm: float = 1.0
-    alpha_per_c: float = 0.02
     excitation_frequency_hz: float = 0.0
-    excitation_amplitude_v: float = 1.0
-    compensation_model: str = "linear_alpha"
     calibration_id: str | None = "UNCALIBRATED"
     calibration_standard: str | None = "playback: no calibration claim"
-    calibration_lot: str | None = None
-    calibration_claimed: bool = False
+    calibration_claimed: bool | None = False
 
     def __post_init__(self) -> None:
-        if self.sample_rate_hz <= 0:
-            raise ValueError("sample_rate_hz must be positive")
+        DriverConfig.__post_init__(self)
         if self.speed <= 0:
             raise ValueError("speed must be positive")
 

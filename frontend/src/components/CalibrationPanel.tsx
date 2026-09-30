@@ -73,7 +73,7 @@ export function CalibrationPanel({ api, experiments }: Props) {
       {rows.length === 0 ? (
         <p className={styles.hint}>暂无历史实验。</p>
       ) : (
-        <table className={styles.table} data-testid="calibration-table">
+        <table className="data-table" data-testid="calibration-table">
           <thead>
             <tr>
               <th aria-label="选择" />

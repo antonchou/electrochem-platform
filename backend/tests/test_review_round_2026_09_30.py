@@ -12,7 +12,6 @@ import json
 import time
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app import analysis, storage
@@ -20,15 +19,6 @@ from app.main import app
 from app.stability import qc_from_frames
 
 SENSOR = "MOCK_EC_IV"
-
-
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "round0930.db"))
-    # 标定/拟合报告写进临时目录，不落到仓库 data/derived（审查 P3-8 同类问题）
-    monkeypatch.setenv("EC_DERIVED_DIR", str(tmp_path / "derived"))
-    with TestClient(app) as c:
-        yield c
 
 
 def _row(k25, flags="SIMULATED", t=0.0):

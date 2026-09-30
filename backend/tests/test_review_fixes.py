@@ -6,22 +6,9 @@
 - P2-4 samples.frame_count 随帧写入正确累加
 """
 
-import os
 import time
 
-import pytest
-from fastapi.testclient import TestClient
-
 from app import storage
-from app.main import app
-
-
-@pytest.fixture()
-def client(tmp_path):
-    os.environ["EC_DB_PATH"] = str(tmp_path / "review_test.db")
-    with TestClient(app) as c:
-        yield c
-    os.environ.pop("EC_DB_PATH", None)
 
 
 def _start(client, sample_id: str) -> int:

@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .base import DeviceDriver, DriverReading
+from .base import DeviceDriver, DriverConfig, DriverReading
 
 
 class MockScenario(str, Enum):
@@ -21,11 +21,12 @@ class MockScenario(str, Enum):
     DROPOUT = "dropout"
 
 
-@dataclass(frozen=True, slots=True)
-class MockDeviceConfig:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MockDeviceConfig(DriverConfig):
+    """I–V 计算参数沿用 DriverConfig 默认值；excitation_amplitude_v 即受控激励电压 U。"""
+
     scenario: MockScenario = MockScenario.STABLE
     seed: int = 2026
-    sample_rate_hz: float = 10.0
     base_ec: float = 1413.0
     base_temperature: float = 25.0
     base_ph: float = 7.0
@@ -34,23 +35,15 @@ class MockDeviceConfig:
     ph_noise: float = 0.01
     drift_ec_per_second: float = 0.2
     dropout_every_n: int = 10
-    # I–V 链路参数（REQ-M-001）：激励电压、电池常数、温补系数
-    cell_constant_per_cm: float = 1.0
-    alpha_per_c: float = 0.02
-    excitation_voltage_v: float = 1.0
-    excitation_frequency_hz: float = 1000.0  # 交流激励频率 Hz；0 = 直流（仅调试）
-    compensation_model: str = "linear_alpha"
     device_id: str = "MOCK-IV-01"
-    firmware_version: str = "0.1.0"
     range_id: str = "WIDE"
     calibration_id: str | None = "MOCK-KCELL-1.0"
     calibration_standard: str | None = "KCl 1413 uS/cm @ 25C (simulated)"
     calibration_lot: str | None = "SIMULATED"
-    calibration_claimed: bool = True
+    calibration_claimed: bool | None = True
 
     def __post_init__(self) -> None:
-        if self.sample_rate_hz <= 0:
-            raise ValueError("sample_rate_hz must be positive")
+        DriverConfig.__post_init__(self)
         if self.base_ec < 0:
             raise ValueError("base_ec must be non-negative")
         if not 0 <= self.base_ph <= 14:
@@ -59,38 +52,12 @@ class MockDeviceConfig:
             raise ValueError("noise values must be non-negative")
         if self.dropout_every_n < 0:
             raise ValueError("dropout_every_n must be non-negative")
-        if self.cell_constant_per_cm <= 0:
-            raise ValueError("cell_constant_per_cm must be positive")
-        if self.excitation_voltage_v <= 0:
-            raise ValueError("excitation_voltage_v must be positive")
+        if self.excitation_amplitude_v <= 0:
+            raise ValueError("excitation_amplitude_v must be positive")
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any]) -> "MockDeviceConfig":
-        allowed = {
-            "scenario",
-            "seed",
-            "sample_rate_hz",
-            "base_ec",
-            "base_temperature",
-            "base_ph",
-            "ec_noise",
-            "temperature_noise",
-            "ph_noise",
-            "drift_ec_per_second",
-            "dropout_every_n",
-            "cell_constant_per_cm",
-            "alpha_per_c",
-            "excitation_voltage_v",
-            "excitation_frequency_hz",
-            "compensation_model",
-            "device_id",
-            "firmware_version",
-            "range_id",
-            "calibration_id",
-            "calibration_standard",
-            "calibration_lot",
-            "calibration_claimed",
-        }
+        allowed = set(cls.__dataclass_fields__)
         unknown = set(raw) - allowed - {"schema_version", "driver"}
         if unknown:
             names = ", ".join(sorted(unknown))
@@ -171,10 +138,6 @@ class MockDevice(DeviceDriver):
     def connected(self) -> bool:
         return self._connected
 
-    @property
-    def read_count(self) -> int:
-        return self._read_count
-
     async def connect(self) -> None:
         self._connected = True
 
@@ -221,7 +184,7 @@ class MockDevice(DeviceDriver):
         # I–V 仿真（REQ-M-001 软件侧）：受控激励 U，由 κ(T) 反推回路电流 I，
         # 使软件计算链 G=I/U → κ(T)=Kcell·G → κ25 能还原目标 κ25。
         #   κ(T) = κ25·(1+α·(T-25))；G = κ(T)·1e-6 / Kcell [S]；I = G·U [A]
-        u_nominal = self.config.excitation_voltage_v
+        u_nominal = self.config.excitation_amplitude_v
         kappa_t = kappa25 * (1.0 + self.config.alpha_per_c * (temperature - 25.0))
         g_s = kappa_t * 1e-6 / self.config.cell_constant_per_cm
         i_nominal = g_s * u_nominal

@@ -19,7 +19,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .base import DeviceDriver, DriverReading
+from .base import DeviceDriver, DriverConfig, DriverReading
 
 logger = logging.getLogger("app.drivers.simulator")
 
@@ -82,35 +82,28 @@ _MODE_PRESETS: dict[SimulatorMode, dict[str, Any]] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class SimulatorConfig:
-    """Virtual cell + excitation sweep. Field names overlap MockDeviceConfig where they mean the same thing."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SimulatorConfig(DriverConfig):
+    """Virtual cell + excitation sweep. Shared calc/metadata fields come from DriverConfig."""
 
     mode: SimulatorMode = SimulatorMode.STABLE
     seed: int = 2026
-    sample_rate_hz: float = 10.0
     # Virtual solution (demo/test only — not a lab measurement)
     solution_id: str = "DEMO_KCL_1413_SIMULATED"
     nominal_conductance_s: float = 1.413e-3  # G@25°C
     base_temperature: float = 25.0
-    alpha_per_c: float = 0.02
-    cell_constant_per_cm: float = 1.0
     # Excitation sweep (commanded DAC voltage). Must stay >0 so compute_chain accepts it.
     sweep_start_v: float = 0.2
     sweep_end_v: float = 1.0
     settle_seconds: float = 0.5
     sweep_seconds: float = 8.0
     sweep_repeat: bool = False
-    excitation_frequency_hz: float = 1000.0
-    excitation_amplitude_v: float = 1.0
-    compensation_model: str = "linear_alpha"
     device_id: str = "SIM-IV-01"
-    firmware_version: str = "0.1.0"
     range_id: str = "SIM"
     calibration_id: str | None = "SIM-KCELL-1.0"
     calibration_standard: str | None = "simulated cell_constant; not a lab standard"
     calibration_lot: str | None = "SIMULATED"
-    calibration_claimed: bool = False
+    calibration_claimed: bool | None = False
     # Effects (mode presets if omitted)
     voltage_noise_v: float = 0.0003
     current_noise_a: float = 1.0e-6
@@ -125,12 +118,9 @@ class SimulatorConfig:
     fault_start_s: float = 0.3
 
     def __post_init__(self) -> None:
-        if self.sample_rate_hz <= 0:
-            raise ValueError("sample_rate_hz must be positive")
+        DriverConfig.__post_init__(self)
         if self.nominal_conductance_s < 0:
             raise ValueError("nominal_conductance_s must be non-negative")
-        if self.cell_constant_per_cm <= 0:
-            raise ValueError("cell_constant_per_cm must be positive")
         if self.sweep_start_v <= 0 or self.sweep_end_v <= 0:
             raise ValueError("sweep voltages must be positive (compute_chain requires U>0)")
         if self.sweep_seconds < 0 or self.settle_seconds < 0:

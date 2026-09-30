@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildFitPoints, downsample, fitCandidates, MAX_FIT_POINTS } from './fitPoints.ts';
+import { buildFitPoints, fitCandidates, MAX_FIT_POINTS } from './fitPoints.ts';
 import type { DataPoint } from '../types/protocol.ts';
 
 const base = { t: 1, tc: 25, ec: 100 };
@@ -83,25 +83,6 @@ test('frames with null t_seconds produce NaN t and are excluded, not x=0 fakes (
   ];
   const fit = buildFitPoints(points, 'time');
   assert.deepEqual(fit, [[0, 101]]);
-});
-
-test('downsample caps fit points at backend limit keeping first and last (T-02)', () => {
-  const total = MAX_FIT_POINTS + 500;
-  const pairs: [number, number][] = Array.from({ length: total }, (_, i) => [i, i * 2]);
-  const capped = downsample(pairs);
-  assert.equal(capped.length, MAX_FIT_POINTS);
-  assert.deepEqual(capped[0], [0, 0]);
-  assert.deepEqual(capped[capped.length - 1], [total - 1, (total - 1) * 2]);
-  // 单调不减（等间隔抽样不得回绕乱序）
-  for (let i = 1; i < capped.length; i++) {
-    assert.ok(capped[i][0] >= capped[i - 1][0]);
-  }
-  // 未超限时原样返回（同一引用语义）
-  const small: [number, number][] = [
-    [1, 2],
-    [3, 4],
-  ];
-  assert.equal(downsample(small), small);
 });
 
 test('buildFitPoints applies the cap transparently (T-02)', () => {

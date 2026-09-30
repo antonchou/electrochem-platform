@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import random
 import time
 import uuid
 from typing import Annotated, Literal, Optional
@@ -18,6 +19,7 @@ from .drivers import (
     CsvPlaybackConfig,
     CsvPlaybackDriver,
     DeviceDriver,
+    DriverConfig,
     MockDevice,
     SimulatorDriver,
     load_mock_config,
@@ -32,7 +34,6 @@ from .schemas import (
     FitRequest,
 )
 from .state import DEFAULT_SAMPLE_ID, DEFAULT_SENSOR_PATH_ID, state
-from .stream import generate_frame
 
 router = APIRouter()
 
@@ -131,46 +132,42 @@ async def stop_acquisition() -> None:
     await _hub.close_all(code=1001, reason="server shutdown")
 
 
-def _measurement_params() -> dict:
-    """取当前驱动的 I–V 计算参数（电池常数/温补系数/协议元数据）。
+# 没有 config 的驱动（测试替身等）按通用缺省元数据组帧
+_DEFAULT_DRIVER_CONFIG = DriverConfig()
 
-    校准溯源字段来自驱动 config，不再默认写成 KCl 1413。
-    """
-    config = getattr(_driver, "config", None)
-    cell = getattr(config, "cell_constant_per_cm", 1.0)
-    alpha = getattr(config, "alpha_per_c", 0.02)
-    amplitude = getattr(config, "excitation_amplitude_v", None)
-    if amplitude is None:
-        amplitude = getattr(config, "excitation_voltage_v", 1.0)
-    driver_cal_id = getattr(config, "calibration_id", None)
-    if isinstance(driver_cal_id, str):
-        driver_cal_id = driver_cal_id.strip() or None
-    claimed = getattr(config, "calibration_claimed", None)
+# 帧与校准记录共用的协议/激励元数据字段（均直接取自驱动 config）
+_FRAME_META_FIELDS = (
+    "device_id",
+    "firmware_version",
+    "range_id",
+    "excitation_frequency_hz",
+    "excitation_amplitude_v",
+    "compensation_model",
+)
+
+
+def _measurement_params() -> dict:
+    """取当前驱动的 I–V 计算参数与协议/校准元数据（来源是驱动 config，不默认写成 KCl 1413）。"""
+    config: DriverConfig = getattr(_driver, "config", None) or _DEFAULT_DRIVER_CONFIG
+    driver_cal_id = (config.calibration_id or "").strip() or None
     cal_id = state.calibration_id if state.calibration_id is not None else driver_cal_id
+    claimed = config.calibration_claimed
     if claimed is None:
         # 驱动未显式声明时才从校准 id 推导（P2-5）：显式 calibration_claimed=False
         # 是"有编号但未校准"的声明，不得被覆盖——与"尊重显式 fault_kind"同一原则。
-        # T-06 的场景（EC_CALIBRATION_ID 环境覆盖无声明驱动）在此分支生效。
-        if cal_id and cal_id != "UNCALIBRATED":
-            # 溯源一致性：帧携带真实 calibration_id 时不得再标 UNCALIBRATED。
-            # "UNCALIBRATED" 是驱动的"未校准"哨兵值，不算已声明。
-            claimed = True
+        # 溯源一致性：帧携带真实 calibration_id 时不得再标 UNCALIBRATED；
+        # "UNCALIBRATED" 是驱动的"未校准"哨兵值，不算已声明（T-06）。
+        claimed = bool(cal_id) and cal_id != "UNCALIBRATED"
     return {
-        "cell_constant_per_cm": cell,
-        "alpha_per_c": alpha,
-        "device_id": getattr(config, "device_id", "MOCK-IV-01"),
-        "firmware_version": getattr(config, "firmware_version", "0.1.0"),
-        "range_id": getattr(config, "range_id", "WIDE"),
-        "excitation_frequency_hz": getattr(config, "excitation_frequency_hz", 1000.0),
-        "excitation_amplitude_v": amplitude,
-        "compensation_model": getattr(config, "compensation_model", "linear_alpha"),
+        "cell_constant_per_cm": config.cell_constant_per_cm,
+        "alpha_per_c": config.alpha_per_c,
+        **{name: getattr(config, name) for name in _FRAME_META_FIELDS},
         "driver_calibration_id": driver_cal_id,
         "calibration_id": cal_id,
-        "calibration_standard": getattr(config, "calibration_standard", None),
-        "calibration_lot": getattr(config, "calibration_lot", None),
-        "calibration_claimed": bool(claimed),
-        "calibration_mode": getattr(config, "calibration_mode", None)
-        or ("cell_constant" if claimed else "none"),
+        "calibration_standard": config.calibration_standard,
+        "calibration_lot": config.calibration_lot,
+        "calibration_claimed": claimed,
+        "calibration_mode": "cell_constant" if claimed else "none",
     }
 
 
@@ -299,69 +296,53 @@ def _build_frame(elapsed: float, reading) -> dict:
     - 读数只有 ec/temperature（旧驱动或 dropout 后仍完整）：回退 V1 简化帧。
     """
     params = _measurement_params()
-    uncal = None if params.get("calibration_claimed") else "UNCALIBRATED"
+    uncal = None if params["calibration_claimed"] else "UNCALIBRATED"
     quality = _join_flags("|".join(reading.quality_flags), uncal)
-    base = {
+    frame: dict = {
         "timestamp": round(elapsed, 2),
         "temperature": reading.temperature,
         "status": "running",
         "quality_flags": quality,
     }
-    if reading.complete_for_iv:
-        try:
-            result = measurement.compute_chain(
-                reading.voltage_v,
-                reading.current_a,
-                reading.temperature,
-                params["cell_constant_per_cm"],
-                params["alpha_per_c"],
-            )
-        except ValueError as exc:
-            # CV 数据的电压是电极电位（可为负/零），不满足激励电压>0的物理前提。
-            # 原始 U/I/T 仍落库（Raw 不可变），Derived 标记 COMPUTE_INVALID，不崩溃。
-            logger.warning("计算链拒绝该帧: %s flags=%s", exc, reading.quality_flags)
-            return {
-                **base,
-                "ec": None,
-                "schema_version": 2,
-                "device_id": params["device_id"],
-                "firmware_version": params["firmware_version"],
-                "range_id": params["range_id"],
-                "calibration_id": params["calibration_id"],
-                "excitation_frequency_hz": params["excitation_frequency_hz"],
-                "excitation_amplitude_v": params["excitation_amplitude_v"],
-                "compensation_model": params["compensation_model"],
-                "voltage_raw_v": reading.voltage_v,
-                "current_raw_a": reading.current_a,
-                "temperature_raw_c": reading.temperature,
-                "conductance_s": None,
-                "kappa_t_us_cm": None,
-                "kappa_25_us_cm": None,
-                "quality_flags": _join_flags(quality, "COMPUTE_INVALID"),
-            }
-        return {
-            **base,
-            "ec": round(result.kappa_25_us_cm, 1),
-            "schema_version": 2,
-            "device_id": params["device_id"],
-            "firmware_version": params["firmware_version"],
-            "range_id": params["range_id"],
-            "calibration_id": params["calibration_id"],
-            "excitation_frequency_hz": params["excitation_frequency_hz"],
-            "excitation_amplitude_v": params["excitation_amplitude_v"],
-            "compensation_model": params["compensation_model"],
-            "voltage_raw_v": reading.voltage_v,
-            "current_raw_a": reading.current_a,
-            "temperature_raw_c": reading.temperature,
-            "conductance_s": result.conductance_s,
-            "kappa_t_us_cm": result.kappa_t_us_cm,
-            "kappa_25_us_cm": result.kappa_25_us_cm,
-        }
-    return {**base, "ec": reading.ec}
+    if not reading.complete_for_iv:
+        frame["ec"] = reading.ec
+        return frame
 
-
-def _utc_now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    frame.update(
+        schema_version=2,
+        calibration_id=params["calibration_id"],
+        voltage_raw_v=reading.voltage_v,
+        current_raw_a=reading.current_a,
+        temperature_raw_c=reading.temperature,
+        **{name: params[name] for name in _FRAME_META_FIELDS},
+    )
+    try:
+        result = measurement.compute_chain(
+            reading.voltage_v,
+            reading.current_a,
+            reading.temperature,
+            params["cell_constant_per_cm"],
+            params["alpha_per_c"],
+        )
+    except ValueError as exc:
+        # CV 数据的电压是电极电位（可为负/零），不满足激励电压>0的物理前提。
+        # 原始 U/I/T 仍落库（Raw 不可变），Derived 标记 COMPUTE_INVALID，不崩溃。
+        logger.warning("计算链拒绝该帧: %s flags=%s", exc, reading.quality_flags)
+        frame.update(
+            ec=None,
+            conductance_s=None,
+            kappa_t_us_cm=None,
+            kappa_25_us_cm=None,
+            quality_flags=_join_flags(quality, "COMPUTE_INVALID"),
+        )
+        return frame
+    frame.update(
+        ec=round(result.kappa_25_us_cm, 1),
+        conductance_s=result.conductance_s,
+        kappa_t_us_cm=result.kappa_t_us_cm,
+        kappa_25_us_cm=result.kappa_25_us_cm,
+    )
+    return frame
 
 
 def _frame_to_row(frame: dict) -> dict:
@@ -371,7 +352,7 @@ def _frame_to_row(frame: dict) -> dict:
         "sample_id": state.sample_id,
         "sensor_path_id": state.sensor_path_id,
         "seq_no": state.next_seq(),
-        "timestamp_utc": _utc_now(),
+        "timestamp_utc": storage.utc_now(),
         "monotonic_ms": int(time.monotonic() * 1000),
         "t_seconds": frame.get("timestamp"),
         "ec_raw": frame.get("ec"),
@@ -577,7 +558,7 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
         uid = f"EXP-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:4]}"
         params = _measurement_params()
         env_cal = os.environ.get("EC_CALIBRATION_ID", "").strip()
-        cal_id = env_cal or params.get("driver_calibration_id")
+        cal_id = env_cal or params["driver_calibration_id"]
 
         # 实验与样品在一个 SQLite 事务中创建。数据库失败时内存态不会进入 running，
         # 并发 start 也由本锁串行化，避免遗留空的 running/idle 历史记录。
@@ -599,24 +580,19 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
 
         try:
             if cal_id:
-                claimed = bool(params.get("calibration_claimed"))
+                claimed = params["calibration_claimed"]
                 await persist.insert_calibration_record(
                     experiment_id=exp_id,
                     calibration_id=cal_id,
                     sensor_path_id=sensor_path_id,
-                    mode=params.get("calibration_mode") or ("cell_constant" if claimed else "none"),
-                    standard=params.get("calibration_standard"),
-                    lot=params.get("calibration_lot"),
+                    mode=params["calibration_mode"],
+                    standard=params["calibration_standard"],
+                    lot=params["calibration_lot"],
                     coeff_value=params["cell_constant_per_cm"] if claimed else None,
                     coeff_json={
                         "cell_constant_per_cm": params["cell_constant_per_cm"],
                         "alpha_per_c": params["alpha_per_c"],
-                        "compensation_model": params["compensation_model"],
-                        "excitation_frequency_hz": params["excitation_frequency_hz"],
-                        "excitation_amplitude_v": params["excitation_amplitude_v"],
-                        "device_id": params["device_id"],
-                        "firmware_version": params["firmware_version"],
-                        "range_id": params["range_id"],
+                        **{name: params[name] for name in _FRAME_META_FIELDS},
                         "calibration_claimed": claimed,
                     },
                 )
@@ -924,7 +900,7 @@ async def calibration(body: CalibrationRequest) -> dict:
         payload = {
             "kind": "calibration",
             "x_axis": "concentration",
-            "created_at_utc": _utc_now(),
+            "created_at_utc": storage.utc_now(),
             "experiment_ids": ids,
             "points": points,
             "best": best,
@@ -958,6 +934,16 @@ async def close_connections() -> dict:
     return {"ok": True, "closed": count}
 
 
+def _burst_frame(t: float) -> dict:
+    """V1 简化帧：κ25 ≈ 1413 μS/cm + 缓慢漂移 + 噪声（无 U/I、无 experiment_id）。"""
+    return {
+        "timestamp": round(t, 2),
+        "ec": round(1413.0 + math.sin(t / 30.0) * 6.0 + (random.random() - 0.5) * 3.0, 1),
+        "temperature": round(25.0 + (random.random() - 0.5) * 0.3, 2),
+        "status": "running",
+    }
+
+
 @router.post("/api/debug/burst", dependencies=[Depends(_require_debug_enabled)])
 async def burst(count: Annotated[int, Query(ge=1, le=10_000)] = 10_000) -> dict:
     """快速推送 count 帧（默认 1 万），用于验证前端大点数负载与 30 分钟模拟（P03/P04）。
@@ -965,12 +951,11 @@ async def burst(count: Annotated[int, Query(ge=1, le=10_000)] = 10_000) -> dict:
     仅广播、不落库、不消耗 seq：注入帧不进入 raw_frames（B-3 修复，保证原始数据纯净）。
 
     每 200 帧以 sleep(0) 让出事件循环（T-08）：broadcast 对同一 payload 只序列化一次，
-    但 1 万次 generate_frame + 序列化 + 入队若不让出，会拖慢采集周期使负载测试失真。
+    但 1 万次造帧 + 序列化 + 入队若不让出，会拖慢采集周期使负载测试失真。
     """
     sent = 0
     for i in range(count):
-        frame = generate_frame(i * 0.1)
-        sent += await broadcast(frame)
+        sent += await broadcast(_burst_frame(i * 0.1))
         if i % 200 == 199:
             await asyncio.sleep(0)
     return {"ok": True, "sent": sent}
