@@ -1,5 +1,5 @@
 import type { IVAnalysis } from '../lib/ivAnalysis';
-import { formatConductanceS, formatConductivityUsCm, formatOhms } from '../lib/units';
+import { fmtFixed, formatConductanceS, formatConductivityUsCm, formatOhms } from '../lib/units';
 import styles from './ExperimentResultCard.module.css';
 
 interface Props {
@@ -16,7 +16,7 @@ export function ExperimentResultCard({ analysis, sampleId }: Props) {
   const g = analysis.conductanceS != null ? formatConductanceS(analysis.conductanceS).text : null;
   const r = analysis.resistanceOhm != null ? formatOhms(analysis.resistanceOhm) : null;
   const kappa = analysis.kappa25 != null ? formatConductivityUsCm(analysis.kappa25).text : null;
-  const r2 = analysis.linearOk && analysis.r2 != null ? analysis.r2.toFixed(3) : '--';
+  const r2 = analysis.linearOk ? fmtFixed(analysis.r2, 3) : '--';
   const t = analysis.meanTemperature != null ? `${analysis.meanTemperature.toFixed(2)} °C` : '--';
 
   return (

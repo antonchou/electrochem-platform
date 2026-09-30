@@ -5,6 +5,7 @@ import {
   formatConductivityUsCm,
   formatCurrentA,
   formatExcitationHz,
+  fmtFixed,
   formatOhms,
 } from './units.ts';
 
@@ -34,4 +35,13 @@ test('excitation frequency labels AC vs DC', () => {
 test('ohms picks kΩ / MΩ', () => {
   assert.equal(formatOhms(708.4), '708.4 Ω');
   assert.equal(formatOhms(15000), '15.00 kΩ');
+});
+
+test('fmtFixed shows -- for missing or non-finite values', () => {
+  assert.equal(fmtFixed(1413.456, 2), '1413.46');
+  assert.equal(fmtFixed(0, 1), '0.0');
+  assert.equal(fmtFixed(null, 2), '--');
+  assert.equal(fmtFixed(undefined, 2), '--');
+  assert.equal(fmtFixed(Number.NaN, 2), '--');
+  assert.equal(fmtFixed(Number.POSITIVE_INFINITY, 2), '--');
 });
