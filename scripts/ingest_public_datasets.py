@@ -49,7 +49,8 @@ def write_ingest(path: Path, rows: list[tuple[float, float, float, float]]) -> N
 
 def convert_braun(max_seconds: float = 600.0) -> Path:
     """Li-ion pouch/cell cycling: Time, Current, Voltage, Temperature."""
-    cached = CACHE / "braun_fresh_head.csv"
+    # 缓存只含前 int(max_seconds)+5 行，文件名带上秒数，换参数不会误读旧缓存
+    cached = CACHE / f"braun_fresh_head_{int(max_seconds)}s.csv"
     if cached.exists():
         text = cached.read_text(encoding="utf-8")
     else:
@@ -88,7 +89,8 @@ def convert_braun(max_seconds: float = 600.0) -> Path:
 
 def convert_rahmanian(experiment_id: str = "PYA_25082021_BM169_1") -> Path:
     """EIS conductivity (S/cm) vs T → assumed 1 V excitation + published Kcell."""
-    cached = CACHE / "rahmanian_bm169.json"
+    # 缓存只含该 experiment_id 的记录，文件名按 id 区分
+    cached = CACHE / f"rahmanian_{experiment_id}.json"
     records: list[dict]
     if cached.exists():
         records = json.loads(cached.read_text(encoding="utf-8"))

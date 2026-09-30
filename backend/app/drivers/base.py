@@ -65,10 +65,11 @@ class DriverConfig:
 
     def __post_init__(self) -> None:
         # 子类是 slots dataclass，无参 super() 不可用，须显式调用 DriverConfig.__post_init__(self)
-        if self.sample_rate_hz <= 0:
-            raise ValueError("sample_rate_hz must be positive")
-        if self.cell_constant_per_cm <= 0:
-            raise ValueError("cell_constant_per_cm must be positive")
+        # NaN/inf 也要拒绝：nan 采样率会让采集周期变成 nan，调度循环从不睡眠而空转
+        if not (math.isfinite(self.sample_rate_hz) and self.sample_rate_hz > 0):
+            raise ValueError("sample_rate_hz must be a positive finite number")
+        if not (math.isfinite(self.cell_constant_per_cm) and self.cell_constant_per_cm > 0):
+            raise ValueError("cell_constant_per_cm must be a positive finite number")
 
 
 class DeviceDriver(ABC):
