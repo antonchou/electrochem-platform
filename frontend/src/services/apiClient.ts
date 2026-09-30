@@ -8,6 +8,7 @@ import type {
   ExperimentSummary,
   FitAxis,
   FitResponse,
+  FramesMode,
   RawFrame,
 } from '../types/protocol';
 
@@ -68,9 +69,12 @@ export class ApiClient {
     return (await res.json()) as ExperimentDetail;
   }
 
-  /** 原始帧（limit 限制条数，用于静态曲线） */
-  async getFrames(id: number, limit = 3000): Promise<RawFrame[]> {
-    const res = await fetch(`${this.baseUrl}/api/experiments/${id}/frames?limit=${limit}`);
+  /**
+   * 原始帧。mode：head = 从头取 limit 条；tail = 最新 limit 条（续跑水合）；
+   * even = 全实验等间隔抽样至多 limit 条、保留首末帧（历史详情曲线/拟合）。
+   */
+  async getFrames(id: number, limit = 3000, mode: FramesMode = 'head'): Promise<RawFrame[]> {
+    const res = await fetch(`${this.baseUrl}/api/experiments/${id}/frames?limit=${limit}&mode=${mode}`);
     if (!res.ok) throw new Error(`帧数据获取失败：HTTP ${res.status}`);
     const body = (await res.json()) as { frames: RawFrame[] };
     return body.frames;
