@@ -37,7 +37,6 @@ FINAL_EXPERIMENT_STATUSES = frozenset({"stopped", "aborted", "error"})
 # - SCHEMA 保持为 version 1（V1 baseline）结构；新库直建即 version 1
 # ---------------------------------------------------------------------------
 SCHEMA_VERSION = 6
-DEFAULT_CALIBRATION_ID = "MOCK-KCELL-1.0"
 DEFAULT_DERIVED_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "derived"
 
 
@@ -194,6 +193,11 @@ MIGRATIONS: Dict[int, Any] = {
 
 def _db_path() -> str:
     return os.environ.get("EC_DB_PATH", str(DEFAULT_DB))
+
+
+def utc_now() -> str:
+    """当前 UTC 时间，ISO 8601 微秒精度（库内与导出统一口径）。"""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 SCHEMA = """
@@ -359,44 +363,6 @@ def _run_migration(conn: sqlite3.Connection, version: int) -> None:
 
 # ---------------- 实验生命周期 ----------------
 
-def create_experiment(
-    experiment_id: str,
-    title: str,
-    *,
-    operator: Optional[str] = None,
-    objective: Optional[str] = None,
-    sample_id: Optional[str] = None,
-    sensor_path_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    started_at_utc: Optional[str] = None,
-) -> int:
-    import datetime
-
-    started = started_at_utc or datetime.datetime.now(datetime.timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%S.%fZ"
-    )
-    with _conn() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO experiments
-                (experiment_id, title, operator, objective, started_at_utc, status,
-                 sample_id, sensor_path_id, metadata_json)
-            VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)
-            """,
-            (
-                experiment_id,
-                title,
-                operator,
-                objective,
-                started,
-                sample_id,
-                sensor_path_id,
-                json.dumps(metadata, ensure_ascii=False) if metadata else None,
-            ),
-        )
-        return int(cur.lastrowid)
-
-
 def create_experiment_with_sample(
     experiment_id: str,
     title: str,
@@ -410,12 +376,8 @@ def create_experiment_with_sample(
     started_at_utc: Optional[str] = None,
 ) -> int:
     """原子创建实验和首个样品；任一步失败都不留下半成品记录。"""
-    import datetime
-
-    started = started_at_utc or datetime.datetime.now(datetime.timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%S.%fZ"
-    )
-    measured = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    started = started_at_utc or utc_now()
+    measured = utc_now()
     with _conn() as conn:
         cur = conn.execute(
             """
@@ -463,12 +425,10 @@ def reopen_experiment(experiment_id: int) -> bool:
 
 
 def finish_experiment(experiment_id: int, status: str = "stopped") -> None:
-    import datetime
-
     if status not in FINAL_EXPERIMENT_STATUSES:
         allowed = ", ".join(sorted(FINAL_EXPERIMENT_STATUSES))
         raise ValueError(f"invalid terminal experiment status {status!r}; expected one of: {allowed}")
-    ended = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    ended = utc_now()
     with _conn() as conn:
         conn.execute(
             "UPDATE experiments SET status = ?, ended_at_utc = ? WHERE id = ?",
@@ -483,7 +443,7 @@ def abort_stale_running_experiments() -> int:
     running 行。一次性 schema 迁移只跑一遍，下次再失败仍会留下；所以每次
     persist.start() 都扫一遍。
     """
-    ended = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    ended = utc_now()
     with _conn() as conn:
         cur = conn.execute(
             """
@@ -495,53 +455,6 @@ def abort_stale_running_experiments() -> int:
             (ended,),
         )
         return int(cur.rowcount)
-
-
-# ---------------- 样品 ----------------
-
-def upsert_sample(
-    experiment_id: int,
-    sample_id: str,
-    sensor_path_id: str,
-    *,
-    concentration_mmol_l: Optional[float] = None,
-    composition: Optional[str] = None,
-    preparation_record_id: Optional[str] = None,
-    frame_count_delta: int = 0,
-    k25_median: Optional[float] = None,
-    k25_mean: Optional[float] = None,
-    k25_sd: Optional[float] = None,
-) -> None:
-    import datetime
-
-    with _conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO samples
-                (experiment_id, sample_id, sensor_path_id, concentration_mmol_l,
-                 composition, preparation_record_id, measured_at_utc,
-                 k25_median, k25_mean, k25_sd, frame_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(experiment_id, sample_id, sensor_path_id) DO UPDATE SET
-                frame_count = frame_count + excluded.frame_count,
-                k25_median  = COALESCE(excluded.k25_median, samples.k25_median),
-                k25_mean    = COALESCE(excluded.k25_mean, samples.k25_mean),
-                k25_sd      = COALESCE(excluded.k25_sd, samples.k25_sd)
-            """,
-            (
-                experiment_id,
-                sample_id,
-                sensor_path_id,
-                concentration_mmol_l,
-                composition,
-                preparation_record_id,
-                datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                k25_median,
-                k25_mean,
-                k25_sd,
-                frame_count_delta,
-            ),
-        )
 
 
 # ---------------- 判稳与 QC（REQ-D-003） ----------------
@@ -564,9 +477,7 @@ def update_sample_qc(
     续跑后第二次停止判 WARN/FAIL（代表值为 None）时会留着第一次 PASS 的代表值，
     界面出现“QC FAIL + 代表值 1413”的自相矛盾（09-30 修复轮）。
     """
-    import datetime
-
-    checked = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    checked = utc_now()
     with _conn() as conn:
         conn.execute(
             """
@@ -671,7 +582,7 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
     if not valid:
         return
     rows = [{col: f.get(col) for col in _FRAME_COLUMNS} for f in valid]
-    measured = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    measured = utc_now()
     with _conn() as conn:
         conn.executemany(_INSERT_FRAMES_SQL, rows)
         # 必须按完整样品链路聚合；同一样品编号可能同时走 WIDE/NARROW 等不同通道。
@@ -841,15 +752,47 @@ def _csv_safe(value: Any) -> Any:
     return value
 
 
-def export_csv(experiment_id: int) -> str:
-    """导出该实验全部原始帧为 CSV 文本（Excel 可直接打开）。
+# CSV 导出的列（按此顺序）。v5 起含协议溯源与激励/校准列。
+_CSV_COLUMNS = (
+    "seq_no",
+    "timestamp_utc",
+    "monotonic_ms",
+    "t_seconds",
+    "sensor_path_id",
+    "sample_id",
+    "ec_raw",
+    "temperature_raw",
+    "k25",
+    "quality_flags",
+    "status",
+    "voltage_raw_v",
+    "current_raw_a",
+    "conductance_s",
+    "kappa_t_us_cm",
+    "kappa_25_us_cm",
+    "schema_version",
+    "device_id",
+    "firmware_version",
+    "range_id",
+    "calibration_id",
+    "excitation_frequency_hz",
+    "excitation_amplitude_v",
+    "compensation_model",
+)
+# 表头带单位、与库列名不同的列。κ25 规范名 kappa_25_us_cm；k25_us_cm 为兼容别名（库内 k25 列）。
+_CSV_HEADER_ALIASES = {
+    "ec_raw": "ec_raw_us_cm",
+    "temperature_raw": "temperature_raw_c",
+    "k25": "k25_us_cm",
+}
 
-    κ25 规范列名为 kappa_25_us_cm；k25_us_cm 为兼容别名。v5 起含协议溯源与激励/校准列。
-    """
+
+def export_csv(experiment_id: int) -> str:
+    """导出该实验全部原始帧为 CSV 文本（Excel 可直接打开）。"""
     with _conn() as conn:
         rows = conn.execute(
             f"""
-            SELECT {_FRAME_READ_SQL}
+            SELECT {", ".join(_CSV_COLUMNS)}
             FROM raw_frames
             WHERE experiment_id = ?
             ORDER BY id ASC
@@ -859,64 +802,9 @@ def export_csv(experiment_id: int) -> str:
 
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
-    # 规范名 kappa_25_us_cm；k25_us_cm 为兼容别名（与库内 k25 列对应）。
-    writer.writerow(
-        [
-            "seq_no",
-            "timestamp_utc",
-            "monotonic_ms",
-            "t_seconds",
-            "sensor_path_id",
-            "sample_id",
-            "ec_raw_us_cm",
-            "temperature_raw_c",
-            "k25_us_cm",
-            "quality_flags",
-            "status",
-            "voltage_raw_v",
-            "current_raw_a",
-            "conductance_s",
-            "kappa_t_us_cm",
-            "kappa_25_us_cm",
-            "schema_version",
-            "device_id",
-            "firmware_version",
-            "range_id",
-            "calibration_id",
-            "excitation_frequency_hz",
-            "excitation_amplitude_v",
-            "compensation_model",
-        ]
-    )
+    writer.writerow([_CSV_HEADER_ALIASES.get(col, col) for col in _CSV_COLUMNS])
     for r in rows:
-        writer.writerow(
-            [
-                _csv_safe(r["seq_no"]),
-                _csv_safe(r["timestamp_utc"]),
-                _csv_safe(r["monotonic_ms"]),
-                _csv_safe(r["t_seconds"]),
-                _csv_safe(r["sensor_path_id"]),
-                _csv_safe(r["sample_id"]),
-                _csv_safe(r["ec_raw"]),
-                _csv_safe(r["temperature_raw"]),
-                _csv_safe(r["k25"]),
-                _csv_safe(r["quality_flags"]),
-                _csv_safe(r["status"]),
-                _csv_safe(r["voltage_raw_v"]),
-                _csv_safe(r["current_raw_a"]),
-                _csv_safe(r["conductance_s"]),
-                _csv_safe(r["kappa_t_us_cm"]),
-                _csv_safe(r["kappa_25_us_cm"]),
-                _csv_safe(r["schema_version"]),
-                _csv_safe(r["device_id"]),
-                _csv_safe(r["firmware_version"]),
-                _csv_safe(r["range_id"]),
-                _csv_safe(r["calibration_id"]),
-                _csv_safe(r["excitation_frequency_hz"]),
-                _csv_safe(r["excitation_amplitude_v"]),
-                _csv_safe(r["compensation_model"]),
-            ]
-        )
+        writer.writerow([_csv_safe(value) for value in r])
     return buf.getvalue()
 
 

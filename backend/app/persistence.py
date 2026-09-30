@@ -194,9 +194,6 @@ class PersistService:
 
     # ---------- 实验生命周期（少量写，直接等待） ----------
 
-    async def create_experiment(self, **kwargs: Any) -> int:
-        return await asyncio.to_thread(storage.create_experiment, **kwargs)
-
     async def create_experiment_with_sample(self, **kwargs: Any) -> int:
         return await asyncio.to_thread(storage.create_experiment_with_sample, **kwargs)
 
@@ -205,9 +202,6 @@ class PersistService:
 
     async def reopen_experiment(self, experiment_id: int) -> bool:
         return await asyncio.to_thread(storage.reopen_experiment, experiment_id)
-
-    async def upsert_sample(self, **kwargs: Any) -> None:
-        await asyncio.to_thread(storage.upsert_sample, **kwargs)
 
     async def update_sample_qc(self, **kwargs: Any) -> None:
         await asyncio.to_thread(storage.update_sample_qc, **kwargs)

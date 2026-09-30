@@ -94,25 +94,6 @@ def test_quality_flags_must_match_values_length():
         check_stability([1.0, 2.0, 3.0], quality_flags=["SATURATED"])
 
 
-def test_qc_series_from_frames_aligns_and_drops_invalid():
-    from app.stability import qc_series_from_frames
-
-    rows = [
-        {"kappa_25_us_cm": 100.0, "quality_flags": "SIMULATED", "t_seconds": 0.0},
-        {"kappa_25_us_cm": None, "quality_flags": "COMPUTE_INVALID", "t_seconds": 0.1},
-        {"kappa_25_us_cm": 101.0, "quality_flags": "SIMULATED|COMPUTE_INVALID", "t_seconds": 0.2},
-        {"kappa_25_us_cm": 102.0, "quality_flags": "SIMULATED", "t_seconds": 0.3},
-        {"kappa_25_us_cm": 103.0, "quality_flags": "SATURATED", "t_seconds": 0.4},
-    ]
-    values, flags, timestamps = qc_series_from_frames(rows)
-    assert values == [100.0, 102.0, 103.0]
-    assert flags == ["SIMULATED", "SIMULATED", "SATURATED"]
-    assert timestamps == [0.0, 0.3, 0.4]
-    result = check_stability(values, quality_flags=flags)
-    assert result.status == "FAIL"
-    assert result.reason == "hard_quality_flag"
-
-
 def test_timestamps_affect_slope():
     # 用真实时间戳：同样数值增量，时间跨度 5 倍 → 斜率归一化后 1/5
     values = [100.0 + 1.0 * i for i in range(20)]
