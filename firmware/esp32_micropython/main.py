@@ -4,13 +4,15 @@
 # 测量：MCP4728 通道 B 输出中点电压作虚拟地，通道 A 在「中点 ± 幅值」间翻转，电池两端得到
 #       双极性方波；ADS1256 在每个半周期的平台段交错采 U（电池两端）和 I（采样电阻压降 / R），
 #       取「正半周均值 − 负半周均值」的一半作幅值，ADC/DAC 的恒定零点偏置在相减中抵消。
-# 输出：USB 串口 115200，每帧一行 JSON，字段名对齐 docs/接入数据格式.md（Raw 层 + 溯源字段）；
-#       "# " 开头的行是日志，解析方跳过即可。
-# 边界：固件只产出 U/I/T 与 quality_flags，不算 G/κ/κ25——计算链唯一实现在后端 measurement.py；
-#       也不做通道校准，Raw 只按标称 VREF/PGA/R_SHUNT 换算。
+# 输出：USB 串口 115200，每帧一行 JSON（帧格式见 v2/docs/接口.md §5，字段名同原项目 docs/接入数据格式.md
+#       的 Raw 层 + 溯源字段）；"# " 开头的行是日志，v2 把它显示在设备状态里。
+# 接入：v2 用 EC_DEVICE=serial 直接读这个串口，质量标志随帧进入判稳；原项目经 capture_serial.py 存 CSV 回放。
+# 边界：固件只产出 U/I/T 与 quality_flags，不算 G/κ/κ25——计算链在主机（v2 ec/chemistry.py，原项目 measurement.py）；
+#       也不做通道校准，Raw 只按标称 VREF/PGA/R_SHUNT 换算，电池常数 Kcell 由平台用标准液标定。
 #
 # Thonny（树莓派）：解释器选 MicroPython (ESP32)、端口 /dev/ttyUSB0 → 打开本文件 → 按实物改「配置」→
 #   文件 → 另存为 → MicroPython 设备 → main.py → 点 Stop/Restart（或 Ctrl-D 软重启）即开始输出。
+#   用 v2 前关掉 Thonny（或 运行 → 断开）：v2 打开串口时会发 Ctrl-C/Ctrl-B/Ctrl-D 让本程序重新运行。
 # REPL 台架工具（先点 Stop 停止采集）：
 #   import main
 #   main.probe()        探测三个器件，不加激励
@@ -61,7 +63,7 @@ SETTLE_FRACTION = 0.6         # 每个半周期前 60% 等待稳定，之后才�
 N_PAIRS = 2                   # 每个半周期采 U/I 的对数，按 U I I U … 交错（取偶数时 U、I 时间重心重合）
 WARMUP_CYCLES = 1             # 从静息启动的首周期不对称，丢弃
 CYCLES_PER_FRAME = 4
-FRAME_PERIOD_MS = 1000        # 帧周期 → 1 Hz 输出；回放时 EC_CSV_SAMPLE_RATE_HZ 要与之一致
+FRAME_PERIOD_MS = 1000        # 帧周期 → 1 Hz 输出（v2 判稳窗口 30 s ≈ 30 帧）；原项目 CSV 回放时 EC_CSV_SAMPLE_RATE_HZ 要与之一致
 
 # DS18B20
 TEMP_PIN = 4                  # DQ，4.7 kΩ 上拉到 3V3
@@ -555,7 +557,7 @@ class Bench:
                 if (u < 0 or i < 0) and not self._warned_sign:
                     self._warned_sign = True
                     _log("WARN", "U 或 I 为负：检查电池/采样电阻接线方向，或对调 U_CH / I_CH 的正负端"
-                         "（后端对 U≤0 的帧标 COMPUTE_INVALID）")
+                         "（主机判为接线反：v2 标 POLARITY，原项目标 COMPUTE_INVALID）")
             if unstable:
                 flags.append("WAVEFORM_UNSTABLE")
             if DIAG:

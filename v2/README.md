@@ -29,7 +29,7 @@ cd ../backend
 
 ## 接真实设备
 
-- **串口（ESP32 台架固件）**：`EC_DEVICE=serial EC_SERIAL_PORT=/dev/ttyUSB0 python -m ec`。需要 `pyserial`（`requirements.txt` 已含；树莓派也可 `sudo apt install python3-serial`）。先在 Thonny 里断开设备，否则串口被占用。设备日志（器件自检结果等）会显示在页面顶栏设备状态的提示里。
+- **串口（ESP32 台架固件）**：`EC_DEVICE=serial EC_SERIAL_PORT=/dev/ttyUSB0 python -m ec`。需要 `pyserial`（`requirements.txt` 已含；树莓派也可 `sudo apt install python3-serial`）。先用 Thonny 把固件存到设备上（`firmware/esp32_micropython/README.md` 第 3 节），再断开 Thonny，否则串口被占用。打开串口时 v2 会让板子软重启、重新运行 `main.py`，所以不用手按 EN；设备日志（器件自检结果等）会显示在页面顶栏设备状态的提示里。
 - **回放采集文件**：`EC_DEVICE=replay EC_REPLAY_PATH=../samples/simulated_kcl_10mM.jsonl python -m ec`。`capture_serial.py` 生成的 `.jsonl` 都能直接回放（按设备时钟的节奏，`EC_REPLAY_SPEED` 可加速）。
 
 ## 开发

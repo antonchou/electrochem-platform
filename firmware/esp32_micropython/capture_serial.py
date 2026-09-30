@@ -13,6 +13,8 @@
   python3 capture_serial.py --input thonny_shell.txt --out ~/runs/x # 转换已保存的输出文本
 
 采集前先在 Thonny 里断开设备（Run → Disconnect 或关掉 Thonny），否则串口被占用。
+打开串口后脚本会让板子软重启一次（Ctrl-C、Ctrl-B、Ctrl-D），main.py 从器件自检重新开始跑——
+Thonny 连接时会中断 main.py，断开后板子停在 REPL，不这样做就收不到帧。v2 的串口设备做法相同。
 退出码：0 = 至少 1 行完整 U/I/T；1 = 没有完整帧；2 = 串口/参数错误或输出文件已存在（不覆盖原始数据）。
 结束时 stdout 打印一行 JSON 汇总。
 """
@@ -30,6 +32,9 @@ from pathlib import Path
 
 CSV_FIELDS = ("time_s", "voltage_v", "current", "temperature_c", "seq_no", "monotonic_ms", "quality_flags")
 MAX_LINE_BYTES = 4096  # 固件一帧约 300 字节；攒到这么长还没换行，就当杂讯整段记进 .log
+# Ctrl-C 停掉在跑的程序（固件先让电池回 0 V）、Ctrl-B 退出 raw REPL、Ctrl-D 软重启并运行 main.py。
+# MicroPython 只在普通 REPL 下软重启才运行 main.py，所以 Ctrl-B 不能省。
+RESTART_FIRMWARE = b"\x03\x02\x04"
 
 
 class LineJoiner:
@@ -146,8 +151,10 @@ def _open_serial(port: str, baud: int):
         print("缺少 pyserial：sudo apt install python3-serial", file=sys.stderr)
         return None
     try:
-        # 打开串口时 ESP32 可能被自动复位一次：无害，Converter 会识别设备重启并接续时间轴
-        return serial.Serial(port, baud, timeout=1.0)
+        ser = serial.Serial(port, baud, timeout=1.0)
+        # 让固件软重启：Thonny 断开后板子停在 REPL。重启前的残帧与之后的新帧由 Converter 按设备重启接续时间轴
+        ser.write(RESTART_FIRMWARE)
+        return ser
     except (serial.SerialException, OSError) as e:
         print(f"打不开串口 {port}：{e}（Thonny 是否还连着设备？）", file=sys.stderr)
         return None
