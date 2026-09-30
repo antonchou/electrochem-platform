@@ -174,8 +174,7 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
             await persist.finish_experiment(exp_id, "error")
             return ControlResponse(ok=False, status=state.status, message="实验已在进行中")
 
-        acquisition.reset_notices()
-        acquisition.clear_resume_boundary()
+        acquisition.reset_session()
         # 带上样品号：旁观端（其它浏览器）据此更新溶液名，不再显示自己输入框里的旧值
         await hub.publish({"status": "running", "experiment_id": exp_id, "sample_id": sample_id})
         if persist.degraded:
@@ -260,8 +259,7 @@ async def reset() -> ControlResponse:
                 # 运行中被打断 → aborted（与 SRS 状态机语义一致），而非 idle
                 await _finish_experiment_best_effort(exp_id, "aborted")
         await state.reset()
-        acquisition.reset_notices()
-        acquisition.clear_resume_boundary()
+        acquisition.reset_session()
         payload: dict = {"status": "idle"}
         message = None
         if not persist_ok:

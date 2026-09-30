@@ -150,7 +150,8 @@ def test_persist_failure_is_visible_and_stop_still_finishes(tmp_path, monkeypatc
         assert storage.get_experiment(exp_id)["status"] == "stopped"
         assert persist.degraded is True
 
-    acquisition.reset_notices()
+    # lifespan 关停时 acquisition.stop() 复位会话状态，不把本轮的告警闩锁带进下一个 lifespan
+    assert acquisition._persist_notice_sent is False
 
 
 def test_persist_degraded_visible_to_late_ws_client(tmp_path, monkeypatch):

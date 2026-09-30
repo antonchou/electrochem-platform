@@ -510,7 +510,7 @@ def update_sample_qc(
 
 # raw_frames 全列（v2 I–V 计算链 + v5 协议/校准/激励元数据）。
 # insert_frames 用命名参数；旧帧缺字段时自动补 None，避免 sqlite3 报错。
-_FRAME_COLUMNS = [
+FRAME_COLUMNS = [
     "experiment_id",
     "sample_id",
     "sensor_path_id",
@@ -539,12 +539,12 @@ _FRAME_COLUMNS = [
 ]
 _INSERT_FRAMES_SQL = (
     "INSERT INTO raw_frames ("
-    + ", ".join(_FRAME_COLUMNS)
+    + ", ".join(FRAME_COLUMNS)
     + ") VALUES ("
-    + ", ".join(f":{col}" for col in _FRAME_COLUMNS)
+    + ", ".join(f":{col}" for col in FRAME_COLUMNS)
     + ")"
 )
-_FRAME_READ_SQL = "id, " + ", ".join(_FRAME_COLUMNS)
+_FRAME_READ_SQL = "id, " + ", ".join(FRAME_COLUMNS)
 
 
 def insert_frames(frames: List[Dict[str, Any]]) -> None:
@@ -581,7 +581,7 @@ def insert_frames(frames: List[Dict[str, Any]]) -> None:
         )
     if not valid:
         return
-    rows = [{col: f.get(col) for col in _FRAME_COLUMNS} for f in valid]
+    rows = [{col: f.get(col) for col in FRAME_COLUMNS} for f in valid]
     measured = utc_now()
     with _conn() as conn:
         conn.executemany(_INSERT_FRAMES_SQL, rows)

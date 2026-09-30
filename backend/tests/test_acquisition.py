@@ -271,3 +271,23 @@ def test_acquisition_errors_back_off_log_once_notify_and_recover(monkeypatch, ca
     # 恢复：记一条恢复日志并继续出帧
     assert any("采集恢复" in r.getMessage() for r in caplog.records)
     assert any("ec" in p for p in published)
+
+
+def test_stop_survives_driver_close_error_and_resets_session(monkeypatch, caplog):
+    """关停时驱动 close() 抛错只记日志：stop() 照常完成并复位会话状态，lifespan 后续收尾不被跳过。"""
+
+    class BrokenClose:
+        async def close(self) -> None:
+            raise OSError("串口已拔出（测试注入）")
+
+    monkeypatch.setattr(acquisition, "driver", BrokenClose())
+    acquisition._persist_notice_sent = True
+    acquisition._resume_boundary_raws = (1.0, 1e-3, 25.0)
+    acquisition._quiet_incomplete_flags.add(("CSV", "EOF"))
+    with caplog.at_level(logging.ERROR, logger="app.acquisition"):
+        asyncio.run(acquisition.stop())
+    assert acquisition.driver is None
+    assert acquisition._persist_notice_sent is False
+    assert acquisition._resume_boundary_raws is None
+    assert not acquisition._quiet_incomplete_flags
+    assert any("驱动关闭失败" in r.getMessage() for r in caplog.records)
