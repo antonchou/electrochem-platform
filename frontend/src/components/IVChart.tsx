@@ -5,7 +5,9 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers';
 import type { DataPoint } from '../types/protocol';
 import { config } from '../config/config';
-import { formatCurrentA, strideSample } from '../lib/units';
+import { useEChart } from '../hooks/useEChart';
+import { downsample } from '../lib/downsample';
+import { formatCurrentA } from '../lib/units';
 import { formatIVEquation, ivReasonMessage, type IVAnalysis } from '../lib/ivAnalysis';
 import styles from './IVChart.module.css';
 
@@ -26,7 +28,18 @@ function scatterPairs(points: DataPoint[], scale: number): [number, number][] {
     if (!Number.isFinite(p.voltage_raw_v) || !Number.isFinite(p.current_raw_a)) continue;
     pairs.push([p.voltage_raw_v, p.current_raw_a * scale]);
   }
-  return strideSample(pairs, DISPLAY_POINTS);
+  return downsample(pairs, DISPLAY_POINTS);
+}
+
+/** 把实验点与（仅线性成立时的）拟合直线按当前电流单位画上去。 */
+function draw(chart: echarts.ECharts, points: DataPoint[], fit: IVAnalysis, iUnit: 'μA' | 'mA') {
+  const scale = iUnit === 'mA' ? 1e3 : 1e6;
+  const line =
+    fit.linearOk && fit.fitLine ? fit.fitLine.map(([v, i]) => [v, i * scale] as [number, number]) : [];
+  chart.setOption({
+    yAxis: { name: `电流 I (${iUnit})` },
+    series: [{ data: scatterPairs(points, scale) }, { data: line }],
+  });
 }
 
 /**
@@ -35,7 +48,7 @@ function scatterPairs(points: DataPoint[], scale: number): [number, number][] {
  */
 export function IVChart({ pointsRef, analysis, status }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
+  const chartRef = useEChart(containerRef);
   const analysisRef = useRef(analysis);
   analysisRef.current = analysis;
 
@@ -45,11 +58,7 @@ export function IVChart({ pointsRef, analysis, status }: Props) {
   }, [analysis.iMin, analysis.iMax]);
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const chart = echarts.init(el);
-    chartRef.current = chart;
-    chart.setOption({
+    chartRef.current?.setOption({
       animation: false,
       color: ['#2f6fed', '#dc2626'],
       tooltip: { trigger: 'item' },
@@ -87,17 +96,7 @@ export function IVChart({ pointsRef, analysis, status }: Props) {
         },
       ],
     });
-    const onResize = () => chart.resize();
-    window.addEventListener('resize', onResize);
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
-    observer?.observe(el);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      observer?.disconnect();
-      chart.dispose();
-      chartRef.current = null;
-    };
-  }, []);
+  }, [chartRef]);
 
   // 运行中：固定节流间隔重绘（analysis 经 ref 读取，避免每帧变化的重算依赖
   // 把 effect 打成 10Hz 同步重绘、节流失效）；非运行中：analysis 变化时补画一次
@@ -105,39 +104,17 @@ export function IVChart({ pointsRef, analysis, status }: Props) {
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || status !== 'running') return;
-    const scale = iUnit === 'mA' ? 1e3 : 1e6;
-    const apply = () => {
-      const fit = analysisRef.current;
-      const scatter = scatterPairs(pointsRef.current, scale);
-      const line =
-        fit.linearOk && fit.fitLine
-          ? fit.fitLine.map(([v, i]) => [v, i * scale] as [number, number])
-          : [];
-      chart.setOption({
-        yAxis: { name: `电流 I (${iUnit})` },
-        series: [{ data: scatter }, { data: line }],
-      });
-    };
+    const apply = () => draw(chart, pointsRef.current, analysisRef.current, iUnit);
     apply();
     const id = window.setInterval(apply, config.chart.updateIntervalMs);
     return () => window.clearInterval(id);
-  }, [pointsRef, status, iUnit]);
+  }, [chartRef, pointsRef, status, iUnit]);
 
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || status === 'running') return;
-    const scale = iUnit === 'mA' ? 1e3 : 1e6;
-    const fit = analysisRef.current;
-    const scatter = scatterPairs(pointsRef.current, scale);
-    const line =
-      fit.linearOk && fit.fitLine
-        ? fit.fitLine.map(([v, i]) => [v, i * scale] as [number, number])
-        : [];
-    chart.setOption({
-      yAxis: { name: `电流 I (${iUnit})` },
-      series: [{ data: scatter }, { data: line }],
-    });
-  }, [pointsRef, status, iUnit, analysis]);
+    draw(chart, pointsRef.current, analysisRef.current, iUnit);
+  }, [chartRef, pointsRef, status, iUnit, analysis]);
 
   const equation =
     analysis.linearOk && analysis.slopeS != null && analysis.interceptA != null

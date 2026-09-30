@@ -278,7 +278,7 @@ export function FitPanel({
 
       {fitResults && fitResults.length > 0 && (
         <div className={styles.fitResults} data-testid={`${testIdPrefix}-results`}>
-          <table className={styles.table}>
+          <table className="data-table">
             <thead>
               <tr>
                 <th>公式</th>

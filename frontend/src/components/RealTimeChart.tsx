@@ -5,34 +5,17 @@ import { GridComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { DataPoint } from '../types/protocol';
 import { config } from '../config/config';
+import { useEChart } from '../hooks/useEChart';
+import { mergeAxisBounds, paddedBounds, type AxisBounds } from '../lib/axis';
 import styles from './RealTimeChart.module.css';
 
 // 按需注册，避免全量打包（对树莓派端加载与渲染更友好）
 echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer]);
 
-interface AxisBounds {
-  min: number;
-  max: number;
-}
-
-/** 为电导率选择易读的刻度步长，避免首批少量数据导致坐标范围过窄或过宽。 */
-function niceStep(span: number): number {
-  const roughStep = Math.max(span / 6, Number.EPSILON);
-  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
-  const normalized = roughStep / magnitude;
-  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-  return multiplier * magnitude;
-}
-
+/** 电导率轴：初始窗口至少 10 μS/cm 或约为读数的 1%，有真实波动时额外留 20%；下界不低于 0。 */
 function paddedYAxisBounds(dataMin: number, dataMax: number): AxisBounds {
-  const center = (dataMin + dataMax) / 2;
-  // 初始窗口至少 10 μS/cm，或约为读数的 1%；有真实波动时额外留 20% 空间。
-  const span = Math.max((dataMax - dataMin) * 1.2, Math.abs(center) * 0.01, 10);
-  const step = niceStep(span);
-  return {
-    min: Math.max(0, Math.floor((center - span / 2) / step) * step),
-    max: Math.ceil((center + span / 2) / step) * step,
-  };
+  const bounds = paddedBounds(dataMin, dataMax, 10, 0.01);
+  return { min: Math.max(0, bounds.min), max: bounds.max };
 }
 
 /** 全量重建的滞回余量：序列超过 上限×1.2 才触发，见定时器内注释。 */
@@ -51,14 +34,12 @@ interface Props {
  */
 export function RealTimeChart({ pointsRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
+  const chartRef = useEChart(containerRef);
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
-
-    const chart = echarts.init(el);
-    chartRef.current = chart;
+    const chart = chartRef.current;
+    if (!el || !chart) return;
 
     chart.setOption({
       animation: false,
@@ -118,11 +99,8 @@ export function RealTimeChart({ pointsRef }: Props) {
         maxEcSeen = Math.max(maxEcSeen, point.ec);
       }
       if (Number.isFinite(minEcSeen) && Number.isFinite(maxEcSeen)) {
-        const candidate = paddedYAxisBounds(minEcSeen, maxEcSeen);
         // 同一轮实验内坐标只扩展、不收缩，消除实时读数造成的刻度抖动。
-        yBounds = yBounds
-          ? { min: Math.min(yBounds.min, candidate.min), max: Math.max(yBounds.max, candidate.max) }
-          : candidate;
+        yBounds = mergeAxisBounds(yBounds, paddedYAxisBounds(minEcSeen, maxEcSeen));
       }
     };
 
@@ -199,23 +177,8 @@ export function RealTimeChart({ pointsRef }: Props) {
         publishAxisDiagnostics();
       }
     }, config.chart.updateIntervalMs);
-
-    const onResize = () => chart.resize();
-    window.addEventListener('resize', onResize);
-    // 与 StaticChart 一致：容器尺寸变化（布局挤出等）不一定触发 window resize，
-    // 用 ResizeObserver 兜底，避免 canvas 被 CSS 拉伸变模糊。
-    const observer =
-      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
-    observer?.observe(el);
-
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener('resize', onResize);
-      observer?.disconnect();
-      chart.dispose();
-      chartRef.current = null;
-    };
-  }, [pointsRef]);
+    return () => window.clearInterval(timer);
+  }, [chartRef, pointsRef]);
 
   return <div ref={containerRef} className={styles.chart} data-testid="ec-t-chart" />;
 }

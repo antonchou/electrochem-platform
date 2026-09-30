@@ -3,6 +3,7 @@ import * as echarts from 'echarts/core';
 import { BarChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
+import { useEChart } from '../hooks/useEChart';
 import type { IVAnalysis } from '../lib/ivAnalysis';
 import { formatConductanceS, formatConductivityUsCm, formatOhms } from '../lib/units';
 import styles from './SolutionCompare.module.css';
@@ -76,7 +77,7 @@ export function SolutionCompare({
 }: Props) {
   const [sessionRows, setSessionRows] = useState<SolutionRow[]>([]);
   const chartEl = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
+  const chartRef = useEChart(chartEl);
 
   useEffect(() => {
     if (status !== 'stopped') return;
@@ -138,23 +139,6 @@ export function SolutionCompare({
       }),
     [rows, yUnit],
   );
-
-  useEffect(() => {
-    const el = chartEl.current;
-    if (!el) return;
-    const chart = echarts.init(el);
-    chartRef.current = chart;
-    const onResize = () => chart.resize();
-    window.addEventListener('resize', onResize);
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
-    observer?.observe(el);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      observer?.disconnect();
-      chart.dispose();
-      chartRef.current = null;
-    };
-  }, []);
 
   useEffect(() => {
     const chart = chartRef.current;

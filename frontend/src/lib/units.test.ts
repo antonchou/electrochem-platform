@@ -6,7 +6,6 @@ import {
   formatCurrentA,
   formatExcitationHz,
   formatOhms,
-  strideSample,
 } from './units.ts';
 
 test('conductivity uses μS/cm below 1000 and mS/cm at or above', () => {
@@ -35,10 +34,4 @@ test('excitation frequency labels AC vs DC', () => {
 test('ohms picks kΩ / MΩ', () => {
   assert.equal(formatOhms(708.4), '708.4 Ω');
   assert.equal(formatOhms(15000), '15.00 kΩ');
-});
-
-test('strideSample keeps endpoints density without inventing points', () => {
-  const src = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-  assert.deepEqual(strideSample(src, 5), [0, 2, 4, 6, 8]);
-  assert.equal(strideSample(src, 20), src);
 });

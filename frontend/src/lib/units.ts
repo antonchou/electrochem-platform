@@ -54,13 +54,3 @@ export function formatOhms(ohm: number): string {
   if (Math.abs(ohm) >= 1e3) return `${(ohm / 1e3).toFixed(2)} kΩ`;
   return `${ohm.toFixed(1)} Ω`;
 }
-
-export function strideSample<T>(items: T[], max: number): T[] {
-  if (max <= 0 || items.length <= max) return items;
-  const step = items.length / max;
-  const out: T[] = [];
-  for (let i = 0; i < max; i += 1) {
-    out.push(items[Math.floor(i * step)]);
-  }
-  return out;
-}

@@ -3,6 +3,7 @@ import * as echarts from 'echarts/core';
 import { LineChart, ScatterChart } from 'echarts/charts';
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
+import { useEChart } from '../hooks/useEChart';
 import styles from './StaticChart.module.css';
 
 echarts.use([LineChart, ScatterChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
@@ -34,27 +35,7 @@ export function StaticChart({
   dataStyle = 'line',
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const chart = echarts.init(el);
-    chartRef.current = chart;
-    const onResize = () => chart.resize();
-    window.addEventListener('resize', onResize);
-    // 容器尺寸变化不一定伴随 window resize（弹窗滚动条、提示条挤出布局等），
-    // 仅监听 window 会让 canvas 被 CSS 拉伸而模糊，故用 ResizeObserver 兜底。
-    const observer =
-      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
-    observer?.observe(el);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      observer?.disconnect();
-      chart.dispose();
-      chartRef.current = null;
-    };
-  }, []);
+  const chartRef = useEChart(ref);
 
   useEffect(() => {
     chartRef.current?.setOption({
