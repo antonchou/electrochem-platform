@@ -128,9 +128,10 @@ def concentration_analysis(store: Store, measurement_ids: Sequence[int]) -> dict
     ids = _unique(measurement_ids)
     if len(ids) < 2:
         raise Invalid("浓度拟合至少需要 2 次测量")
-    points = []
+    points, measurements = [], []
     for measurement_id in ids:
         measurement, value = _completed_with_value(store, measurement_id)
+        measurements.append(measurement)
         if measurement["concentration_mmol_l"] is None:
             raise Invalid(f"测量 #{measurement_id}（{measurement['sample_name']}）没有填浓度")
         points.append({
@@ -140,7 +141,21 @@ def concentration_analysis(store: Store, measurement_ids: Sequence[int]) -> dict
             "kappa25_us_cm": value,
         })
     fit = concentration_fit([(p["concentration_mmol_l"], p["kappa25_us_cm"]) for p in points])
-    return {"points": points, **fit}
+    return {"points": points, "warnings": mixed_calibration_warnings(measurements), **fit}
+
+
+def mixed_calibration_warnings(measurements: Sequence[dict[str, Any]]) -> list[str]:
+    """所选测量用了不同的电池常数时，κ25 之间有系统偏差，要提醒。"""
+    used: dict[tuple[int | None, float], list[int]] = {}
+    for m in measurements:
+        used.setdefault((m["calibration_id"], m["cell_constant_per_cm"]), []).append(m["id"])
+    if len(used) <= 1:
+        return []
+    groups = "；".join(
+        f"{'标定 #' + str(cal) if cal else '未标定'}（Kcell {kcell:.4f}）：" + "、".join(f"#{i}" for i in ids)
+        for (cal, kcell), ids in used.items()
+    )
+    return [f"所选测量用了不同的电池常数，κ25 之间有系统偏差：{groups}。建议在同一次标定下测量。"]
 
 
 def temperature_analysis(store: Store, measurement_id: int) -> dict[str, Any]:
