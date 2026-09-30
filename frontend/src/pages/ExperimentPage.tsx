@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
+import { config } from '../config/config';
 import { getBridge } from '../services';
 import { useConnection } from '../hooks/useConnection';
 import { useExperiment } from '../hooks/useExperiment';
@@ -92,7 +93,9 @@ export function ExperimentPage() {
     if (!res || !('ok' in res) || !res.ok) return;
     if (res.resumed && res.experiment_id != null && bridge.api) {
       try {
-        const frames = await bridge.api.getFrames(res.experiment_id, 100_000);
+        // 缓冲只留最后 2 万点：只取尾部（R3-6）。旧实现拉前 10 万帧——长实验取到的是开头，
+        // 传输几十 MB 后又被裁掉大半，超 10 万帧时曲线中间还会断档。
+        const frames = await bridge.api.getFrames(res.experiment_id, config.chart.maxPoints, 'tail');
         hydrateFromFrames(frames, res.experiment_id);
       } catch {
         /* 续跑时灌入历史帧失败则继续用内存缓冲 */

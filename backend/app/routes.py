@@ -2,12 +2,13 @@
 
 import asyncio
 import datetime
+import json
 import logging
 import math
 import os
 import time
 import uuid
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 
@@ -55,6 +56,10 @@ _resume_boundary_raws: Optional[tuple] = None
 PERSIST_DEGRADED_MESSAGE = (
     "落库失败：实时曲线仍在更新，但历史和导出将缺帧。请重启后端恢复落库。"
 )
+ACQUISITION_ERROR_MESSAGE = "采集异常：设备读数失败，正在自动重试（详见后端日志）。"
+# 采集连续失败时的退避上限与完整堆栈的最小间隔（09-30 审查 R3-11）
+_ACQ_BACKOFF_MAX_S = 5.0
+_ACQ_ERROR_LOG_INTERVAL_S = 30.0
 
 
 async def broadcast(payload: dict) -> int:
@@ -185,53 +190,105 @@ async def _acquisition_loop() -> None:
 
     无论有没有浏览器连接都会持续生成并落库（解决"无连接时漏采"）；
     多连接也只产生一套数据并写入同一实验（解决"多连接重复采集"）。
+
+    节拍按截止时刻调度（R3-10）：旧实现“处理完再固定 sleep 一个周期”，处理耗时累加进
+    周期，实际采样率系统性偏低；Windows 上周期短于时钟分辨率（15.6ms）时 sleep 会被
+    当作已到期立即返回，循环空转狂出帧。截止时刻逐周期推进，平均速率被钉死在配置值。
+
+    读数持续抛错（如真实 ADC 掉线，R3-11）：指数退避到 5s，完整堆栈只在首次和之后每
+    30s 各记一条，并向前端广播一次告警；恢复后记一条恢复日志。任何异常都不终止本任务。
     """
     driver = _driver
     if driver is None:
         raise RuntimeError("acquisition driver is not configured")
 
+    loop = asyncio.get_running_loop()
+    deadline = loop.time()
+    failures = 0
+    last_error_log = float("-inf")
     while True:
         try:
             if state.status == "running":
-                experiment_db_id = state.experiment_db_id
-                elapsed = state.elapsed()
-                reading = await driver.read(elapsed)
-                # 真实硬件读取可能让出事件循环较长时间。读取期间若 stop/reset/新一轮 start，
-                # 当前读数属于旧会话，必须丢弃，不能以 running 状态写入或推送。
-                if (
-                    state.status != "running"
-                    or state.experiment_db_id != experiment_db_id
-                ):
-                    continue
-                if not reading.complete_for_conductivity and not reading.complete_for_iv:
-                    _log_incomplete_reading(reading.quality_flags)
-                    await asyncio.sleep(_sample_period_seconds)
-                    continue
-                frame = _build_frame(elapsed, reading)
-                if experiment_db_id is not None:
-                    # 数据帧自带所属实验：前端缓冲据此隔离实验，不依赖是否收到过状态帧
-                    # （后端重启、旁观端、断线重连都可能错过 running 广播，09-30 审查 #3）
-                    frame["experiment_id"] = experiment_db_id
-                if _consume_resume_duplicate(frame):
-                    # 续跑首帧重采样了停止前的边界读数 → 丢弃（不占 seq、不落库、不广播）
-                    await asyncio.sleep(_sample_period_seconds)
-                    continue
-                # 先入队再推送。入队失败（持久化已降级）仍广播，并打 PERSIST_DROPPED。
-                accepted = _enqueue_frame(frame)
-                if not accepted:
-                    flags = frame.get("quality_flags") or ""
-                    frame["quality_flags"] = (
-                        f"{flags}|PERSIST_DROPPED" if flags else "PERSIST_DROPPED"
-                    )
-                    await _notify_persist_degraded()
-                await broadcast(frame)
-            await asyncio.sleep(_sample_period_seconds)
+                await _acquire_once(driver)
+                if failures:
+                    logger.info("采集恢复：此前连续失败 %d 次", failures)
+            # 实验停下来也结束本段失败：下次开始若仍失败，会重新告警
+            failures = 0
+            deadline = await _sleep_until(loop, deadline + _sample_period_seconds)
         except asyncio.CancelledError:
             break
         except Exception:
-            # 单个循环出错不终止采集任务（如单次广播失败），但必须留下日志避免静默丢数据
-            logger.exception("采集循环异常")
-            await asyncio.sleep(0.1)
+            failures += 1
+            try:
+                now = loop.time()
+                if failures == 1 or now - last_error_log >= _ACQ_ERROR_LOG_INTERVAL_S:
+                    logger.exception("采集循环异常（连续第 %d 次）", failures)
+                    last_error_log = now
+                if failures == 1:
+                    await _notify_acquisition_error()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.debug("采集异常处理本身出错", exc_info=True)
+            # 指数退避（指数封顶，防止长时间故障后 2**n 溢出为 float）
+            backoff = _sample_period_seconds * 2 ** min(failures - 1, 16)
+            try:
+                await asyncio.sleep(min(backoff, _ACQ_BACKOFF_MAX_S))
+            except asyncio.CancelledError:
+                break
+            deadline = loop.time()
+
+
+async def _sleep_until(loop: asyncio.AbstractEventLoop, deadline: float) -> float:
+    """睡到截止时刻，返回实际采用的截止时刻。
+
+    落后超过一个周期（读数阻塞、事件循环卡顿）则从当前时刻重新对齐，不补发积压的周期。
+    """
+    now = loop.time()
+    if deadline < now - _sample_period_seconds:
+        deadline = now
+    await asyncio.sleep(max(0.0, deadline - now))
+    return deadline
+
+
+async def _acquire_once(driver: DeviceDriver) -> None:
+    """读一次设备并处理：计算链 → 续跑去重 → 落库 → 广播。"""
+    experiment_db_id = state.experiment_db_id
+    elapsed = state.elapsed()
+    reading = await driver.read(elapsed)
+    # 真实硬件读取可能让出事件循环较长时间。读取期间若 stop/reset/新一轮 start，
+    # 当前读数属于旧会话，必须丢弃，不能以 running 状态写入或推送。
+    if state.status != "running" or state.experiment_db_id != experiment_db_id:
+        return
+    if not reading.complete_for_conductivity and not reading.complete_for_iv:
+        _log_incomplete_reading(reading.quality_flags)
+        return
+    frame = _build_frame(elapsed, reading)
+    if experiment_db_id is not None:
+        # 数据帧自带所属实验：前端缓冲据此隔离实验，不依赖是否收到过状态帧
+        # （后端重启、旁观端、断线重连都可能错过 running 广播，09-30 审查 #3）
+        frame["experiment_id"] = experiment_db_id
+    if _consume_resume_duplicate(frame):
+        # 续跑首帧重采样了停止前的边界读数 → 丢弃（不占 seq、不落库、不广播）
+        return
+    # 先入队再推送。入队失败（持久化已降级）仍广播，并打 PERSIST_DROPPED。
+    accepted = _enqueue_frame(frame)
+    if not accepted:
+        flags = frame.get("quality_flags") or ""
+        frame["quality_flags"] = f"{flags}|PERSIST_DROPPED" if flags else "PERSIST_DROPPED"
+        await _notify_persist_degraded()
+    await broadcast(frame)
+
+
+async def _notify_acquisition_error() -> None:
+    """采集连续失败的第一次向前端广播告警（每段失败只推一次，恢复后再失败会再推）。
+
+    旧实现前端只能等 3s 看门狗报“数据流超时”，看不出是设备读数在失败。
+    """
+    payload: dict = {"status": state.status, "message": ACQUISITION_ERROR_MESSAGE}
+    if state.experiment_db_id is not None:
+        payload["experiment_id"] = state.experiment_db_id
+    await broadcast(payload)
 
 
 def _build_frame(elapsed: float, reading) -> dict:
@@ -394,9 +451,14 @@ async def _load_resume_boundary(exp_id: int) -> None:
     CSV 类确定性源按 elapsed 回放，续跑首帧会重新采样停止前的边界源行
     （elapsed 从停点续上），不去重就会以新 seq_no 重复落一条相同样本。
     Mock 类噪声源每次读数不同，不会命中比对。
+    去重是尽力而为：读库失败只记告警、不去重，不能让续跑整体失败。
     """
     global _resume_boundary_raws
-    rows = await asyncio.to_thread(storage.get_recent_frames, exp_id, limit=1)
+    try:
+        rows = await asyncio.to_thread(storage.get_recent_frames, exp_id, limit=1)
+    except Exception:
+        logger.warning("续跑去重基准装载失败，本次不去重", exc_info=True)
+        rows = []
     if rows:
         r = rows[0]
         _resume_boundary_raws = (
@@ -487,23 +549,27 @@ async def start(body: ExperimentStartRequest | None = None) -> ControlResponse:
         ):
             exp_id = state.experiment_db_id
             reopened = await persist.reopen_experiment(exp_id)
-            if reopened and await state.resume():
-                _reset_persist_notice()
+            if reopened:
+                # 去重基准必须在进入 running 之前装好（R3-5）：state.resume() 之后采集循环随时
+                # 可能产出续跑首帧，基准晚到会让首帧漏检、一次性窗口错落到第二帧上。
                 await _load_resume_boundary(exp_id)
-                await broadcast(
-                    {"status": "running", "experiment_id": exp_id, "sample_id": state.sample_id}
-                )
-                if persist.degraded:
-                    await _notify_persist_degraded()
-                return ControlResponse(
-                    ok=True,
-                    status="running",
-                    experiment_id=exp_id,
-                    sample_id=state.sample_id,
-                    resumed=True,
-                    persistence="degraded" if persist.degraded else None,
-                    message=PERSIST_DEGRADED_MESSAGE if persist.degraded else None,
-                )
+                if await state.resume():
+                    _reset_persist_notice()
+                    await broadcast(
+                        {"status": "running", "experiment_id": exp_id, "sample_id": state.sample_id}
+                    )
+                    if persist.degraded:
+                        await _notify_persist_degraded()
+                    return ControlResponse(
+                        ok=True,
+                        status="running",
+                        experiment_id=exp_id,
+                        sample_id=state.sample_id,
+                        resumed=True,
+                        persistence="degraded" if persist.degraded else None,
+                        message=PERSIST_DEGRADED_MESSAGE if persist.degraded else None,
+                    )
+                _clear_resume_boundary()
 
         sample_id = body.sample_id or DEFAULT_SAMPLE_ID
         sensor_path_id = body.sensor_path_id or DEFAULT_SENSOR_PATH_ID
@@ -725,9 +791,36 @@ async def experiment_frames(
     exp_id: int,
     limit: Annotated[int, Query(ge=1, le=100_000)] = 1000,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> dict:
-    rows = await asyncio.to_thread(storage.get_frames, exp_id, limit=limit, offset=offset)
-    return {"frames": rows}
+    mode: Literal["head", "tail", "even"] = "head",
+) -> Response:
+    """原始帧查询，返回 {frames, total, mode}（R3-6）。
+
+    - head（默认）：按落库顺序从 offset 起取 limit 条
+    - tail：最新 limit 条（仍按时间正序）——续跑水合只需要尾部，不必拉全量前缀
+    - even：全实验等间隔抽样至多 limit 条（保留首末帧）——历史详情的曲线/拟合覆盖整条实验
+
+    取数与编码都在工作线程，且逐帧编码：10 万帧约 63MB，旧实现交给 FastAPI 在事件循环上
+    序列化，实测让运行中实验的采集停顿约 0.5s。整包 json.dumps 是一次持有 GIL 的 C 调用，
+    放进线程也会卡住事件循环；逐帧编码之间有字节码，GIL 能按 5ms 切换间隔让回事件循环。
+    """
+    if mode != "head" and offset:
+        raise HTTPException(status_code=400, detail="offset 只能与 mode=head 一起使用")
+
+    def query() -> str:
+        if mode == "tail":
+            rows = storage.get_recent_frames(exp_id, limit=limit)
+        elif mode == "even":
+            rows = storage.get_frames_even(exp_id, max_points=limit)
+        else:
+            rows = storage.get_frames(exp_id, limit=limit, offset=offset)
+        total = storage.count_frames(exp_id)
+        # 与 FastAPI JSONResponse 同口径：紧凑分隔符、拒绝 NaN
+        frames = ",".join(
+            json.dumps(r, ensure_ascii=False, allow_nan=False, separators=(",", ":")) for r in rows
+        )
+        return f'{{"frames":[{frames}],"total":{total},"mode":"{mode}"}}'
+
+    return Response(content=await asyncio.to_thread(query), media_type="application/json")
 
 
 @router.get("/api/experiments/{exp_id}/export.csv")

@@ -173,6 +173,9 @@ export interface RawFrame {
   compensation_model?: string | null;
 }
 
+/** 原始帧查询方式：head 从头分页 / tail 最新 N 条 / even 全实验等间隔抽样 */
+export type FramesMode = 'head' | 'tail' | 'even';
+
 /** 开始实验的可选参数 */
 export interface ExperimentStartOptions {
   sample_id?: string;
