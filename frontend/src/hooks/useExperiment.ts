@@ -75,7 +75,7 @@ export function useExperiment(bridge: ExperimentBridge) {
         setStatus(ev.frame.status);
         if (ev.frame.quality_flags?.includes('PERSIST_DROPPED')) setPersistDegraded(true);
       }
-      if (ev.type === 'connection' && ev.status === 'connected' && bridge.api) {
+      if (ev.type === 'connection' && ev.status === 'connected') {
         bridge.api
           .getCurrentExperiment()
           .then((cur) => {

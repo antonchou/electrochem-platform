@@ -12,7 +12,7 @@ import { StaticChart } from './StaticChart';
 import styles from './HistoryPanel.module.css';
 
 interface Props {
-  api: ApiClient | null;
+  api: ApiClient;
   onClose: () => void;
 }
 
@@ -37,7 +37,6 @@ function fmtTime(utc?: string | null): string {
 
 /**
  * 历史实验面板（Phase 7）：列表 → 详情（样品汇总 + 静态曲线 + 导出）。
- * 仅在 server 模式可用（browser 模式无历史 API）。
  */
 export function HistoryPanel({ api, onClose }: Props) {
   const [list, setList] = useState<ExperimentSummary[] | null>(null);
@@ -51,7 +50,6 @@ export function HistoryPanel({ api, onClose }: Props) {
   const detailRequestIdRef = useRef(0);
 
   const loadList = useCallback(() => {
-    if (!api) return;
     setError(null);
     setList(null);
     api
@@ -69,7 +67,6 @@ export function HistoryPanel({ api, onClose }: Props) {
 
   const openDetail = useCallback(
     async (id: number) => {
-      if (!api) return;
       const requestId = ++detailRequestIdRef.current;
       setLoadingDetail(true);
       setError(null);
@@ -123,22 +120,6 @@ export function HistoryPanel({ api, onClose }: Props) {
 
   // P2-7：曲线最多降采样到 2000 点显示（保趋势、防卡顿）；拟合用已加载的全部帧（≤2 万，全实验等间隔抽样）
   const displayData = useMemo(() => downsample(chartData, MAX_CHART_POINTS), [chartData]);
-
-  if (!api) {
-    return (
-      <div className={styles.overlay} data-testid="history-panel">
-        <div className={styles.modal}>
-          <div className={styles.head}>
-            <h2>历史实验</h2>
-            <button className={styles.close} onClick={onClose} aria-label="关闭">
-              ×
-            </button>
-          </div>
-          <p className={styles.hint}>浏览器模拟模式下无历史数据；请切换 server 模式连接后端。</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={styles.overlay} data-testid="history-panel">

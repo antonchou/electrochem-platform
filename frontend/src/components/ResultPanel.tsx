@@ -13,7 +13,7 @@ interface Props {
   /** Phase 7：当前实验 DB id（用于导出） */
   experimentId: number | null;
   sampleId: string;
-  api: ApiClient | null;
+  api: ApiClient;
 }
 
 function qcBadgeClass(status: string | null | undefined): string {
@@ -34,7 +34,7 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
   }, [experimentId]);
 
   useEffect(() => {
-    if (!api || experimentId == null || status === 'running') return;
+    if (experimentId == null || status === 'running') return;
     let cancelled = false;
     api
       .getExperiment(experimentId)

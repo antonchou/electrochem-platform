@@ -71,6 +71,8 @@ export function rawFrameToPoint(frame: RawFrame): DataPoint {
   return {
     // t_seconds 缺失给 NaN（而非 0）让下游 buildFitPoints 过滤，避免 (0, ec) 假点（T-04）
     t: frame.t_seconds ?? Number.NaN,
+    // κ25 以 kappa_25_us_cm 为准；k25 / ec_raw 只为旧帧回退显示（ec_raw 在旧帧里是直读 EC），
+    // 三列的差别见 docs/数据接口文档.md §4.2.1
     ec: frame.kappa_25_us_cm ?? frame.k25 ?? frame.ec_raw,
     tc: frame.temperature_raw,
     voltage_raw_v: frame.voltage_raw_v ?? undefined,
