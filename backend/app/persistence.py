@@ -15,6 +15,11 @@ from . import storage
 
 logger = logging.getLogger("app.persistence")
 
+# 落库降级时前端横幅、状态帧与控制接口响应共用的文案
+PERSIST_DEGRADED_MESSAGE = (
+    "落库失败：实时曲线仍在更新，但历史和导出将缺帧。请重启后端恢复落库。"
+)
+
 
 @dataclass(slots=True)
 class _FlushBarrier:

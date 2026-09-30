@@ -13,7 +13,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from app import routes, storage
+from app import storage
+from app.acquisition import acquisition
 from app.drivers import CsvPlaybackConfig, CsvPlaybackDriver
 from app.main import app
 
@@ -86,15 +87,13 @@ def test_playback_rejects_nonpositive_speed():
 
 
 def test_incomplete_eof_logs_once(caplog):
-    from app.routes import _log_incomplete_reading, _quiet_incomplete_flags
-
-    _quiet_incomplete_flags.clear()
+    acquisition._quiet_incomplete_flags.clear()
     with caplog.at_level("INFO"):
-        _log_incomplete_reading(("CSV", "EOF"))
-        _log_incomplete_reading(("CSV", "EOF"))
+        acquisition._log_incomplete_reading(("CSV", "EOF"))
+        acquisition._log_incomplete_reading(("CSV", "EOF"))
     messages = [r.message for r in caplog.records if "回放结束" in r.message]
     assert len(messages) == 1
-    _quiet_incomplete_flags.clear()
+    acquisition._quiet_incomplete_flags.clear()
 
 
 def test_playback_eof_marks_quality(tmp_path):
@@ -278,14 +277,14 @@ def test_resume_boundary_is_loaded_before_first_resumed_frame(constant_client, m
         return real_recent(exp, limit=limit)
 
     boundary_ready: list[bool] = []
-    real_consume = routes._consume_resume_duplicate
+    real_consume = acquisition._consume_resume_duplicate
 
     def spy(frame):
-        boundary_ready.append(routes._resume_boundary_raws is not None)
+        boundary_ready.append(acquisition._resume_boundary_raws is not None)
         return real_consume(frame)
 
     monkeypatch.setattr(storage, "get_recent_frames", slow_recent)
-    monkeypatch.setattr(routes, "_consume_resume_duplicate", spy)
+    monkeypatch.setattr(acquisition, "_consume_resume_duplicate", spy)
     assert constant_client.post("/api/experiment/start").json()["resumed"] is True
     time.sleep(0.45)
     constant_client.post("/api/experiment/stop")

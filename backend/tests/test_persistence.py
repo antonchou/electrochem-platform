@@ -7,7 +7,8 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
-from app import routes, storage
+from app import storage
+from app.acquisition import acquisition
 from app.main import app
 from app.persistence import PersistService, _FlushBarrier, _STOP, persist
 
@@ -117,7 +118,7 @@ def test_persist_failure_is_visible_and_stop_still_finishes(tmp_path, monkeypatc
     """P0-1/P1-2：insert 失败后 health 降级，stop 仍能 finish，不把实验留在 running。"""
     import time
 
-    from app import routes
+    from app.acquisition import acquisition
 
     monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "persist-degraded.db"))
     monkeypatch.setenv("EC_ENABLE_DEBUG_ENDPOINTS", "1")
@@ -149,7 +150,7 @@ def test_persist_failure_is_visible_and_stop_still_finishes(tmp_path, monkeypatc
         assert storage.get_experiment(exp_id)["status"] == "stopped"
         assert persist.degraded is True
 
-    routes._reset_persist_notice()
+    acquisition.reset_notices()
 
 
 def test_persist_degraded_visible_to_late_ws_client(tmp_path, monkeypatch):
@@ -158,7 +159,7 @@ def test_persist_degraded_visible_to_late_ws_client(tmp_path, monkeypatch):
     with TestClient(app) as client:
         persist._error = RuntimeError("injected persist failure")
         persist._accepting = False
-        routes._persist_notice_sent = True
+        acquisition._persist_notice_sent = True
         try:
             current = client.get("/api/experiment/current").json()
             assert current["persistence"] == "degraded"
@@ -172,7 +173,7 @@ def test_persist_degraded_visible_to_late_ws_client(tmp_path, monkeypatch):
         finally:
             persist._error = None
             persist._accepting = True
-            routes._reset_persist_notice()
+            acquisition.reset_notices()
 
 
 def test_resume_resets_persist_notice(tmp_path, monkeypatch):
@@ -181,8 +182,8 @@ def test_resume_resets_persist_notice(tmp_path, monkeypatch):
     with TestClient(app) as client:
         client.post("/api/experiment/start")
         client.post("/api/experiment/stop")
-        routes._persist_notice_sent = True
+        acquisition._persist_notice_sent = True
         again = client.post("/api/experiment/start")
         assert again.json()["resumed"] is True
-        assert routes._persist_notice_sent is False
+        assert acquisition._persist_notice_sent is False
         client.post("/api/experiment/reset")

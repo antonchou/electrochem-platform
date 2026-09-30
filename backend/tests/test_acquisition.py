@@ -8,7 +8,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from app import routes, storage
+from app import storage
+from app.acquisition import ACQUISITION_ERROR_MESSAGE, acquisition
+from app.broadcast import hub
 from app.drivers import DriverReading
 from app.drivers.base import DriverConfig
 from app.main import app
@@ -72,32 +74,32 @@ def test_mock_quality_flag_is_persisted(client):
 
 def test_resume_boundary_dedup_helpers():
     """续跑边界去重：一次性窗口的装载/命中/消费语义。"""
-    from app import routes
+    from app.acquisition import acquisition
 
     # 无窗口时任何帧都不丢弃
-    routes._clear_resume_boundary()
+    acquisition.clear_resume_boundary()
     frame = {"voltage_raw_v": 1.0, "current_raw_a": 1e-3, "temperature_raw_c": 27.0}
-    assert routes._consume_resume_duplicate(frame) is False
+    assert acquisition._consume_resume_duplicate(frame) is False
 
     # 装载窗口：完全一致的原始三元组 → 命中丢弃
-    routes._resume_boundary_raws = (1.0, 1e-3, 27.0)
-    assert routes._consume_resume_duplicate(dict(frame)) is True
+    acquisition._resume_boundary_raws = (1.0, 1e-3, 27.0)
+    assert acquisition._consume_resume_duplicate(dict(frame)) is True
 
     # 窗口一次性：命中后关闭，同值帧不再丢弃（慢速源保持帧语义）
-    assert routes._consume_resume_duplicate(dict(frame)) is False
+    assert acquisition._consume_resume_duplicate(dict(frame)) is False
 
     # 未命中（读数已前进）同样关闭窗口
-    routes._resume_boundary_raws = (1.0, 1e-3, 27.0)
+    acquisition._resume_boundary_raws = (1.0, 1e-3, 27.0)
     moved = {"voltage_raw_v": 1.1, "current_raw_a": 1.1e-3, "temperature_raw_c": 27.0}
-    assert routes._consume_resume_duplicate(moved) is False
-    assert routes._consume_resume_duplicate(dict(frame)) is False
+    assert acquisition._consume_resume_duplicate(moved) is False
+    assert acquisition._consume_resume_duplicate(dict(frame)) is False
 
-    routes._clear_resume_boundary()
+    acquisition.clear_resume_boundary()
 
 
 def test_resume_boundary_window_loaded_then_consumed(client, monkeypatch):
     """续跑去重窗口接线：resume 从库装载最后一条帧的原始三元组，采集循环首帧消费。"""
-    from app import routes
+    from app.acquisition import acquisition
 
     exp_id = _start(client, "RESUME_WIN")
     time.sleep(0.3)
@@ -106,15 +108,15 @@ def test_resume_boundary_window_loaded_then_consumed(client, monkeypatch):
     expected = (last["voltage_raw_v"], last["current_raw_a"], last["temperature_raw"])
 
     # 拉长采样周期冻结采集 tick，消除「装载后被立即消费」的读数竞态
-    monkeypatch.setattr(routes, "_sample_period_seconds", 1.0)
+    monkeypatch.setattr(acquisition, "sample_period_s", 1.0)
     time.sleep(0.15)  # 等在飞的 0.1s sleep 结束，循环进入 1s 长睡眠
     r = client.post("/api/experiment/start").json()
     assert r["resumed"] is True
-    assert routes._resume_boundary_raws == expected, "resume 应从库装载边界基准"
+    assert acquisition._resume_boundary_raws == expected, "resume 应从库装载边界基准"
 
-    monkeypatch.setattr(routes, "_sample_period_seconds", 0.1)
+    monkeypatch.setattr(acquisition, "sample_period_s", 0.1)
     time.sleep(1.4)  # 循环醒来后首个 tick 应消费一次性窗口
-    assert routes._resume_boundary_raws is None, "采集循环应消费窗口"
+    assert acquisition._resume_boundary_raws is None, "采集循环应消费窗口"
 
     client.post("/api/experiment/stop")
     client.post("/api/experiment/reset")
@@ -124,10 +126,10 @@ def test_calibration_claimed_follows_calibration_id_when_driver_silent(monkeypat
     """T-06：驱动未显式声明 claimed 时，有效校准 id 推导 claimed=True。"""
     cfg = DriverConfig(calibration_id=None)
     fake_driver = SimpleNamespace(config=cfg)
-    monkeypatch.setattr(routes, "_driver", fake_driver)
+    monkeypatch.setattr(acquisition, "driver", fake_driver)
     monkeypatch.setattr(state, "calibration_id", "ENV-CAL-01")
     try:
-        params = routes._measurement_params()
+        params = acquisition.measurement_params()
     finally:
         monkeypatch.setattr(state, "calibration_id", None)
     assert params["calibration_id"] == "ENV-CAL-01"
@@ -138,10 +140,10 @@ def test_calibration_claimed_explicit_false_wins(monkeypatch):
     """P2-5：驱动显式 calibration_claimed=False（有编号但未校准）不得被覆盖。"""
     cfg = DriverConfig(calibration_id="SIM-KCELL-1.0", calibration_claimed=False)
     fake_driver = SimpleNamespace(config=cfg)
-    monkeypatch.setattr(routes, "_driver", fake_driver)
+    monkeypatch.setattr(acquisition, "driver", fake_driver)
     monkeypatch.setattr(state, "calibration_id", "SIM-KCELL-1.0")
     try:
-        params = routes._measurement_params()
+        params = acquisition.measurement_params()
     finally:
         monkeypatch.setattr(state, "calibration_id", None)
     assert params["calibration_claimed"] is False
@@ -169,12 +171,12 @@ def test_read_completed_after_stop_is_discarded(monkeypatch):
 
         await state.reset()
         await state.start(experiment_db_id=101, experiment_uid="EXP-OLD")
-        monkeypatch.setattr(routes, "_driver", driver)
-        monkeypatch.setattr(routes, "_sample_period_seconds", 0.001)
-        monkeypatch.setattr(routes, "broadcast", capture)
+        monkeypatch.setattr(acquisition, "driver", driver)
+        monkeypatch.setattr(acquisition, "sample_period_s", 0.001)
+        monkeypatch.setattr(hub, "publish", capture)
         monkeypatch.setattr(persist, "enqueue_frame", persisted.append)
 
-        task = asyncio.create_task(routes._acquisition_loop())
+        task = asyncio.create_task(acquisition.run())
         await asyncio.wait_for(driver.started.wait(), timeout=1)
         await state.stop()
         driver.release.set()
@@ -209,10 +211,10 @@ def test_sleep_until_resyncs_instead_of_bursting(monkeypatch):
 
     async def scenario():
         loop = asyncio.get_running_loop()
-        monkeypatch.setattr(routes, "_sample_period_seconds", 0.05)
+        monkeypatch.setattr(acquisition, "sample_period_s", 0.05)
         stale = loop.time() - 1.0
         t0 = loop.time()
-        adopted = await routes._sleep_until(loop, stale)
+        adopted = await acquisition._sleep_until(loop, stale)
         assert adopted >= t0, "落后的截止时刻应被重置为当前时刻"
         assert loop.time() - t0 < 0.05
 
@@ -241,10 +243,10 @@ def test_acquisition_errors_back_off_log_once_notify_and_recover(monkeypatch, ca
 
         await state.reset()
         await state.start(experiment_db_id=None)
-        monkeypatch.setattr(routes, "_driver", driver)
-        monkeypatch.setattr(routes, "_sample_period_seconds", 0.01)
-        monkeypatch.setattr(routes, "broadcast", capture)
-        task = asyncio.create_task(routes._acquisition_loop())
+        monkeypatch.setattr(acquisition, "driver", driver)
+        monkeypatch.setattr(acquisition, "sample_period_s", 0.01)
+        monkeypatch.setattr(hub, "publish", capture)
+        task = asyncio.create_task(acquisition.run())
         await asyncio.sleep(0.6)
         driver.fail = False
         await asyncio.sleep(0.6)
@@ -253,7 +255,7 @@ def test_acquisition_errors_back_off_log_once_notify_and_recover(monkeypatch, ca
         await state.reset()
         return driver, published
 
-    with caplog.at_level(logging.INFO, logger="app.routes"):
+    with caplog.at_level(logging.INFO, logger="app.acquisition"):
         driver, published = asyncio.run(scenario())
 
     # 指数退避：重试间隔逐次拉长（旧实现固定 0.1s，一直按 10 次/秒重试）
@@ -264,7 +266,7 @@ def test_acquisition_errors_back_off_log_once_notify_and_recover(monkeypatch, ca
     tracebacks = [r for r in caplog.records if r.exc_info and "采集循环异常" in r.getMessage()]
     assert len(tracebacks) == 1, [r.getMessage() for r in caplog.records]
     # 前端只收到一次告警（旧实现只能等 3s 看门狗报“数据流超时”）
-    alerts = [p for p in published if p.get("message") == routes.ACQUISITION_ERROR_MESSAGE]
+    alerts = [p for p in published if p.get("message") == ACQUISITION_ERROR_MESSAGE]
     assert len(alerts) == 1 and alerts[0]["status"] == "running"
     # 恢复：记一条恢复日志并继续出帧
     assert any("采集恢复" in r.getMessage() for r in caplog.records)
