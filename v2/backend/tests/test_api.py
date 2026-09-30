@@ -108,6 +108,20 @@ def test_measurement_flow(client):
     assert fit["ok"] is False  # 恒温测量无法估计 α
 
 
+def test_database_errors_are_503_with_a_reason(client, monkeypatch):
+    import sqlite3
+
+    from ec.store import Store
+
+    def locked(self, *args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Store, "list_measurements", locked)
+    response = client.get("/api/measurements")
+    assert response.status_code == 503
+    assert "database is locked" in response.json()["detail"]
+
+
 def test_unknown_measurement_is_404(client):
     assert client.get("/api/measurements/999").status_code == 404
     assert client.get("/api/measurements/999/frames.csv").status_code == 404

@@ -88,6 +88,7 @@ class Lab:
         self._measurement_time = Timeline(clock)
         self._seq = 0
         self._gap_before_next = False  # 停止失败、测量恢复记录时，下一帧标 SEQ_GAP
+        self._monitor_count = 0  # 累计监视读数；停止失败时据此判断等待期间有没有漏记的帧
         self._recording: deque[dict[str, Any]] = deque(maxlen=MAX_RECORDING_POINTS)
         self._qc_window: deque[QcPoint] = deque()
         self._live_qc: QcResult | None = None
@@ -163,6 +164,7 @@ class Lab:
                 reading.temperature_c, reading.flags, *self._current_parameters(),
             )
             self._monitor.append(point)
+            self._monitor_count += 1
             self.hub.publish({"type": "reading", "measurement_id": None, "point": point})
             return
 
@@ -270,17 +272,27 @@ class Lab:
             if measurement is None:
                 raise Conflict("没有进行中的测量")
             self.measurement = None  # 先停止记录，之后的读数回到监视
+            monitor_count = self._monitor_count
             try:
                 await self._flush()
+                result = await asyncio.to_thread(
+                    records.assess_measurement, self.store, measurement, self.settings.qc
+                )
+                qc = {**result.as_dict(), "config": config_dict(self.settings.qc)}
+                await asyncio.to_thread(
+                    self.store.finish_measurement, measurement["id"], "completed", utc_now(), qc
+                )
             except Exception as exc:
-                # 写不进去就继续记录，别让测量卡在半结束状态；等待期间的读数只按监视推送了，记录里标出空档
+                # 任何一步写不进去都继续记录，别让测量卡在半结束状态（库里 running、内存里已摘掉）。
+                # 等待期间到达的读数只按监视推送了，记录里要标出这段空档
                 self.measurement = measurement
-                self._gap_before_next = True
-                raise Unavailable(f"数据库写入失败，测量仍在进行，请稍后再停止：{exc}") from exc
-            result = await asyncio.to_thread(records.assess_measurement, self.store, measurement, self.settings.qc)
-            qc = {**result.as_dict(), "config": config_dict(self.settings.qc)}
-            await asyncio.to_thread(self.store.finish_measurement, measurement["id"], "completed", utc_now(), qc)
-            finished = await asyncio.to_thread(self.store.get_measurement, measurement["id"])
+                self._gap_before_next = self._monitor_count != monitor_count
+                raise Unavailable(f"数据库操作失败，测量仍在进行，请稍后再停止：{exc}") from exc
+            try:
+                finished = await asyncio.to_thread(self.store.get_measurement, measurement["id"])
+            except Exception:  # noqa: BLE001 - 结果已写进库，读回失败时用内存里的副本
+                logger.exception("读回已结束的测量 #%s 失败", measurement["id"])
+                finished = {**measurement, "status": "completed", "qc": qc}
             self.last_finished = finished
             self._monitor.clear()
             self._publish_state()

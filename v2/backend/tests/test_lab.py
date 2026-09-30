@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 
 import pytest
 
@@ -11,6 +12,12 @@ from ec.frames import DeviceInfo, Reading
 from ec.hub import Hub
 from ec.lab import Lab
 from ec.store import Store
+
+
+@pytest.fixture(autouse=True)
+def no_background_flush(monkeypatch):
+    """后台每秒落库一次会与用例抢时机；这里的用例都显式触发落库（停止、_flush、关停）。"""
+    monkeypatch.setattr(lab_module, "FLUSH_INTERVAL_S", 3600.0)
 
 
 def run(coro):
@@ -343,8 +350,10 @@ def test_failed_stop_marks_the_gap_in_the_recording(settings):
         await record(lab, device, clock, 2)
         real_insert = lab.store.insert_frames
         lab.store.insert_frames = lambda rows: (_ for _ in ()).throw(OSError("locked"))
+        device.queue.put_nowait(reading())  # 停止等待写库期间到达的一帧：只按监视推送，没被记录
         with pytest.raises(Unavailable):
             await lab.stop_measurement()
+        await device.queue.join()
         lab.store.insert_frames = real_insert
         await record(lab, device, clock, 2)
         await lab.stop_measurement()
@@ -352,6 +361,52 @@ def test_failed_stop_marks_the_gap_in_the_recording(settings):
         return [f.flags for f in lab.store.frames(m["id"])]
 
     assert run(scenario()) == [None, None, "SEQ_GAP", None]
+
+
+def test_failed_stop_without_missed_readings_leaves_no_gap_flag(settings):
+    async def scenario():
+        device, clock = FakeDevice(), Clock()
+        lab = await open_lab(settings, device, clock)
+        await device.connect()
+        m = await lab.start_measurement("a", None, None)
+        await record(lab, device, clock, 2)
+        real_insert = lab.store.insert_frames
+        lab.store.insert_frames = lambda rows: (_ for _ in ()).throw(OSError("locked"))
+        with pytest.raises(Unavailable):
+            await lab.stop_measurement()
+        lab.store.insert_frames = real_insert
+        await record(lab, device, clock, 1)
+        await lab.stop_measurement()
+        await lab.close()
+        return [f.flags for f in lab.store.frames(m["id"])]
+
+    assert run(scenario()) == [None, None, None]
+
+
+def test_stop_survives_a_failure_after_the_frames_were_written(settings):
+    async def scenario():
+        device, clock = FakeDevice(), Clock()
+        lab = await open_lab(settings, device, clock)
+        await device.connect()
+        m = await lab.start_measurement("a", None, None)
+        await record(lab, device, clock, 6)
+        real_finish = lab.store.finish_measurement
+
+        def locked(*args):
+            raise sqlite3.OperationalError("database is locked")
+
+        lab.store.finish_measurement = locked
+        with pytest.raises(Unavailable, match="database is locked"):
+            await lab.stop_measurement()
+        still_running = lab.measurement is not None and lab.store.get_measurement(m["id"])["status"] == "running"
+        lab.store.finish_measurement = real_finish
+        finished = await lab.stop_measurement()
+        await lab.close()
+        return still_running, finished
+
+    still_running, finished = run(scenario())
+    assert still_running
+    assert finished["status"] == "completed" and finished["frame_count"] == 6
 
 
 def test_a_processing_error_skips_one_reading_but_keeps_the_device(settings, monkeypatch):
