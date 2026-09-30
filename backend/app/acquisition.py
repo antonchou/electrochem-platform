@@ -61,15 +61,17 @@ def build_driver() -> tuple[DeviceDriver, float]:
         if not path:
             raise ValueError("EC_CSV_PATH is required when EC_DRIVER=csv")
         kwargs: dict = {"path": path}
-        cell = os.environ.get("EC_CELL_CONSTANT", "").strip()
-        if cell:
-            kwargs["cell_constant_per_cm"] = float(cell)
-        rate = os.environ.get("EC_CSV_SAMPLE_RATE_HZ", "").strip()
-        if rate:
-            kwargs["sample_rate_hz"] = float(rate)
-        speed = os.environ.get("EC_CSV_SPEED", "").strip()
-        if speed:
-            kwargs["speed"] = float(speed)
+        for env_name, field in (
+            ("EC_CELL_CONSTANT", "cell_constant_per_cm"),
+            ("EC_CSV_SAMPLE_RATE_HZ", "sample_rate_hz"),
+            ("EC_CSV_SPEED", "speed"),
+        ):
+            raw = os.environ.get(env_name, "").strip()
+            if raw:
+                try:
+                    kwargs[field] = float(raw)
+                except ValueError as exc:
+                    raise ValueError(f"invalid {env_name}={raw!r}; expected a number") from exc
         cfg = CsvPlaybackConfig(**kwargs)
         return CsvPlaybackDriver(cfg), 1.0 / cfg.sample_rate_hz
     if kind == "simulator":

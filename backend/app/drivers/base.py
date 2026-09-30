@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -23,18 +24,21 @@ class DriverReading:
     current_a: float | None = None
     quality_flags: tuple[str, ...] = ()
 
+    # 完整性按“有限数”判定：NaN/inf（如温度探头读失败）等同缺失，整帧跳过，
+    # 否则 NaN 会被 SQLite 存成 NULL、撞上 temperature_raw NOT NULL，让整批落库失败并永久降级。
+
     @property
     def complete_for_conductivity(self) -> bool:
-        return self.ec is not None and self.temperature is not None
+        return _finite(self.ec) and _finite(self.temperature)
 
     @property
     def complete_for_iv(self) -> bool:
-        """I–V 链路完整性：U/I/T 齐备才可走计算链。"""
-        return (
-            self.voltage_v is not None
-            and self.current_a is not None
-            and self.temperature is not None
-        )
+        """I–V 链路完整性：U/I/T 齐备且为有限数才可走计算链。"""
+        return _finite(self.voltage_v) and _finite(self.current_a) and _finite(self.temperature)
+
+
+def _finite(value: float | None) -> bool:
+    return value is not None and math.isfinite(value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -12,6 +12,7 @@ import asyncio
 import bisect
 import csv
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
@@ -82,6 +83,8 @@ class CsvPlaybackDriver(DeviceDriver):
                     temp = float(row["temperature_c"])
                 except (KeyError, ValueError):
                     continue
+                if not all(math.isfinite(x) for x in (t, v, i, temp)):
+                    continue  # nan/inf 与缺列同样按坏行跳过（nan 时间戳还会打乱排序）
                 rows.append((t, v, i, temp))
         rows.sort(key=lambda r: r[0])
         return rows, [r[0] for r in rows], rows[-1][0] if rows else 0.0
