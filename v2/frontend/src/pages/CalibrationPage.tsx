@@ -188,7 +188,7 @@ export function CalibrationPage({ lab }: { lab: LabState | null }) {
                 <th>#</th>
                 <th>时间</th>
                 <th>Kcell (cm⁻¹)</th>
-                <th>R²</th>
+                <th>各点 RSD</th>
                 <th>标准液</th>
                 <th>操作者 / 批次</th>
               </tr>
@@ -199,7 +199,7 @@ export function CalibrationPage({ lab }: { lab: LabState | null }) {
                   <td>{c.id}</td>
                   <td>{dateTime(c.created_at)}</td>
                   <td className="num">{fixed(c.cell_constant_per_cm, 4)}</td>
-                  <td className="num">{fixed(c.r2, 5)}</td>
+                  <td className="num">{c.rsd_pct === null ? '—' : `${fixed(c.rsd_pct, 2)}%`}</td>
                   <td>{c.points.map((p) => p.standard_name).join('、')}</td>
                   <td>
                     {c.operator ?? '—'} / {c.lot ?? '—'}
@@ -222,7 +222,7 @@ function CalibrationCard({ calibration }: { calibration: Calibration }) {
         <span className="hint">
           {' '}
           标定 #{calibration.id} · {dateTime(calibration.created_at)}
-          {calibration.r2 !== null ? ` · R² = ${fixed(calibration.r2, 5)}` : ''}
+          {calibration.rsd_pct !== null ? ` · 各点 Kcell 相对标准差 ${fixed(calibration.rsd_pct, 2)}%` : ''}
           {calibration.operator ? ` · ${calibration.operator}` : ''}
           {calibration.lot ? ` · 批次 ${calibration.lot}` : ''}
         </span>

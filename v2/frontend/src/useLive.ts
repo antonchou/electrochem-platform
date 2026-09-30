@@ -36,8 +36,9 @@ export function useLive(): LiveState {
       };
       socket.onclose = () => {
         window.clearTimeout(watchdog);
-        dispatch({ kind: 'connection', connected: false });
+        // 组件卸载时主动关的连接不算断线：它的 onclose 可能晚于新连接的快照到达
         if (closed) return;
+        dispatch({ kind: 'connection', connected: false });
         retryTimer = window.setTimeout(connect, retryMs);
         retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
       };

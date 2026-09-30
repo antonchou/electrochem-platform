@@ -23,6 +23,7 @@ CREATE TABLE calibrations (
     created_at            TEXT NOT NULL,
     cell_constant_per_cm  REAL NOT NULL CHECK (cell_constant_per_cm > 0),
     r2                    REAL,
+    rsd_pct               REAL,
     operator              TEXT,
     cell_id               TEXT,
     lot                   TEXT,
@@ -206,19 +207,22 @@ class Store:
         with self._transaction() as conn:
             conn.executemany("INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
-    def frames(self, measurement_id: int) -> list[FrameRow]:
+    def frames(self, measurement_id: int, last_seconds: float | None = None) -> list[FrameRow]:
+        """一次测量的帧（按序号）；给出 last_seconds 时只取最后这么多秒（t_s 单调不减）。"""
+        sql = "SELECT * FROM frames WHERE measurement_id = ?"
+        args: list[Any] = [measurement_id]
+        if last_seconds is not None:
+            sql += " AND t_s >= (SELECT MAX(t_s) FROM frames WHERE measurement_id = ?) - ?"
+            args += [measurement_id, last_seconds]
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM frames WHERE measurement_id = ? ORDER BY seq", (measurement_id,)
-            )
-            return [FrameRow(*row) for row in rows]
+            return [FrameRow(*row) for row in conn.execute(sql + " ORDER BY seq", args)]
 
     # ---- 标定 ----
     def create_calibration(self, calibration: dict[str, Any], points: Sequence[dict[str, Any]]) -> int:
         with self._transaction() as conn:
             cur = conn.execute(
-                "INSERT INTO calibrations (created_at, cell_constant_per_cm, r2, operator, cell_id, lot, note)"
-                " VALUES (:created_at, :cell_constant_per_cm, :r2, :operator, :cell_id, :lot, :note)",
+                "INSERT INTO calibrations (created_at, cell_constant_per_cm, r2, rsd_pct, operator, cell_id, lot, note)"
+                " VALUES (:created_at, :cell_constant_per_cm, :r2, :rsd_pct, :operator, :cell_id, :lot, :note)",
                 calibration,
             )
             calibration_id = int(cur.lastrowid)

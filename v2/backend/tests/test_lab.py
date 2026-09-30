@@ -7,7 +7,7 @@ from conftest import INFO, Clock, FakeDevice, reading
 from ec import lab as lab_module
 from ec.devices import DeviceStatus
 from ec.errors import Conflict, Invalid, Unavailable
-from ec.frames import DeviceInfo
+from ec.frames import DeviceInfo, Reading
 from ec.hub import Hub
 from ec.lab import Lab
 from ec.store import Store
@@ -316,3 +316,95 @@ def test_hub_resyncs_a_slow_client_with_a_snapshot():
         return drain(queue)
 
     assert run(scenario()) == [{"type": "snapshot", "n": 42}]
+
+
+def test_timeline_follows_the_device_clock_and_falls_back_on_restart(settings):
+    async def scenario():
+        device, clock = FakeDevice(), Clock()
+        lab = await open_lab(settings, device, clock)
+        await device.connect()
+        await lab.start_measurement("replay x10", None, None)
+        for ms in (0, 1000, 2000, 0):  # 回放 10 倍速：主机只过 0.1 s，设备过 1 s；最后一帧设备重启
+            clock.now += 0.1
+            await device.send(Reading(0.1, 1e-4, 25.0, (), ms // 1000 + 1, ms, INFO))
+        times = [p["t_s"] for p in lab.snapshot()["points"]]
+        await lab.close()
+        return times
+
+    assert run(scenario()) == [0.1, 1.1, 2.1, 2.2]
+
+
+def test_failed_stop_marks_the_gap_in_the_recording(settings):
+    async def scenario():
+        device, clock = FakeDevice(), Clock()
+        lab = await open_lab(settings, device, clock)
+        await device.connect()
+        m = await lab.start_measurement("a", None, None)
+        await record(lab, device, clock, 2)
+        real_insert = lab.store.insert_frames
+        lab.store.insert_frames = lambda rows: (_ for _ in ()).throw(OSError("locked"))
+        with pytest.raises(Unavailable):
+            await lab.stop_measurement()
+        lab.store.insert_frames = real_insert
+        await record(lab, device, clock, 2)
+        await lab.stop_measurement()
+        await lab.close()
+        return [f.flags for f in lab.store.frames(m["id"])]
+
+    assert run(scenario()) == [None, None, "SEQ_GAP", None]
+
+
+def test_a_processing_error_skips_one_reading_but_keeps_the_device(settings, monkeypatch):
+    real_make_point = lab_module.records.make_point
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ValueError("bug in point assembly")
+        return real_make_point(*args, **kwargs)
+
+    monkeypatch.setattr(lab_module.records, "make_point", flaky)
+
+    async def scenario():
+        device, clock = FakeDevice(), Clock()
+        lab = await open_lab(settings, device, clock)
+        await device.connect()
+        await record(lab, device, clock, 3)
+        state = (lab.device_connected, lab.device_message, len(lab.snapshot()["points"]))
+        await lab.close()
+        return state
+
+    assert run(scenario()) == (True, "fake ready", 2)
+
+
+def test_repeated_measurements_of_one_standard_calibrate_fine(settings):
+    async def scenario():
+        device, clock = FakeDevice(), Clock()
+        lab = await open_lab(settings, device, clock)
+        await device.connect()
+        ids = []
+        for current in (1.385e-4, 1.3852e-4):  # 同一标准液装夹两次，读数几乎一样
+            m = await lab.start_measurement("KCl 0.01", 10.0, None)
+            await record(lab, device, clock, 8, current_a=current)
+            await lab.stop_measurement()
+            ids.append(m["id"])
+        good = await lab.calibrate(
+            [{"measurement_id": i, "standard_name": "KCl 0.01 mol/L", "standard_kappa25_us_cm": k}
+             for i, k in zip(ids, (1413.0, 1412.0))],
+            {},
+        )
+        with pytest.raises(Invalid, match="偏差"):
+            # 把 1413 的测量当成 147 的标准液：两点对不上
+            await lab.calibrate(
+                [{"measurement_id": ids[0], "standard_name": "KCl 0.01 mol/L", "standard_kappa25_us_cm": 1413.0},
+                 {"measurement_id": ids[1], "standard_name": "KCl 0.001 mol/L", "standard_kappa25_us_cm": 147.0}],
+                {},
+            )
+        await lab.close()
+        return good
+
+    good = run(scenario())
+    assert good["cell_constant_per_cm"] == pytest.approx(1.0198, rel=1e-3)
+    assert good["rsd_pct"] < 0.1  # 两次装夹的 Kcell 重复性
+    assert good["fit"]["r2"] < 0  # 这种情况下 R² 本身没有意义，旧判据会误拒

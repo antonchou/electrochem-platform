@@ -215,3 +215,19 @@ def test_sample_capture_goes_through_the_whole_chain():
     assert tail.verdict == "PASS", tail.reasons
     # 标称 Kcell = 1 下读数 = 真值 / 模拟器真 Kcell 1.02
     assert tail.representative_kappa25 == pytest.approx((kcl_kappa25_us_cm(10) + 1.5) / 1.02, rel=0.003)
+
+
+class ChunkedPort(FakePort):
+    """模拟 pyserial：超时按整次调用计，帧恰好跨过超时边界时先返回半行。"""
+
+    def __init__(self, chunks):
+        self.lines = [c.encode() for c in chunks]
+        self.closed = False
+
+
+def test_serial_device_joins_lines_split_by_read_timeouts(monkeypatch):
+    monkeypatch.setattr(devices_module, "RETRY_S", 0.01)
+    line = firmware_line(7, 6000)
+    port = ChunkedPort([line[:40], "", line[40:] + "\n", "x" * 5000, firmware_line(8, 7000) + "\n"])
+    events = collect(SerialDevice("COM3", open_port=lambda: port).stream(), limit=3)
+    assert [e.device_seq for e in events[1:]] == [7, 8]  # 超长杂讯被丢弃，不影响下一帧

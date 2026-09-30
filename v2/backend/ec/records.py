@@ -71,19 +71,20 @@ def require_measurement(store: Store, measurement_id: int) -> dict[str, Any]:
 def measurement_points(store: Store, measurement_id: int, max_points: int) -> dict[str, Any]:
     """全部帧的数据点；超过 max_points 时等间隔抽样（保留最后一点）。"""
     measurement = require_measurement(store, measurement_id)
-    points = [row_point(row, measurement) for row in store.frames(measurement_id)]
-    total = len(points)
+    rows = store.frames(measurement_id)
+    total = len(rows)
     step = max(1, math.ceil(total / max_points))
     if step > 1:
-        sampled = points[::step]
-        if sampled[-1] is not points[-1]:
-            sampled.append(points[-1])
-        points = sampled
+        sampled = rows[::step]
+        if sampled[-1] is not rows[-1]:
+            sampled.append(rows[-1])
+        rows = sampled
+    points = [row_point(row, measurement) for row in rows]  # 先抽样再换算
     return {"measurement_id": measurement_id, "total": total, "step": step, "points": points}
 
 
 def assess_measurement(store: Store, measurement: dict[str, Any], config: QcConfig) -> QcResult:
-    rows = store.frames(measurement["id"])
+    rows = store.frames(measurement["id"], last_seconds=config.window_s)  # 只看尾部窗口
     return assess([qc_point(row_point(row, measurement)) for row in rows], config)
 
 

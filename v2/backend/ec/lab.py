@@ -19,7 +19,7 @@ from typing import Any, Callable
 from . import records
 from .devices import Device, DeviceStatus
 from .errors import Conflict, Invalid, Unavailable
-from .frames import DeviceInfo, Reading, join_flags
+from .frames import SEQ_GAP, DeviceInfo, Reading, join_flags
 from .hub import Hub
 from .qc import QcPoint, QcResult, assess, config_dict
 from .settings import Settings
@@ -32,10 +32,34 @@ MAX_PENDING_FRAMES = 36_000  # 数据库持续不可写时最多在内存里留�
 MAX_RECORDING_POINTS = 20_000  # 快照里当前测量的点数上限
 MONITOR_POINTS = 600
 DEVICE_RETRY_S = 2.0
+MAX_CALIBRATION_DEVIATION_PCT = 5.0  # 标定后任一标准液点偏差超过它，说明标准液与测量对不上
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+class Timeline:
+    """相对时间轴。相邻两帧的间隔优先取设备时钟之差：串口收帧的延迟抖动不进时间轴，
+    加速回放时仍是设备时间（判稳窗口、漂移按真实秒数算）。设备时钟缺失或回退（设备重启）时退回主机时钟。"""
+
+    def __init__(self, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        self.reset()
+
+    def reset(self) -> None:
+        self._last_host = self._clock()
+        self._last_device: int | None = None
+        self.t = 0.0
+
+    def advance(self, device_ms: int | None) -> float:
+        now = self._clock()
+        if device_ms is not None and self._last_device is not None and device_ms >= self._last_device:
+            self.t += (device_ms - self._last_device) / 1000.0
+        else:
+            self.t += now - self._last_host
+        self._last_host, self._last_device = now, device_ms
+        return round(self.t, 3)
 
 
 class Lab:
@@ -49,7 +73,6 @@ class Lab:
         self.settings = settings
         self.store = store
         self.device = device
-        self.clock = clock
         self.hub = Hub(self.snapshot)
 
         self.device_connected = False
@@ -61,9 +84,10 @@ class Lab:
         self.storage_error: str | None = None
         self.dropped_frames = 0
 
-        self._lab_t0 = clock()
-        self._measurement_t0 = 0.0
+        self._monitor_time = Timeline(clock)
+        self._measurement_time = Timeline(clock)
         self._seq = 0
+        self._gap_before_next = False  # 停止失败、测量恢复记录时，下一帧标 SEQ_GAP
         self._recording: deque[dict[str, Any]] = deque(maxlen=MAX_RECORDING_POINTS)
         self._qc_window: deque[QcPoint] = deque()
         self._live_qc: QcResult | None = None
@@ -101,10 +125,13 @@ class Lab:
         while True:
             try:
                 async for event in self.device.stream():
-                    if isinstance(event, DeviceStatus):
-                        self._on_status(event)
-                    else:
-                        self._on_reading(event)
+                    try:
+                        if isinstance(event, DeviceStatus):
+                            self._on_status(event)
+                        else:
+                            self._on_reading(event)
+                    except Exception:  # noqa: BLE001 - 处理一帧出错是软件问题，不该拆掉设备连接
+                        logger.exception("处理设备事件出错，已跳过：%r", event)
                 self._on_status(DeviceStatus(False, self.device_message or "设备数据流已结束"))
                 return
             except asyncio.CancelledError:
@@ -132,7 +159,7 @@ class Lab:
         measurement = self.measurement
         if measurement is None:
             point = records.make_point(
-                round(self.clock() - self._lab_t0, 3), reading.voltage_v, reading.current_a,
+                self._monitor_time.advance(reading.device_ms), reading.voltage_v, reading.current_a,
                 reading.temperature_c, reading.flags, *self._current_parameters(),
             )
             self._monitor.append(point)
@@ -140,13 +167,17 @@ class Lab:
             return
 
         self._seq += 1
-        t_s = round(self.clock() - self._measurement_t0, 3)
+        t_s = self._measurement_time.advance(reading.device_ms)
+        flags = reading.flags
+        if self._gap_before_next:
+            flags = flags + (SEQ_GAP,)
+            self._gap_before_next = False
         self._queue_frame(FrameRow(
             measurement["id"], self._seq, t_s, utc_now(), reading.device_seq, reading.device_ms,
-            reading.voltage_v, reading.current_a, reading.temperature_c, join_flags(reading.flags),
+            reading.voltage_v, reading.current_a, reading.temperature_c, join_flags(flags),
         ))
         point = records.make_point(
-            t_s, reading.voltage_v, reading.current_a, reading.temperature_c, reading.flags,
+            t_s, reading.voltage_v, reading.current_a, reading.temperature_c, flags,
             measurement["cell_constant_per_cm"], measurement["alpha_per_c"], seq=self._seq,
         )
         self._recording.append(point)
@@ -224,8 +255,9 @@ class Lab:
             measurement_id = await asyncio.to_thread(self.store.create_measurement, params)
             self.device.prepare(sample_name, concentration_mmol_l)
             self.measurement = {"id": measurement_id, "status": "running", **params}
-            self._measurement_t0 = self.clock()
+            self._measurement_time.reset()
             self._seq = 0
+            self._gap_before_next = False
             self._recording.clear()
             self._qc_window.clear()
             self._live_qc = None
@@ -241,7 +273,9 @@ class Lab:
             try:
                 await self._flush()
             except Exception as exc:
-                self.measurement = measurement  # 写不进去就继续记录，别让测量卡在半结束状态
+                # 写不进去就继续记录，别让测量卡在半结束状态；等待期间的读数只按监视推送了，记录里标出空档
+                self.measurement = measurement
+                self._gap_before_next = True
                 raise Unavailable(f"数据库写入失败，测量仍在进行，请稍后再停止：{exc}") from exc
             result = await asyncio.to_thread(records.assess_measurement, self.store, measurement, self.settings.qc)
             qc = {**result.as_dict(), "config": config_dict(self.settings.qc)}
@@ -258,12 +292,18 @@ class Lab:
             if self.measurement is not None:
                 raise Conflict("测量进行中不能更换标定，先停止测量")
             fit, points = await asyncio.to_thread(records.calibration_points, self.store, entries)
-            if fit["n"] >= 2 and fit["r2"] is not None and fit["r2"] < 0:
-                raise Invalid("各标准液点彼此矛盾（R² < 0），请检查标准液与测量是否对应")
+            # 用标定后各点偏差判断标准液与测量是否对得上（过原点拟合、同一标准液重复测量时 R² 没有意义）
+            worst = max((abs(p["deviation_pct"]) for p in points if p["deviation_pct"] is not None), default=0.0)
+            if worst > MAX_CALIBRATION_DEVIATION_PCT:
+                raise Invalid(
+                    f"标定后有标准液点偏差 {worst:.1f}%（上限 {MAX_CALIBRATION_DEVIATION_PCT:g}%），"
+                    "请检查所选测量与标准液是否对应"
+                )
             calibration = {
                 "created_at": utc_now(),
                 "cell_constant_per_cm": fit["cell_constant_per_cm"],
                 "r2": fit["r2"],
+                "rsd_pct": fit["rsd_pct"],
                 **{key: meta.get(key) for key in ("operator", "cell_id", "lot", "note")},
             }
             await asyncio.to_thread(self.store.create_calibration, calibration, points)

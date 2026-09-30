@@ -74,6 +74,13 @@ test('monitor buffer is capped', () => {
   assert.equal(s.points[0].t_s, 5);
 });
 
+test('any message means connected again', () => {
+  let s = send(initialLive, { type: 'snapshot', state: lab(null), points: [], qc: null });
+  s = reduce(s, { kind: 'connection', connected: false });
+  s = send(s, { type: 'reading', measurement_id: null, point: point(1) });
+  assert.equal(s.connected, true);
+});
+
 test('connection flag and heartbeat', () => {
   const s = reduce(initialLive, { kind: 'connection', connected: true });
   assert.equal(s.connected, true);

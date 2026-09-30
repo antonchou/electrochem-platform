@@ -60,7 +60,12 @@ export function App() {
 
       <main>
         {tab === 'measure' && <MeasurePage live={live} onShowRecord={showRecord} />}
-        {tab === 'records' && <RecordsPage refreshKey={lab?.last_finished?.id ?? null} focusId={focusId} />}
+        {tab === 'records' && (
+          <RecordsPage
+            refreshKey={`${lab?.measurement?.id ?? ''}/${lab?.last_finished?.id ?? ''}`}
+            focusId={focusId}
+          />
+        )}
         {tab === 'calibration' && <CalibrationPage lab={lab} />}
       </main>
     </div>

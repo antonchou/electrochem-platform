@@ -119,7 +119,7 @@ def test_measurement_parameters_cannot_change_even_while_running(store):
 
 def test_calibrations(store):
     mid = store.create_measurement(params(sample_name="KCl 1413"))
-    cal = {"created_at": "t", "cell_constant_per_cm": 1.02, "r2": None, "operator": "A", "cell_id": None,
+    cal = {"created_at": "t", "cell_constant_per_cm": 1.02, "r2": None, "rsd_pct": None, "operator": "A", "cell_id": None,
            "lot": "L1", "note": None}
     point = {"measurement_id": mid, "standard_name": "KCl 0.01 mol/L", "standard_kappa25_us_cm": 1413.0,
              "conductance25_s": 1.385e-3, "deviation_pct": 0.0, "verdict": "PASS"}
@@ -132,3 +132,11 @@ def test_calibrations(store):
             conn.execute("UPDATE calibrations SET cell_constant_per_cm = 1")
     with pytest.raises(sqlite3.IntegrityError):
         store.create_calibration({**cal, "cell_constant_per_cm": 0.0}, [])
+
+
+def test_frames_tail_window(store):
+    mid = store.create_measurement(params())
+    store.insert_frames([frame(mid, seq) for seq in range(1, 21)])  # t_s = 0.5 … 10.0
+    tail = store.frames(mid, last_seconds=2.0)
+    assert [f.t_s for f in tail] == [8.0, 8.5, 9.0, 9.5, 10.0]
+    assert store.frames(mid + 1, last_seconds=2.0) == []
