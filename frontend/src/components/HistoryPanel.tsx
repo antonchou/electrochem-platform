@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient } from '../services/apiClient';
 import type { DataPoint, ExperimentDetail, ExperimentSummary, RawFrame } from '../types/protocol';
+import { downsample } from '../lib/downsample';
 import { MAX_FIT_POINTS } from '../lib/fitPoints';
+import { rawFrameToPoint } from '../lib/ivAnalysis';
 import { CalibrationPanel } from './CalibrationPanel';
+import { ExportLink } from './ExportLink';
 import { FitPanel } from './FitPanel';
 import { StaticChart } from './StaticChart';
 import styles from './HistoryPanel.module.css';
@@ -91,30 +94,8 @@ export function HistoryPanel({ api, onClose }: Props) {
 
   // 注意：所有 Hook 必须位于任何 early return 之前，否则 api 变化时 React 会因
   // Hook 数量不一致直接崩溃（"Rendered more hooks than during the previous render"）。
-  const chartData: [number, number][] = useMemo(
-    () =>
-      frames.flatMap((f) => {
-        const y = f.kappa_25_us_cm ?? f.k25 ?? f.ec_raw;
-        if (y === null || !Number.isFinite(y)) return [];
-        const x = f.t_seconds;
-        if (x === null || !Number.isFinite(x)) return [];
-        return [[x, y] as [number, number]];
-      }),
-    [frames],
-  );
-
-  // P2-7：曲线最多降采样到 2000 点显示（保趋势、防卡顿）；拟合用已加载的全部帧（≤2 万，全实验等间隔抽样）
-  const displayData: [number, number][] = useMemo(
-    () =>
-      chartData.length > MAX_CHART_POINTS
-        ? Array.from({ length: MAX_CHART_POINTS }, (_, i) =>
-            chartData[Math.floor((i * chartData.length) / MAX_CHART_POINTS)],
-          )
-        : chartData,
-    [chartData],
-  );
-
-  // 历史详情拟合用的数据点（复用 FitPanel 化学公式拟合，X 轴可切时间/温度/浓度）
+  // 历史详情拟合用的数据点（复用 FitPanel 化学公式拟合，X 轴可切时间/温度/浓度）。
+  // t_seconds 为 null 的帧由 rawFrameToPoint 给 NaN，交给下游过滤（T-04）。
   const historyPoints: DataPoint[] = useMemo(() => {
     const concBySample = new Map<string, number>();
     for (const s of selected?.samples ?? []) {
@@ -123,18 +104,24 @@ export function HistoryPanel({ api, onClose }: Props) {
       }
     }
     return frames.map((f) => ({
-      // t_seconds 为 null 的帧必须给 NaN 让 buildFitPoints 过滤（T-04）：
-      // `?? 0` 会造出 (0, ec) 假点，把时间轴拟合带偏
-      t: f.t_seconds ?? Number.NaN,
-      tc: f.temperature_raw,
-      ec: f.kappa_25_us_cm ?? f.k25 ?? f.ec_raw,
+      ...rawFrameToPoint(f),
       // 浓度 0（空白样）是合法标定点，必须保留：`||` 会把 0 吞成 undefined
-      concentration:
-        f.sample_id != null && concBySample.has(f.sample_id)
-          ? concBySample.get(f.sample_id)
-          : undefined,
+      concentration: f.sample_id != null ? concBySample.get(f.sample_id) : undefined,
     }));
   }, [frames, selected]);
+
+  const chartData: [number, number][] = useMemo(
+    () =>
+      historyPoints.flatMap((p) =>
+        p.ec !== null && Number.isFinite(p.ec) && Number.isFinite(p.t)
+          ? [[p.t, p.ec] as [number, number]]
+          : [],
+      ),
+    [historyPoints],
+  );
+
+  // P2-7：曲线最多降采样到 2000 点显示（保趋势、防卡顿）；拟合用已加载的全部帧（≤2 万，全实验等间隔抽样）
+  const displayData = useMemo(() => downsample(chartData, MAX_CHART_POINTS), [chartData]);
 
   if (!api) {
     return (
@@ -194,37 +181,22 @@ export function HistoryPanel({ api, onClose }: Props) {
                 </div>
               </div>
               <div className={styles.actions}>
-                <a
+                <ExportLink
+                  api={api}
+                  experimentId={selected.id}
+                  format="csv"
                   className={styles.download}
-                  href={api.exportCsvUrl(selected.id)}
-                  download
-                  data-testid="btn-export-csv"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    void api
-                      .downloadExport(api.exportCsvUrl(selected.id), `experiment_${selected.id}.csv`)
-                      .catch((err) => setError(err instanceof Error ? err.message : '导出 CSV 失败'));
-                  }}
-                >
-                  导出 CSV
-                </a>
-                <a
+                  testId="btn-export-csv"
+                  onError={setError}
+                />
+                <ExportLink
+                  api={api}
+                  experimentId={selected.id}
+                  format="json"
                   className={styles.download}
-                  href={api.exportJsonUrl(selected.id)}
-                  download
-                  data-testid="btn-export-json"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    void api
-                      .downloadExport(
-                        api.exportJsonUrl(selected.id),
-                        `experiment_${selected.id}.json`,
-                      )
-                      .catch((err) => setError(err instanceof Error ? err.message : '导出 JSON 失败'));
-                  }}
-                >
-                  导出 JSON
-                </a>
+                  testId="btn-export-json"
+                  onError={setError}
+                />
                 <button className={styles.back} onClick={() => setSelected(null)}>
                   返回列表
                 </button>
@@ -232,7 +204,7 @@ export function HistoryPanel({ api, onClose }: Props) {
             </div>
 
             {selected.samples.length > 0 && (
-              <table className={styles.table}>
+              <table className="data-table">
                 <thead>
                   <tr>
                     <th>样品</th>

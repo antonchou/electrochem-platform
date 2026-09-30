@@ -13,10 +13,18 @@ export function niceStep(span: number): number {
   return multiplier * magnitude;
 }
 
-/** 以“nice step”取整，向外扩出一个覆盖数据的轴范围。 */
-export function paddedBounds(dataMin: number, dataMax: number, minSpan: number): AxisBounds {
+/**
+ * 以“nice step”取整，向外扩出一个覆盖数据的轴范围。
+ * 跨度取 数据跨度×1.2、|中心值|×relSpan、minSpan 三者最大。
+ */
+export function paddedBounds(
+  dataMin: number,
+  dataMax: number,
+  minSpan: number,
+  relSpan = 0.02,
+): AxisBounds {
   const center = (dataMin + dataMax) / 2;
-  const span = Math.max((dataMax - dataMin) * 1.2, Math.abs(center) * 0.02, minSpan);
+  const span = Math.max((dataMax - dataMin) * 1.2, Math.abs(center) * relSpan, minSpan);
   const step = niceStep(span);
   return {
     min: Math.floor((center - span / 2) / step) * step,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DataPoint, ExperimentDetail, ExperimentStatus, SampleSummary } from '../types/protocol';
 import type { ApiClient } from '../services/apiClient';
+import { ExportLink } from './ExportLink';
 import { FitPanel } from './FitPanel';
 import styles from './ResultPanel.module.css';
 
@@ -97,22 +98,13 @@ export function ResultPanel({ pointsRef, status, count, experimentId, sampleId, 
             <span className={styles.sampleTag} data-testid="result-concentration">
               浓度：{concentration != null ? `${concentration} mmol/L` : '--'}
             </span>
-            <a
+            <ExportLink
+              api={api}
+              experimentId={experimentId}
+              format="csv"
               className={styles.download}
-              href={api.exportCsvUrl(experimentId)}
-              download
-              data-testid="btn-export-current"
-              onClick={(event) => {
-                event.preventDefault();
-                void api
-                  .downloadExport(api.exportCsvUrl(experimentId), `experiment_${experimentId}.csv`)
-                  .catch((err) => {
-                    console.error(err);
-                  });
-              }}
-            >
-              导出 CSV
-            </a>
+              testId="btn-export-current"
+            />
           </div>
         )}
       </div>
