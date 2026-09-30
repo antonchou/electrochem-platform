@@ -45,7 +45,7 @@ def _finite(value: float | None) -> bool:
 class DriverConfig:
     """各驱动 config 共有的采样率、计算参数与协议/校准元数据。
 
-    routes 直接读这些字段组帧、写校准记录；各驱动按需覆盖默认值。
+    acquisition.measurement_params 读这些字段组帧、写校准记录；各驱动按需覆盖默认值。
     calibration_claimed=None 表示驱动未声明是否已校准，由 calibration_id 推导。
     """
 
