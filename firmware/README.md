@@ -1,6 +1,10 @@
-# firmware — ESP32-S3 固件（占位）
+# firmware — ESP32 固件
 
-本阶段（Phase 3/7）不含固件。后续阶段在此开发 ESP32-S3 采集固件：
+| 目录 | 状态 | 说明 |
+|---|---|---|
+| [`esp32_micropython/`](esp32_micropython/README.md) | 台架版（MicroPython，经典 ESP32） | ADS1256 + MCP4728 + DS18B20：双极性方波激励、U/I/T 采样与质量标志，每帧一行 JSON（字段对齐 `docs/接入数据格式.md`）；树莓派上用 Thonny 烧录，附串口采集脚本（产出 `EC_DRIVER=csv` 可回放的 CSV） |
+
+正式的 ESP32-S3 实时固件（Phase 9 / N7）仍待开发，目标：
 
 - 测量驱动：DS18B20（温度）、受控激励、电压采集、电流采集与 ADC；pH 电极为后续独立通道
 - 固件同步采集 U/I/T，记录激励频率、幅值和量程，并产生饱和、开短路、温度无效等质量标志
