@@ -13,6 +13,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from app import routes, storage
 from app.drivers import CsvPlaybackConfig, CsvPlaybackDriver
 from app.main import app
 
@@ -237,3 +238,59 @@ def test_csv_resume_dedups_boundary_sample(constant_client):
     # 去重窗口生效：续跑段没有帧落在停止点后不足一个采样周期的区间内
     boundary = [f for f in newer if (f["t_seconds"] or 0.0) < last_t + 0.09]
     assert not boundary, f"续跑首帧未去重: {[(f['t_seconds'], f['seq_no']) for f in boundary]}"
+
+
+def test_csv_playback_loop_degenerate_timestamps(tmp_path, monkeypatch):
+    csv_path = tmp_path / "zero_t.csv"
+    csv_path.write_text(
+        "time_s,voltage_v,current,temperature_c\n"
+        "0.0,0.5,0.001,25.0\n"
+        "0.0,0.6,0.002,25.1\n",
+        encoding="utf-8",
+    )
+    driver = CsvPlaybackDriver(CsvPlaybackConfig(path=str(csv_path), loop=True))
+
+    async def scenario():
+        await driver.connect()
+        first = await driver.read(0.0)
+        later = await driver.read(3600.0)  # 远超末尾时间戳：必须回绕到首行而非病态取模
+        return first, later
+
+    first, later = asyncio.run(scenario())
+    assert "EOF" not in first.quality_flags
+    assert "EOF" not in later.quality_flags
+    assert later.voltage_v == first.voltage_v  # 固定回放首行
+    assert later.temperature == first.temperature
+
+
+def test_resume_boundary_is_loaded_before_first_resumed_frame(constant_client, monkeypatch):
+    exp_id = constant_client.post("/api/experiment/start").json()["experiment_id"]
+    time.sleep(0.3)
+    constant_client.post("/api/experiment/stop")
+
+    # 读库比一个采样周期（0.1s）还慢：旧顺序（先 resume 再装载）下，装载期间采集循环
+    # 已产出续跑首帧，比对时基准还是 None → 首帧漏检
+    real_recent = storage.get_recent_frames
+
+    def slow_recent(exp, *, limit=500):
+        if limit == 1:
+            time.sleep(0.25)
+        return real_recent(exp, limit=limit)
+
+    boundary_ready: list[bool] = []
+    real_consume = routes._consume_resume_duplicate
+
+    def spy(frame):
+        boundary_ready.append(routes._resume_boundary_raws is not None)
+        return real_consume(frame)
+
+    monkeypatch.setattr(storage, "get_recent_frames", slow_recent)
+    monkeypatch.setattr(routes, "_consume_resume_duplicate", spy)
+    assert constant_client.post("/api/experiment/start").json()["resumed"] is True
+    time.sleep(0.45)
+    constant_client.post("/api/experiment/stop")
+    constant_client.post("/api/experiment/reset")
+
+    assert boundary_ready, "续跑后应至少产出一帧"
+    assert boundary_ready[0] is True, f"续跑首帧比对时基准尚未装载: {boundary_ready}"
+    assert not any(boundary_ready[1:]), "一次性窗口应由首帧消费"

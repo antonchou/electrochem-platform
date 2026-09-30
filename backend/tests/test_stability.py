@@ -8,9 +8,15 @@
 - 样本不足 → WARN(reason=insufficient_samples)
 """
 
-import pytest
+import json
+import time
 
-from app.stability import StabilityConfig, check_stability
+import pytest
+from fastapi.testclient import TestClient
+
+from app import storage
+from app.main import app
+from app.stability import StabilityConfig, check_stability, qc_from_frames
 
 
 def _stable_series(n: int = 40, base: float = 100.0, noise: float = 0.3):
@@ -155,3 +161,105 @@ def test_drift_verdict_is_rate_invariant():
         values = [100.0 + 3.0 * (i / hz) for i in range(n)]
         result = check_stability(values, config=rate_scaled_config(ts))
         assert result.reason != "borderline_drift", f"{hz}Hz"
+
+
+# ---------------- 停止时 QC（qc_from_frames）与硬标志 ----------------
+
+
+def test_stability_current_zero_is_hard_flag():
+    values = [1400.0 + 0.1 * i for i in range(30)]
+    flags = [""] * 29 + ["SIMULATED|CURRENT_ZERO"]
+    result = check_stability(values, quality_flags=flags, config=StabilityConfig())
+    assert result.status == "FAIL"
+    assert result.reason == "hard_quality_flag"
+
+
+def test_check_stability_rejects_mismatched_timestamps():
+    """P2-6：timestamps 与 values 不等长必须 ValueError，不得静默截断算斜率。"""
+    values = [1400.0 + i for i in range(10)]
+    with pytest.raises(ValueError, match="timestamps"):
+        check_stability(
+            values,
+            timestamps=[float(i) for i in range(5)],
+            config=StabilityConfig(),
+        )
+
+
+def _row(k25, flags="SIMULATED", t=0.0):
+    return {"kappa_25_us_cm": k25, "quality_flags": flags, "t_seconds": t}
+
+
+def _stable_rows(n, start_t=0.0):
+    return [_row(1413.0 + (0.1 if i % 2 else -0.1), t=start_t + i * 0.1) for i in range(n)]
+
+
+def test_qc_hard_flag_on_compute_invalid_frames_fails():
+    """电压越界隔帧注入：硬标志只出现在被计算链拒绝的帧上，也必须判 FAIL。"""
+    rows = []
+    for i in range(60):
+        if i % 2:
+            rows.append(_row(None, "SIMULATED|OUT_OF_RANGE|VOLTAGE_OOR|COMPUTE_INVALID", i * 0.1))
+        else:
+            rows.append(_row(1413.0 + (0.1 if i % 4 else -0.1), t=i * 0.1))
+    result = qc_from_frames(rows)
+    assert (result.status, result.reason) == ("FAIL", "hard_quality_flag")
+    assert result.representative_value is None
+
+
+def test_qc_trailing_invalid_frames_fail_without_hard_flag():
+    """末尾电极脱开（U≤0 全部 COMPUTE_INVALID、无硬标志）：旧实现拿更早的稳定段判 PASS。"""
+    rows = _stable_rows(40) + [
+        _row(None, "SIMULATED|COMPUTE_INVALID", 4.0 + i * 0.1) for i in range(20)
+    ]
+    result = qc_from_frames(rows)
+    assert (result.status, result.reason) == ("FAIL", "invalid_frames")
+
+
+def test_qc_single_invalid_frame_downgrades_pass_to_warn():
+    rows = _stable_rows(40)
+    rows[35] = _row(None, "SIMULATED|COMPUTE_INVALID", rows[35]["t_seconds"])
+    result = qc_from_frames(rows)
+    assert (result.status, result.reason) == ("WARN", "some_invalid_frames")
+    assert result.representative_value is None
+    assert result.median is not None
+
+
+def test_qc_edge_cases_keep_old_semantics():
+    assert qc_from_frames([_row(None, "COMPUTE_INVALID", i * 0.1) for i in range(10)]).reason == (
+        "invalid_frames"
+    )
+    clean = qc_from_frames(_stable_rows(40))
+    assert clean.status == "PASS" and clean.representative_value is not None
+    # 帧不足 3 条 / 从未算过 κ25 的旧 V1 帧：不写 QC（与旧行为一致）
+    assert qc_from_frames(_stable_rows(2)) is None
+    assert qc_from_frames([{"kappa_25_us_cm": None, "quality_flags": "SIMULATED"}] * 5) is None
+
+
+def test_simulator_voltage_oor_experiment_qc_fails(tmp_path, monkeypatch):
+    """端到端复现审查 #1：显式 voltage_oor 故障跑一轮，停止后 QC 必须是 FAIL。"""
+    cfg = tmp_path / "sim.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "driver": "simulator",
+                "mode": "stable",
+                "fault_kind": "voltage_oor",
+                "fault_start_s": 0.0,
+                "sample_rate_hz": 20,
+                "sweep_seconds": 0.0,
+                "settle_seconds": 0.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EC_DRIVER", "simulator")
+    monkeypatch.setenv("EC_SIM_CONFIG", str(cfg))
+    monkeypatch.setenv("EC_DB_PATH", str(tmp_path / "oor.db"))
+    with TestClient(app) as c:
+        exp_id = c.post("/api/experiment/start").json()["experiment_id"]
+        time.sleep(1.2)
+        c.post("/api/experiment/stop")
+        sample = storage.get_samples(exp_id)[0]
+    assert sample["qc_status"] == "FAIL"
+    assert sample["qc_reason"] == "hard_quality_flag"
+    assert sample["representative_value"] is None
