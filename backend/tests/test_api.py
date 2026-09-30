@@ -1,25 +1,17 @@
 """pytest + FastAPI TestClient 覆盖：协议格式、控制状态机、持久化与导出 API。"""
 
-import os
 import queue
 import threading
 import time
 
 import pytest
-from fastapi.testclient import TestClient
-
-from app.main import app
 
 
 @pytest.fixture()
-def client(tmp_path):
-    """带 lifespan 的 TestClient：启动/关闭持久化服务；DB 指向临时文件。"""
-    os.environ["EC_DB_PATH"] = str(tmp_path / "api_test.db")
-    os.environ["EC_ENABLE_DEBUG_ENDPOINTS"] = "1"
-    with TestClient(app) as c:
-        yield c
-    os.environ.pop("EC_DB_PATH", None)
-    os.environ.pop("EC_ENABLE_DEBUG_ENDPOINTS", None)
+def client(client, monkeypatch):
+    """公共 client 之上开启调试接口（EC_ENABLE_DEBUG_ENDPOINTS 按请求读取）。"""
+    monkeypatch.setenv("EC_ENABLE_DEBUG_ENDPOINTS", "1")
+    return client
 
 
 def _receive_json_with_timeout(ws, timeout: float):
