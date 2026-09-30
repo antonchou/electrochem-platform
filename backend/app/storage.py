@@ -556,7 +556,12 @@ def update_sample_qc(
     k25_mean: Optional[float] = None,
     k25_sd: Optional[float] = None,
 ) -> None:
-    """把判稳/QC 结果写入 samples（REQ-D-003）。仅更新已存在行；不存在则跳过。"""
+    """把判稳/QC 结果写入 samples（REQ-D-003）。仅更新已存在行；不存在则跳过。
+
+    代表值与窗口统计量描述的是“最近一次判稳”，整组直接覆写：旧实现用 COALESCE，
+    续跑后第二次停止判 WARN/FAIL（代表值为 None）时会留着第一次 PASS 的代表值，
+    界面出现“QC FAIL + 代表值 1413”的自相矛盾（09-30 修复轮）。
+    """
     import datetime
 
     checked = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -566,10 +571,10 @@ def update_sample_qc(
             UPDATE samples SET
                 qc_status            = ?,
                 qc_reason            = ?,
-                representative_value = COALESCE(?, representative_value),
-                k25_median           = COALESCE(?, k25_median),
-                k25_mean             = COALESCE(?, k25_mean),
-                k25_sd               = COALESCE(?, k25_sd),
+                representative_value = ?,
+                k25_median           = ?,
+                k25_mean             = ?,
+                k25_sd               = ?,
                 qc_checked_at_utc    = ?
             WHERE experiment_id = ? AND sample_id = ? AND sensor_path_id = ?
             """,
