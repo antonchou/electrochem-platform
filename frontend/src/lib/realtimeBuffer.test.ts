@@ -36,7 +36,7 @@ test('status/current-experiment binding clears only when the id actually changes
   assert.equal(buf.bindExperiment(7), false);
   assert.equal(buf.bindExperiment(undefined), false);
   assert.equal(buf.bindExperiment(null), false);
-  // 调试 burst / 浏览器模拟帧不带 id：直接追加，不影响归属
+  // 调试 burst 帧不带 id：直接追加，不影响归属
   buf.push(pt(0.1));
   assert.deepEqual(ts(buf), [0, 0.1]);
   assert.equal(buf.bindExperiment(9), true);

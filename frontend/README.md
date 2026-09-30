@@ -20,13 +20,12 @@ React 18 + TypeScript + Vite + Apache ECharts + CSS Modules + 原生 WebSocket�
 
 ```
 src/
-├── config/config.ts    # 集中配置：数据源模式、后端地址、曲线参数（唯一配置入口）
+├── config/config.ts    # 集中配置：后端地址、曲线参数（唯一配置入口）
 ├── types/protocol.ts   # 协议类型 + 消息校验 + 历史实验类型（Phase 7）
 ├── services/           # 通信层（与 UI 解耦）
 │   ├── websocketClient.ts  # 原生 WS：连接/解析/断线检测/自动重连/看门狗
 │   ├── apiClient.ts        # REST 控制 + 历史查询/导出（Phase 7）
-│   ├── browserMock.ts      # 纯浏览器模拟源（可选模式）
-│   └── index.ts            # ExperimentBridge 工厂（server / browser 二选一）
+│   └── index.ts            # ExperimentBridge：WS 实时流 + REST 控制/历史
 ├── lib/                # 纯函数：I–V 分析、单位换算（不碰 React）
 ├── hooks/              # 业务逻辑
 │   ├── useConnection.ts    # 连接状态 + 错误 + 手动重连
@@ -52,13 +51,11 @@ src/
 - **历史实验**：右上角「历史实验」打开面板 → 列表 → 详情（样品表 + 静态曲线）→ 导出 CSV/JSON。
 - **导出**：结果区与历史详情均有「导出 CSV」按钮（`/api/experiments/{id}/export.csv`）。
 
-> 历史/导出依赖后端接口，`browser` 模拟模式下不可用。
 
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `VITE_DATA_SOURCE` | `server` | `server` 连接后端；`browser` 用浏览器内置模拟源 |
 | `VITE_WS_URL` | 当前页面主机的 `ws(s)://…:8000/ws/stream` | 实时流地址 |
 | `VITE_API_BASE` | 当前页面主机的 `http(s)://…:8000` | REST 控制地址 |
 
@@ -90,5 +87,8 @@ npm run preview    # 预览构建产物
 
 ## 切模拟 ↔ 真实
 
-只修改 `.env.local` 中的 `VITE_DATA_SOURCE` / `VITE_WS_URL` / `VITE_API_BASE`，
-核心业务逻辑（hooks/页面/组件）零改动。browser 模式在无后端时也可完整演示。
+前端只连后端：用模拟源还是真实设备由后端 `EC_DRIVER` 决定（见 `docs/数据接口文档.md` §7），
+前端零改动。跨主机或反向代理时，改 `.env.local` 里的 `VITE_WS_URL` / `VITE_API_BASE`。
+
+> 浏览器内置模拟模式（`VITE_DATA_SOURCE=browser`）已于 2026-10-01 删除：它是与后端模拟器并行的
+> 第二套实现，行为会分叉，也没有测试覆盖。无硬件演示请启动后端（缺省即 Mock 模拟源）。

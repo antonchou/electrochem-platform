@@ -94,7 +94,9 @@ test('F04b 实时波形坐标：时间轴延伸且电压轴稳定覆盖读数', 
 
 test('F05 WebSocket：连接指定地址并解析约定 JSON', async ({ page }) => {
   await expect(page.getByTestId('connection-status')).toHaveText('已连接');
-  await expect(page.getByTestId('connection-panel')).toContainText('后端(WS)');
+  // 后端只在实验运行时推数据帧；约定 JSON 帧解析成功才会进缓冲
+  await page.getByTestId('btn-start').click();
+  await waitForPoints(page, 3);
 });
 
 test('开始实验：浓度写入结果区，停止后显示 QC', async ({ page }) => {

@@ -1,17 +1,13 @@
 /**
- * 集中配置：后端地址、数据源模式、曲线参数。
- * 切换「模拟数据源」与「真实后端」只需改环境变量，核心业务代码零改动。
+ * 集中配置：后端地址、曲线参数。
+ * 前端只连后端：用模拟源还是真实设备由后端 EC_DRIVER 决定，前端零改动。
  * 生产由 FastAPI 同源托管 dist（任意端口/反向代理均自动成立）；
  * 开发时 Vite :5173 默认连本机 :8000。可用 VITE_WS_URL / VITE_API_BASE 覆盖。
  * 详见 .env.example
  */
 
-export type DataSourceMode = 'server' | 'browser';
-
 export interface AppConfig {
-  /** 数据源模式 */
-  dataSource: DataSourceMode;
-  /** server 模式：WebSocket 实时流 + REST 控制（模拟源与真实后端共用这一套地址配置） */
+  /** WebSocket 实时流 + REST 控制（模拟源与真实后端共用这一套地址配置） */
   server: {
     wsUrl: string;
     apiBase: string;
@@ -50,7 +46,6 @@ function defaultServerUrls(): { wsUrl: string; apiBase: string } {
 const defaultServer = defaultServerUrls();
 
 export const config: AppConfig = {
-  dataSource: envStr('VITE_DATA_SOURCE', 'server') === 'browser' ? 'browser' : 'server',
   server: {
     wsUrl: envStr('VITE_WS_URL', defaultServer.wsUrl),
     apiBase: envStr('VITE_API_BASE', defaultServer.apiBase),
