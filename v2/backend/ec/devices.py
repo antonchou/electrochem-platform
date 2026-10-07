@@ -32,6 +32,7 @@ MAX_LINE_BYTES = 4096  # 固件一帧约 300 字节；攒到这么长还没换�
 # Ctrl-D 软重启并重新运行 main.py。Thonny 连接时会中断 main.py，断开后板子停在 REPL，不这样做就收不到帧；
 # MicroPython 只在普通 REPL 下软重启才运行 main.py，所以 Ctrl-B 不能省。
 RESTART_FIRMWARE = b"\x03\x02\x04"
+SILENT_READS = 5  # 出过帧后连续这么多次读超时（每次 1 s）都没有数据，判为设备停了；固件 1 Hz 出帧
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +184,9 @@ class SerialDevice:
     """ESP32 固件的串口帧。设备日志行（"# ..."）作为状态消息上报，前端能直接看到器件自检结果。
 
     每次打开串口都先让固件软重启（RESTART_FIRMWARE），所以每次连接都从器件自检开始，设备序号从 1 起。
+    「已连接」指正在收到设备帧，而不只是串口打开了：串口打开后、第一帧之前（固件自检中、板上没有
+    main.py、自检失败停在 REPL）都报未连接，这期间的设备日志照常上报；出帧后连续 SILENT_READS 次
+    读超时没有任何数据，也改报未连接。这样只有真有数据时才能开始测量，测量的参数快照也总带着设备元数据。
     """
 
     kind = "serial"
@@ -210,15 +214,22 @@ class SerialDevice:
                 yield DeviceStatus(False, f"打不开串口 {self.port}：{exc}")
                 await asyncio.sleep(RETRY_S)
                 continue
-            yield DeviceStatus(True, f"串口 {self.port} 已打开，正在重启固件")
+            yield DeviceStatus(False, f"串口 {self.port} 已打开，正在重启固件，等待设备数据")
             sequence = SequenceCheck()
             pending = b""
+            streaming = False  # 本次连接收到过帧，且之后没有长时间静默
+            silent = 0
             try:
                 await asyncio.to_thread(port.write, RESTART_FIRMWARE)
                 while True:
                     raw = await asyncio.to_thread(port.readline)
                     if not raw:
-                        continue  # 读超时：设备可能在自检或重启，继续等
+                        silent += 1  # 读超时：设备可能在自检或重启，继续等
+                        if streaming and silent >= SILENT_READS:
+                            streaming = False
+                            yield DeviceStatus(False, f"设备 {SILENT_READS} s 没有数据（固件停了或在重新初始化？）")
+                        continue
+                    silent = 0
                     # pyserial 的超时按整次调用计：帧恰好在超时边界到达时会先返回半行，攒齐换行再解析
                     pending += raw
                     if not pending.endswith(b"\n"):
@@ -228,9 +239,10 @@ class SerialDevice:
                     line, pending = pending, b""
                     kind, payload = parse_line(line.decode("utf-8", errors="replace"))
                     if kind == "frame":
+                        streaming = True
                         yield _with_sequence_flags(payload, sequence)
                     elif kind == "log":
-                        yield DeviceStatus(True, payload)
+                        yield DeviceStatus(streaming, payload)
             except Exception as exc:  # noqa: BLE001 - 串口拔掉等：上报后重连
                 yield DeviceStatus(False, f"串口断开：{exc}")
             finally:
