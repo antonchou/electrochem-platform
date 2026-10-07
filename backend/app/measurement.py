@@ -34,6 +34,8 @@ def compute_chain(
 
     参数校验（原路线图 §3：激励幅值/量程为台架选型项，不得以器件宣传参数冻结）：
     - voltage_v 必须为正（0/负电压无法定义电导）
+    - current_a 不得为负：U > 0 而 I < 0 说明电流采样接反，算出的负 G/κ 没有物理意义
+      （I = 0 合法，即电极在空气中的开路读数）
     - cell_constant_per_cm 必须为正
     - 温补分母 1 + α·(T-25) 不得为 0（α 或 T 导致分母归零时无法温补）
     """
@@ -43,6 +45,8 @@ def compute_chain(
         raise ValueError("cell_constant_per_cm and alpha_per_c must be finite")
     if not voltage_v > 0:
         raise ValueError("voltage_v must be positive")
+    if current_a < 0:
+        raise ValueError(f"current_a must not be negative (I={current_a}); check current-sense polarity")
     if not cell_constant_per_cm > 0:
         raise ValueError("cell_constant_per_cm must be positive")
     denominator = 1.0 + alpha_per_c * (temperature_c - 25.0)
