@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+import time
 
 import pytest
 
@@ -349,7 +350,17 @@ def test_failed_stop_marks_the_gap_in_the_recording(settings):
         m = await lab.start_measurement("a", None, None)
         await record(lab, device, clock, 2)
         real_insert = lab.store.insert_frames
-        lab.store.insert_frames = lambda rows: (_ for _ in ()).throw(OSError("locked"))
+        monitored = lab._monitor_count
+
+        def slow_failing_insert(rows):
+            # 写库要等到这一帧按监视处理完才失败。不能立即抛：Python 3.13 起，线程在登记回调前就结束时
+            # to_thread 会同步完成、不让出事件循环，这一帧就到不了「停止等待写库期间」
+            deadline = time.monotonic() + 5.0
+            while lab._monitor_count == monitored and time.monotonic() < deadline:
+                time.sleep(0.001)
+            raise OSError("locked")
+
+        lab.store.insert_frames = slow_failing_insert
         device.queue.put_nowait(reading())  # 停止等待写库期间到达的一帧：只按监视推送，没被记录
         with pytest.raises(Unavailable):
             await lab.stop_measurement()
