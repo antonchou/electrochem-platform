@@ -218,7 +218,12 @@ def create_app(settings: Settings | None = None, device: Device | None = None) -
             hub.unsubscribe(queue)
             for task in tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # 用 wait 而不是 gather：本协程自己被取消时（服务器关停），gather 抛出的是子任务的 CancelledError，
+            # 取消来源丢失，上层（anyio 的 cancel scope）认不出是自己发起的取消，会把它当成异常再抛出
+            await asyncio.wait(tasks)
+            for task in tasks:
+                if not task.cancelled():
+                    task.exception()  # 断线时 send/receive 抛异常是预期的：取走，免得被当成未处理异常打日志
 
     if (settings.static_dir / "index.html").is_file():
         app.mount("/", StaticFiles(directory=settings.static_dir, html=True), name="frontend")
