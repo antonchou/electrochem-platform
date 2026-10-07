@@ -631,3 +631,17 @@ def test_ws_ignores_binary_client_messages(client):
         client.post("/api/debug/bad-frame")
         msg = _receive_json_with_timeout(ws, 3.0)
         assert msg["ec"] == "abc"
+
+
+def test_cross_site_control_requests_are_rejected(client):
+    """跨站页面借访问者浏览器发的控制请求（简单请求，CORS 拦不住）要在服务端拒绝。"""
+    evil = {"Origin": "https://evil.example"}
+    assert client.post("/api/experiment/start", headers=evil).status_code == 403
+    assert client.post("/api/experiment/stop", headers=evil).status_code == 403
+    assert client.post("/api/experiment/reset", headers={"Origin": "null"}).status_code == 403
+    assert state.status == "idle"
+    assert client.get("/health", headers=evil).status_code == 200  # 只读请求不拦
+    # 同源、开发用 Vite、局域网教师机，以及不带 Origin 的脚本照常放行
+    for origin in ("http://testserver", "http://localhost:5173", "http://192.168.1.20:8000", None):
+        headers = {"Origin": origin} if origin else {}
+        assert client.post("/api/experiment/stop", headers=headers).status_code == 200, origin
