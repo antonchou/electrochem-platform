@@ -2,7 +2,7 @@
  * E2E 验收测试配置。
  * 自动拉起两个依赖服务：
  *  1) backend（FastAPI，端口 8000）
- *  2) frontend dev server（Vite，端口 5173）
+ *  2) frontend dev server（Vite，端口 5173；EC_E2E_FRONTEND_PORT 可改）
  * 本地 reuseExistingServer=true：如果服务已在运行则复用。
  * CI 必须自行拉起，且用 PATH 上的 python（无本地 .venv）。
  *
@@ -20,6 +20,10 @@ import { fileURLToPath } from 'node:url';
 import { API, BACKEND_PORT } from './tests/backend';
 
 const channel = process.env.E2E_BROWSER;
+// 前端 dev server 端口。Windows 上 Hyper-V / WinNAT 会动态保留端口段，5173 落进去时 Vite 报
+// listen EACCES；这时用 EC_E2E_FRONTEND_PORT 换一个端口（后端 CORS 允许 localhost 任意端口）
+const FRONTEND_PORT = Number(process.env.EC_E2E_FRONTEND_PORT || 5173);
+const FRONTEND = `http://localhost:${FRONTEND_PORT}`;
 const e2eOutputDir = path.join(tmpdir(), 'ec-e2e-results');
 const inCI = Boolean(process.env.CI);
 const configDir = path.dirname(fileURLToPath(import.meta.url));
@@ -44,7 +48,7 @@ export default defineConfig({
   outputDir: e2eOutputDir,
   reporter: [['list']],
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: FRONTEND,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     ...(channel ? { channel } : {}),
@@ -66,8 +70,9 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: 'cd ../../frontend && npm run dev',
-      url: 'http://localhost:5173',
+      // --port 覆盖 vite.config.ts 的端口；strictPort 仍生效，端口被占时直接报错
+      command: `cd ../../frontend && npm run dev -- --port ${FRONTEND_PORT}`,
+      url: FRONTEND,
       reuseExistingServer: !inCI,
       timeout: 60_000,
     },
