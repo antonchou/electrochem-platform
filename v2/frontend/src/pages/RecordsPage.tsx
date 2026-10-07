@@ -115,6 +115,7 @@ function Detail({ id, refreshKey }: { id: number; refreshKey: string }) {
   const [total, setTotal] = useState(0);
   const [raw, setRaw] = useState(false);
   const [alphaFit, setAlphaFit] = useState<TemperatureFit | null>(null);
+  const [alphaError, setAlphaError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const running = measurement?.status === 'running';
@@ -133,6 +134,7 @@ function Detail({ id, refreshKey }: { id: number; refreshKey: string }) {
         setMeasurement(m);
         setPoints(p.points);
         setTotal(p.total);
+        setError(null); // 进行中的测量每 3 s 刷新一次：一次网络抖动不该让详情一直停在错误上
       })
       .catch((e) => alive && setError(errorText(e)));
     return () => {
@@ -144,8 +146,7 @@ function Detail({ id, refreshKey }: { id: number; refreshKey: string }) {
   const rawOptions = useMemo(() => rawTimeOptions(), []);
   const data = useMemo(() => (raw ? rawTimeData(points) : kappaTimeData(points)), [raw, points]);
 
-  if (error) return <section className="card error">{error}</section>;
-  if (!measurement) return <section className="card">加载中……</section>;
+  if (!measurement) return <section className="card">{error ? <p className="error">{error}</p> : '加载中……'}</section>;
   const m = measurement;
 
   return (
@@ -195,16 +196,19 @@ function Detail({ id, refreshKey }: { id: number; refreshKey: string }) {
         </a>
         <button
           type="button"
-          onClick={() =>
+          onClick={() => {
+            setAlphaError(null);
             api
               .temperatureFit(m.id)
               .then(setAlphaFit)
-              .catch((e) => setError(errorText(e)))
-          }
+              .catch((e) => setAlphaError(errorText(e)));
+          }}
         >
           由 κ(T)–T 估计 α
         </button>
         {total > points.length && <span className="hint">曲线按 {points.length} / {total} 点等间隔抽样显示</span>}
+        {alphaError && <span className="error">{alphaError}</span>}
+        {error && <span className="error">刷新失败：{error}</span>}
       </div>
       <Chart options={raw ? rawOptions : kappaOptions} data={data} height={280} testId="detail-chart" />
       {alphaFit && <AlphaFit fit={alphaFit} />}
