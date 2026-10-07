@@ -131,7 +131,7 @@ EC_DEVICE=serial EC_SERIAL_PORT=/dev/ttyUSB0 .venv/bin/python -m ec
 
 浏览器打开 `http://127.0.0.1:8000`。
 
-- 连上后，页面顶栏的设备状态先显示「正在重启固件」，接着依次显示三个器件的自检日志，然后开始出读数。v2 每次打开串口都会让板子软重启（见第 3 节第 6 步），所以 `main.py` 必须已经存到设备上。
+- 串口打开后，设备先显示「未连接」，「测量」页的提示里依次出现「正在重启固件」和三个器件的自检日志；收到第一帧才变为已连接，「开始测量」随之可用。v2 每次打开串口都会让板子软重启（见第 3 节第 6 步），所以 `main.py` 必须已经存到设备上。出帧后连续 5 s 没有任何数据，设备会改回「未连接」。
 - 设备质量标志直接进判稳：`SATURATED`、`OPEN_CIRCUIT`、`SHORT_CIRCUIT`、`DROPOUT` 判 FAIL，`WAVEFORM_UNSTABLE` 判 WARN。温度无效的帧算不出 κ25，计为无效帧。U≤0 或 I<0 由 v2 标 `POLARITY`（FAIL）。
 - 帧里的 `device_id`、`firmware_version`、`range_id`、激励频率和幅值会在开始测量时存进参数快照，日后能查到每次测量用的是哪块板、哪个采样电阻。
 - 实验顺序：先在「标定」页用标准液标定 Kcell，再测样品。见 v2 README 的「一次典型的实验」。
@@ -184,5 +184,6 @@ EC_DRIVER=csv EC_CSV_PATH=$HOME/runs/r1k_bench.csv EC_CSV_SAMPLE_RATE_HZ=1 EC_CE
 | 帧里常驻 `WAVEFORM_UNSTABLE` | 设 `DIAG = True` 看 `u_pos_v`/`u_neg_v`：两者同号，说明采样电阻下端接了 GND 而不是 VB |
 | U 或 I 为负 | 接线方向反了，对调 `U_CH`/`I_CH` 的正负端（v2 标 `POLARITY`，原项目标 `COMPUTE_INVALID`） |
 | v2 / `capture_serial.py` 打不开串口 | Thonny 是否还连着设备；当前用户是否在 dialout 组 |
-| v2 显示串口已打开，但一直没有读数 | `main.py` 是否已存到设备上（Thonny 文件面板里「MicroPython 设备」下应有 `main.py`）；顶栏设备状态若有 `ERROR` 日志，按提示查；仍没有输出就按一下板上 EN 键 |
+| v2 一直停在「未连接」，提示停在「正在重启固件」 | `main.py` 是否已存到设备上（Thonny 文件面板里「MicroPython 设备」下应有 `main.py`）；仍没有输出就按一下板上 EN 键 |
+| v2 一直「未连接」，提示是 `ERROR …` 日志 | 固件自检失败，按日志提示和上面几行排查 |
 | 运行或导入时报 `MemoryError` | `main.py` 约 30 KB，要在板上现场编译，无 PSRAM 的板内存偏紧时可能失败。改为预编译：把 `main.py` 改名为 `ec_iv.py`，用与板上 MicroPython 同版本的 `mpy-cross` 编译成 `ec_iv.mpy` 并上传，再新建一个 `main.py`，只写两行：`import ec_iv` 和 `ec_iv.run()` |
