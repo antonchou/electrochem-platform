@@ -2,11 +2,14 @@
 
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -81,6 +84,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_cors_origin_pattern = re.compile(cors_origin_regex) if cors_origin_regex else None
+
+
+def write_origin_allowed(origin: str | None, host: str | None) -> bool:
+    """写请求的 Origin 是否可信：同源，或在 CORS 放行范围内。没有 Origin（curl、脚本）放行。
+
+    CORS 只拦浏览器读响应，不拦「简单请求」本身：stop/reset 与不带请求体的 start 都是简单请求，
+    任意网页都能借访问者的浏览器把它们发出去并被执行。所以写请求要在服务端按 Origin 再拦一次。
+    """
+    if not origin:
+        return True
+    if urlsplit(origin).netloc == host:  # 同源：生产由后端托管 dist
+        return True
+    if origin in cors_origins:
+        return True
+    return bool(_cors_origin_pattern and _cors_origin_pattern.fullmatch(origin))
+
+
+@app.middleware("http")
+async def reject_cross_site_writes(request: Request, call_next):
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not write_origin_allowed(
+        request.headers.get("origin"), request.headers.get("host")
+    ):
+        return JSONResponse({"detail": "拒绝跨站请求"}, status_code=403)
+    return await call_next(request)
 
 app.include_router(router)
 
