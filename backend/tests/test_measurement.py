@@ -62,6 +62,13 @@ def test_invalid_voltage_rejected():
         compute_chain(-1.0, 1e-3, 25.0, KCELL, ALPHA)
 
 
+def test_negative_current_rejected_but_zero_allowed():
+    """N5：U > 0、I < 0 是电流采样接反，不能产出负的 G/κ；I = 0（电极在空气中）合法。"""
+    with pytest.raises(ValueError, match="current_a"):
+        compute_chain(1.0, -1e-4, 25.0, KCELL, ALPHA)
+    assert compute_chain(1.0, 0.0, 25.0, KCELL, ALPHA).kappa_25_us_cm == 0.0
+
+
 def test_invalid_cell_constant_rejected():
     with pytest.raises(ValueError, match="cell_constant"):
         compute_chain(1.0, 1e-3, 25.0, 0.0, ALPHA)
