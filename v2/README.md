@@ -76,6 +76,8 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
+接 ESP32 时，服务用户要在 `dialout` 组里才能打开 `/dev/ttyUSB0`（`sudo usermod -aG dialout pi`，重新登录后生效），否则页面一直显示「打不开串口……Permission denied」。烧录固件用的 Thonny 要先关掉，它和服务不能同时占用串口。
+
 Chromium Kiosk 自启可沿用原项目 `scripts/deploy/setup.sh` 的写法，把地址指向 `http://127.0.0.1:8000`。
 
 ## 目录
