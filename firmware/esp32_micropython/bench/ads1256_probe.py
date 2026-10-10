@@ -4,7 +4,7 @@ import time
 
 # VSPI 默认引脚；DRDY=16（GPIO4 已被 DS18B20 占用）
 spi = SPI(2, baudrate=1_000_000, polarity=0, phase=1,   # ADS1256 是 SPI mode1
-          sck=Pin(18), mosi=Pin(6), miso=Pin(19))
+          sck=Pin(18), mosi=Pin(6), miso=Pin(13))   # DOUT 接 GPIO13：GPIO19 是 S3 原生 USB 的 D−
 cs = Pin(5, Pin.OUT, value=1)
 drdy = Pin(16, Pin.IN, pull=Pin.PULL_UP)
 
