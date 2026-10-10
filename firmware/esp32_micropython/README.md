@@ -8,18 +8,21 @@
 |---|---|---|
 | `main.py` | ESP32（MicroPython） | 器件初始化与自检、方波激励、U/I/T 采样、质量标志、JSON 帧输出；附 REPL 台架工具 |
 | `capture_serial.py` | 树莓派（python3 + pyserial） | 串口帧存成 `.jsonl`（全字段）、`.csv`（回放格式）和 `.log`（设备日志） |
+| `bench/` | ESP32（Thonny F5 直接跑） | 树莓派上实际在用的台架脚本，2026-10-10 原样同步，见第 9 节 |
 
 **边界**：固件只产出 U/I/T 和 `quality_flags`，不算 G/κ(T)/κ25（计算链在主机：v2 的 `ec/chemistry.py`，原项目的 `measurement.py`），也不做通道校准（Raw 按标称 VREF、PGA、`R_SHUNT_OHM` 换算）。电池常数 Kcell 由平台用标准液标定。
 
-## 1. 接线（经典 ESP32 台架板）
+## 1. 接线（台架板）
+
+引脚与 `bench/` 里实测通过的脚本一致（2026-10-10 同步）。ADS1256 的 DIN 接 GPIO6：经典 ESP32 的 GPIO6~11 接片上 flash，不能用，所以现在这块板应是 ESP32-S3 一类。换回经典 ESP32 时 DIN 改接 GPIO23，`main.py` 的 `ADS_MOSI` 同步改。
 
 | 器件 | 引脚 | 接 ESP32 / 电源 |
 |---|---|---|
 | ADS1256 | VCC / GND | 5V / GND |
-| | SCLK / DIN / DOUT / CS / DRDY | GPIO18 / GPIO23 / GPIO19 / GPIO5 / GPIO16 |
+| | SCLK / DIN / DOUT / CS / DRDY | GPIO18 / GPIO6 / GPIO19 / GPIO5 / GPIO16 |
 | | /RESET、/PDWN、/SYNC | 3V3（悬空会状态不定） |
 | MCP4728 | VCC / GND | 3V3 / GND |
-| | SDA / SCL / LDAC | GPIO21 / GPIO22 / GND |
+| | SDA / SCL / LDAC | GPIO8 / GPIO9 / GND |
 | DS18B20 | VCC / GND / DQ | 3V3 / GND / GPIO4，DQ 加 4.7 kΩ 上拉到 3V3 |
 
 所有 GND 共地。模拟前端的接法如下。VB 输出中点电压（1.024 V）作虚拟地，VA 在「中点 ± 幅值」之间翻转，电池两端就是正负交替的方波：
@@ -41,15 +44,15 @@ U = AIN0 − AIN1（电池两端）    I = (AIN2 − AIN3) / R_SHUNT_OHM
 
 - 采样电阻的下端必须接 VB，不能接 GND。接 GND 时电池上会叠加约 1 V 直流。这低于水的分解电压（1.23 V），不会明显析气，但电极会持续极化、读数随时间下降，还可能发生溶解氧还原、电极金属溶出等副反应。
 - 1.024 V 是对地共模电平，电池本身只看到 VA−VB。所以浸在溶液里的温度探头外壳、金属容器等不能与电路地导通，否则共模电平会经它们形成直流通路。可以用万用表量一下探头外壳到 GND 是否开路。
-- R_SHUNT 取与电池阻抗同一量级，U 和 I 两路共用一个 PGA。例：1413 µS/cm、Kcell≈1 的电池约 0.7 kΩ，配 1 kΩ 采样电阻。
+- R_SHUNT 取与电池阻抗同一量级，U 和 I 两路共用一个 PGA。例：1413 µS/cm、Kcell≈1 的电池约 0.7 kΩ，配 1 kΩ 采样电阻。台架现在用的是 10 kΩ，测高电导溶液时电池上分到的电压很小，必要时换小阻值并同步改 `R_SHUNT_OHM`。
 - MCP4728 直接驱动时，回路电流建议 ≤1 mA（幅值 / (R_cell + R_SHUNT)）。电流更大或负载阻抗更低时，要加运放缓冲。
-- 引脚都集中在 `main.py` 顶部「配置」区。换 ESP32-S3 时要改引脚（S3 没有 GPIO22~25）。
+- 引脚都集中在 `main.py` 顶部「配置」区。
 
 ## 2. 配置（`main.py` 顶部）
 
 | 配置 | 缺省 | 说明 |
 |---|---|---|
-| `R_SHUNT_OHM` ★ | 1000.0 | **必须与实物一致**，I 由它换算 |
+| `R_SHUNT_OHM` ★ | 10000.0 | **必须与实物一致**，I 由它换算（台架现用 10 kΩ） |
 | `U_CH` / `I_CH` | (0,1) / (2,3) | 差分对（正端, 负端），8 = AINCOM；读数为负就对调正负端 |
 | `EXC_FREQ_HZ` / `EXC_AMPLITUDE_V` | 10 / 0.2 | 方波频率与幅值（VA−VB 的半峰峰值）。溶液测量幅值宜小 |
 | `CYCLES_PER_FRAME` / `WARMUP_CYCLES` / `FRAME_PERIOD_MS` | 4 / 1 / 1000 | 每帧先跑 1 个预热周期（不计入），再跑 4 个计入周期，然后电池回 0 V 静息，1 Hz 出帧 |
@@ -60,8 +63,8 @@ U = AIN0 − AIN1（电池两端）    I = (AIN2 − AIN3) / R_SHUNT_OHM
 
 ## 3. 用 Thonny 烧录（树莓派）
 
-1. ESP32 插到树莓派 USB 口（`/dev/ttyUSB0`），板上需已刷好 MicroPython。
-2. Thonny：运行 → 配置解释器 → **MicroPython (ESP32)**，端口选 `/dev/ttyUSB0`。在 Shell 里执行 `import sys; sys.platform`，应显示 `'esp32'`。
+1. ESP32 插到树莓派 USB 口，板上需已刷好 MicroPython。端口以 `ls /dev/ttyUSB* /dev/ttyACM*` 为准：CH340/CP210x 串口芯片是 `/dev/ttyUSB0`，S3 原生 USB 或 CH343 一般是 `/dev/ttyACM0`；下文和 v2 的 `EC_SERIAL_PORT` 都按实际端口填。
+2. Thonny：运行 → 配置解释器 → **MicroPython (ESP32)**，端口选上一步的设备。在 Shell 里执行 `import sys; sys.platform`，应显示 `'esp32'`。
 3. 打开 `main.py`，按实物修改配置。
 4. **先探测**：按 F5 运行一次，Shell 里依次出现三个器件的自检结果，随后开始出帧；按 Stop 停止。也可以只做探测、不加激励：在 Shell 里输入 `import main`，再输入 `main.probe()`。
 5. **固化**：文件 → 另存为… → MicroPython 设备 → 文件名填 `main.py`。之后一上电（或按板上 EN 键）就会自动开始输出，不需要 Thonny。
@@ -170,7 +173,8 @@ EC_DRIVER=csv EC_CSV_PATH=$HOME/runs/r1k_bench.csv EC_CSV_SAMPLE_RATE_HZ=1 EC_CE
 - MicroPython + I2C DAC 下，方波频率实用上限约几十 Hz，kHz 级激励需要硬件波形发生。本固件的定位是台架验证与低频探索，实际频率随帧记录在 `excitation_frequency_hz`。
 - **低频极化误差**：电极界面的双电层相当于与溶液电阻串联的电容，频率越低、溶液电导越高，读数越偏低。按光面裸电极（约 1 cm²，双电层 10~50 µF）估算，10 Hz 测 1413 µS/cm 可能偏低 25%~86%；电阻负载没有这个问题，镀铂黑电极可降到 0.2% 左右。上溶液前要在台架上实测判定：同一溶液分别用 `SETTLE_FRACTION` 0.35 和 0.9、或 `EXC_FREQ_HZ` 5/10/20 Hz 各采一段，G 不随采样点和频率变化才可信。极化造成的偏低是**稳定的**偏低，v2 判稳照样显示「稳定」：判稳只看读数稳不稳，不看准不准。用电导率接近样品的标准液标定能吸收一部分，但偏低程度随电导率变化，浓度系列（线性标定、Kohlrausch 拟合）会被扭曲。
 - 激励按帧突发：每帧激励约 500 ms，其余时间电池两端为 0 V。每个周期正负对称，净直流为 0。
-- 本固件只在 CPython 上用模拟硬件（ADS1256 协议/时序、MCP4728、DS18B20、电阻网络、ticks 回绕）验证过逻辑，并把输出经 `capture_serial.py` → CSV → 后端 CSV 驱动 + 计算链核对过数值。**还没在实物上跑过**，首次上板请按第 6 节从 `probe()` 开始。
+- 器件链路已在实物上打通（截至 2026-10-10，见第 9 节的台架脚本）：ADS1256、MCP4728、DS18B20 各自读写正常，直流法已能出表观电导率。
+- 本固件只在 CPython 上用模拟硬件（ADS1256 协议/时序、MCP4728、DS18B20、电阻网络、ticks 回绕）验证过逻辑，并把输出经 `capture_serial.py` → CSV → 后端 CSV 驱动 + 计算链核对过数值。**`main.py` 本身还没在实物上跑过**，首次上板请按第 6 节从 `probe()` 开始。
 
 ## 8. 排障速查
 
@@ -179,7 +183,7 @@ EC_DRIVER=csv EC_CSV_PATH=$HOME/runs/r1k_bench.csv EC_CSV_SAMPLE_RATE_HZ=1 EC_CE
 | ADS1256 `STATUS=0x00` | **先查模块 5V 供电**：未供电时芯片经 ESD 钳位把所有线拉到低电平，DRDY 看起来也「正常拉低」。供电正常再查 DOUT→GPIO19、CS→GPIO5 |
 | ADS1256 `STATUS=0xFF` | MISO 恒高：查接线、SPI 模式 |
 | ADS1256 自校准超时 | DRDY→GPIO16 断线（一直为高） |
-| 未找到 MCP4728 | 日志里的 I2C scan 结果；SDA/SCL 是否接反；VDD/GND；上拉电阻 |
+| 未找到 MCP4728 | 日志里的 I2C scan 结果；SDA→GPIO8、SCL→GPIO9 是否接反；VDD/GND；上拉电阻 |
 | DS18B20 未就绪 | DQ→GPIO4 与 4.7 kΩ 上拉；防水探头线色没有统一标准，要用万用表确认 |
 | 帧里常驻 `WAVEFORM_UNSTABLE` | 设 `DIAG = True` 看 `u_pos_v`/`u_neg_v`：两者同号，说明采样电阻下端接了 GND 而不是 VB |
 | U 或 I 为负 | 接线方向反了，对调 `U_CH`/`I_CH` 的正负端（v2 标 `POLARITY`，原项目标 `COMPUTE_INVALID`） |
@@ -187,3 +191,28 @@ EC_DRIVER=csv EC_CSV_PATH=$HOME/runs/r1k_bench.csv EC_CSV_SAMPLE_RATE_HZ=1 EC_CE
 | v2 一直停在「未连接」，提示停在「正在重启固件」 | `main.py` 是否已存到设备上（Thonny 文件面板里「MicroPython 设备」下应有 `main.py`）；仍没有输出就按一下板上 EN 键 |
 | v2 一直「未连接」，提示是 `ERROR …` 日志 | 固件自检失败，按日志提示和上面几行排查 |
 | 运行或导入时报 `MemoryError` | `main.py` 约 30 KB，要在板上现场编译，无 PSRAM 的板内存偏紧时可能失败。改为预编译：把 `main.py` 改名为 `ec_iv.py`，用与板上 MicroPython 同版本的 `mpy-cross` 编译成 `ec_iv.mpy` 并上传，再新建一个 `main.py`，只写两行：`import ec_iv` 和 `ec_iv.run()` |
+
+## 9. 台架脚本 `bench/`（树莓派上的现行程序）
+
+`bench/` 是树莓派上实际在用的 MicroPython 脚本，2026-10-10 原样同步进仓库，不经 `main.py`，用 Thonny 打开后按 F5 直接在 ESP32 上跑。上面第 1 节的引脚就是按它们定的。
+
+| 脚本 | 作用 | 状态 |
+|---|---|---|
+| `temptest.py` | DS18B20（GPIO4）每秒打印温度 | 已通 |
+| `ads1256_probe.py` | ADS1256 三步探测：STATUS/ID=3 → 寄存器写读 → 自校准 + 读 AIN0 | 已通（MOSI 已改 GPIO6） |
+| `mcp4728_test.py` | MCP4728（SoftI2C，SDA=8/SCL=9，100 kHz）四路按码值输出，打印理论电压 | 已通 |
+| `electrode_measure.py` | DAC A 加约 0.5 V 直流，循环读电极 A0−A1 与采样电阻 A2−A3，`R_SHUNT` 未填时不算电流 | 前一版，已被下一行取代 |
+| `electrochem.py` | **现行版**：同上的直流激励，`R_SHUNT=10 kΩ`、`CELL_K_CM=1.5`；每组前后各读一遍 U/I，变化大就跳过，否则打印表观电阻、电导和电导率（µS/cm、mS/cm）；退出时把 DAC A 清零 | 在用 |
+
+这批脚本与 `main.py` 的区别：
+
+| | `bench/electrochem.py` | `main.py` |
+|---|---|---|
+| 激励 | 直流 0.5 V（DAC 以 VDD=3.3 V 为基准，码值 621） | 双极性方波，VB 中点作虚拟地，净直流为 0 |
+| ADS1256 | 50 SPS、缓冲开、PGA=1；每次换通道 SYNC+WAKEUP 后等 DRDY | 1000 SPS，按 U I I U 交错采平台段 |
+| 输出 | 中文文本，在板上直接算 G 和 κ（无温度补偿） | 每帧一行 JSON，只出 U/I/T 和质量标志，G/κ/κ25 由 v2 算 |
+| 接平台 | 不能，v2 读不了它的输出 | v2 `EC_DEVICE=serial` 直读 |
+
+直流法读出的是**表观**电导率：直流下电极持续极化，读数含界面压降，通常随时间下降、比真实值偏低，程序里也是这么标注的。它适合确认整条模拟链路接对了、量级对不对；要进 v2 判稳和标定，用 `main.py` 的方波法，并先做第 7 节的极化检查。
+
+把 `bench/` 的结论接到 `main.py` 时注意：`electrochem.py` 运行时 DAC B~D 都是 0 V，而 `main.py` 要求采样电阻下端接 DAC B（中点 1.024 V）。如果实物里采样电阻下端接的是 GND，上 `main.py` 前要改接到 VB（理由见第 1 节）。
