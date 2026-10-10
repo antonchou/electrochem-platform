@@ -187,6 +187,7 @@ EC_DRIVER=csv EC_CSV_PATH=$HOME/runs/r1k_bench.csv EC_CSV_SAMPLE_RATE_HZ=1 EC_CE
 | ADS1256 自校准超时 | DRDY→GPIO16 断线（一直为高） |
 | 未找到 MCP4728 | 日志里的 I2C scan 结果；SDA→GPIO8、SCL→GPIO9 是否接反；VDD/GND；上拉电阻 |
 | DS18B20 未就绪 | DQ→GPIO4 与 4.7 kΩ 上拉；防水探头线色没有统一标准，要用万用表确认 |
+| DS18B20 未就绪，但 GPIO4 空闲电平读到 1 | 读到 1 不能证明上拉正常，悬空的输入也可能读成 1。断电后量 GPIO4 排针 ↔ 3V3 排针，应稳定在约 4.7 kΩ；几百 kΩ 到 MΩ 且读数乱跳，就是上拉没接通。10-10 台架上就是面包板连接不通（电源轨断开、插错排），把探头和上拉电阻改用杜邦线直接插 ESP32 排针后恢复正常 |
 | 帧里常驻 `WAVEFORM_UNSTABLE` | 设 `DIAG = True` 看 `u_pos_v`/`u_neg_v`：两者同号，说明采样电阻下端接了 GND 而不是 VB |
 | U 或 I 为负 | 接线方向反了，对调 `U_CH`/`I_CH` 的正负端（v2 标 `POLARITY`，原项目标 `COMPUTE_INVALID`） |
 | v2 / `capture_serial.py` 打不开串口 | Thonny 是否还连着设备；当前用户是否在 dialout 组 |
