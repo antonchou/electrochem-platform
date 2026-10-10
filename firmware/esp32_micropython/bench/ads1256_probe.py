@@ -50,9 +50,9 @@ st = rreg(0)
 print('STATUS = 0x%02X, ID = %d（期望 3）' % (st, st >> 4))
 
 # ---- 2. 寄存器写读回路 ----
-wreg(2, 0x08)                               # ADCON: 时钟输出关, gain=1
+wreg(2, 0x00)                               # ADCON: 时钟输出关、传感器检测电流关、PGA=1（复位值是 0x20，读回 0x00 才说明写入生效）
 wreg(1, 0x01)                               # MUX: AIN0 对 AINCOM
-print('ADCON = 0x%02X（期望 0x08）, MUX = 0x%02X（期望 0x01）' % (rreg(2), rreg(1)))
+print('ADCON = 0x%02X（期望 0x00）, MUX = 0x%02X（期望 0x01）' % (rreg(2), rreg(1)))
 
 # ---- 3. 自校准 + 读转换值（AIN0 短接 GND 应 ≈0V）----
 xfer(0xF0)                                  # SELFCAL
@@ -61,6 +61,9 @@ wait_drdy()
 cs.value(0)
 spi.write(b'\x01')                          # RDATA
 time.sleep_us(50)
-raw = int.from_bytes(spi.read(3), 'msb', True)   # 有符号 24bit, MSB 在前
+d = spi.read(3)                             # 24 位二进制补码，MSB 在前
 cs.value(1)
+raw = (d[0] << 16) | (d[1] << 8) | d[2]     # MicroPython 的 int.from_bytes 不支持 signed，手动补码
+if raw & 0x800000:
+    raw -= 1 << 24
 print('raw = %d, U = %.6f V (AIN0-AINCOM)' % (raw, raw * (2 * VREF) / 0x7FFFFF))

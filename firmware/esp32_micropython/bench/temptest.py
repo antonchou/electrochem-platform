@@ -8,7 +8,10 @@ print("Found %d device(s):" % len(roms), roms)
 
 while True:
     ds.convert_temp()
-    time.sleep_ms(100)                # DS18B20 一次转换最长需 750ms
+    time.sleep_ms(750)                # 12 位转换最长 750ms；没等够读到的是上一次结果，冷启动时是 85°C 上电值
     for rom in roms:
-        print("T = %.2f C" % ds.read_temp(rom))
-    time.sleep(1)
+        try:
+            print("T = %.2f C" % ds.read_temp(rom))
+        except Exception as e:        # CRC 错等：打印后继续，不让循环退出
+            print("读取失败:", e)
+    time.sleep_ms(250)
