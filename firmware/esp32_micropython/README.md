@@ -14,14 +14,14 @@
 
 ## 1. 接线（台架板）
 
-台架板是 ESP32-S3（2026-10-10 确认），引脚与树莓派上 `bench/` 脚本所用的一致。换经典 ESP32 时 DIN 要改接 GPIO23（经典 ESP32 的 GPIO6~11 接片上 flash），`main.py` 的 `ADS_MOSI` 同步改。DOUT 接的 GPIO19 是 S3 原生 USB 的 D−：树莓派要接板上 USB 转串口芯片那个口，否则 SPI 一初始化串口就可能断开（审查报告 F5）。
+台架板是 ESP32-S3（2026-10-10 确认），引脚与树莓派上 `bench/` 脚本所用的一致。换经典 ESP32 时 DIN 要改接 GPIO23（经典 ESP32 的 GPIO6~11 接片上 flash），`main.py` 的 `ADS_MOSI` 同步改。DOUT 接 GPIO13（10-10 决策 D2，原接 GPIO19）：S3 的 GPIO19/20 是原生 USB 的 D−/D+，占用后树莓派插原生 USB 口时 SPI 一初始化串口就会断开（审查报告 F5）。改接后插哪个 USB 口都行。
 
 > **当前实物与下图不符**：采样电阻下端接的是 GND（10-10 确认），不是 VB。这样接时，`main.py` 一运行（包括 `probe()`），电池加采样电阻对地就有 1.024 V 直流，方波也不过零。上 `main.py` 前必须先把采样电阻下端改接到 MCP4728 VB（审查报告 F2、D1）。
 
 | 器件 | 引脚 | 接 ESP32 / 电源 |
 |---|---|---|
 | ADS1256 | VCC / GND | 5V / GND |
-| | SCLK / DIN / DOUT / CS / DRDY | GPIO18 / GPIO6 / GPIO19 / GPIO5 / GPIO16 |
+| | SCLK / DIN / DOUT / CS / DRDY | GPIO18 / GPIO6 / GPIO13 / GPIO5 / GPIO16 |
 | | /RESET、/PDWN、/SYNC | 3V3（悬空会状态不定） |
 | MCP4728 | VCC / GND | 3V3 / GND |
 | | SDA / SCL / LDAC | GPIO8 / GPIO9 / GND |
@@ -182,7 +182,7 @@ EC_DRIVER=csv EC_CSV_PATH=$HOME/runs/r1k_bench.csv EC_CSV_SAMPLE_RATE_HZ=1 EC_CE
 
 | 现象 | 先查 |
 |---|---|
-| ADS1256 `STATUS=0x00` | **先查模块 5V 供电**：未供电时芯片经 ESD 钳位把所有线拉到低电平，DRDY 看起来也「正常拉低」。供电正常再查 DOUT→GPIO19、CS→GPIO5 |
+| ADS1256 `STATUS=0x00` | **先查模块 5V 供电**：未供电时芯片经 ESD 钳位把所有线拉到低电平，DRDY 看起来也「正常拉低」。供电正常再查 DOUT→GPIO13、CS→GPIO5 |
 | ADS1256 `STATUS=0xFF` | MISO 恒高：查接线、SPI 模式 |
 | ADS1256 自校准超时 | DRDY→GPIO16 断线（一直为高） |
 | 未找到 MCP4728 | 日志里的 I2C scan 结果；SDA→GPIO8、SCL→GPIO9 是否接反；VDD/GND；上拉电阻 |

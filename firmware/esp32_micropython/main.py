@@ -35,9 +35,9 @@ from machine import Pin, SPI, I2C
 FIRMWARE_VERSION = "0.1.0-mpy"
 DEVICE_ID = None              # None = 按芯片 MAC 自动生成 "ESP32-IV-xxxxxx"，多块板无需逐块改
 
-# ADS1256（SPI mode 1）。GPIO4 已被 DS18B20 占用，DRDY 用 16
+# ADS1256（SPI mode 1）。GPIO4 已被 DS18B20 占用，DRDY 用 16；DOUT 用 13，避开 S3 原生 USB 的 GPIO19/20
 ADS_SPI_ID = 2
-ADS_SCK, ADS_MOSI, ADS_MISO, ADS_CS, ADS_DRDY = 18, 6, 19, 5, 16   # 与 bench/ads1256_probe.py 一致
+ADS_SCK, ADS_MOSI, ADS_MISO, ADS_CS, ADS_DRDY = 18, 6, 13, 5, 16   # 与 bench/ads1256_probe.py 一致
 ADS_BAUD = 1000000            # 上限 fCLKIN/4 ≈ 1.92 MHz
 ADS_VREF_V = 2.5              # 模块板载基准
 ADS_PGA = 1                   # 1/2/4/8/16/32/64，U、I 共用；满量程 ±2·VREF/PGA
