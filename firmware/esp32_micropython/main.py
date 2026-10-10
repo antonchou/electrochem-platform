@@ -32,7 +32,7 @@ import ds18x20
 from machine import Pin, SPI, I2C
 
 # ============================ 配置（按台架实物修改） ============================
-FIRMWARE_VERSION = "0.1.0-mpy"
+FIRMWARE_VERSION = "0.2.0-mpy"     # 0.2.0：缺省改为 25 Hz + 居中采样（2026-10-10 台架）
 DEVICE_ID = None              # None = 按芯片 MAC 自动生成 "ESP32-IV-xxxxxx"，多块板无需逐块改
 
 # ADS1256（SPI mode 1）。GPIO4 已被 DS18B20 占用，DRDY 用 16；DOUT 用 13，避开 S3 原生 USB 的 GPIO19/20
@@ -58,9 +58,11 @@ DAC_VGND_CH = 1               # 通道 B：虚拟地（中点）→ 采样电阻
 
 # 激励：双极性方波。按帧突发——每帧先跑 WARMUP_CYCLES 个预热周期（不计入），再跑 CYCLES_PER_FRAME
 # 个计入周期，然后电池两端回 0 V，在静息时段输出本帧、读温度。
-EXC_FREQ_HZ = 10.0            # 电阻负载可用；裸电极测溶液时频率越低极化误差越大，须台架验证（README 第 7 节）
+EXC_FREQ_HZ = 25.0            # 半周期 20 ms = 1 个 50 Hz 工频周期：正负半周相减时工频干扰抵消。10/40 Hz 会把它放大约 2 倍，
+                              # 并在 1 Hz 帧序列里混叠成慢速「正弦」起伏（10-10 台架实测）。改频率只取 50/(2k) Hz：25、12.5…
 EXC_AMPLITUDE_V = 0.2         # 幅值（VA−VB 的半峰峰值）；低频时界面承受大部分外加电压，溶液测量宜小
-SETTLE_FRACTION = 0.6         # 每个半周期前 60% 等待稳定，之后才采样
+SETTLE_FRACTION = 0.37        # 采样窗口以半周期中点为中心：25 Hz、N_PAIRS=2、1000 SPS 时窗口约占半周期 25%，即 37%~63%。
+                              # 界面电容电压在中点附近过零，极化误差一阶抵消。改频率 / N_PAIRS / 数据率后要按启动日志的单次读数耗时重新居中
 N_PAIRS = 2                   # 每个半周期采 U/I 的对数，按 U I I U … 交错（取偶数时 U、I 时间重心重合）
 WARMUP_CYCLES = 1             # 从静息启动的首周期不对称，丢弃
 CYCLES_PER_FRAME = 4
