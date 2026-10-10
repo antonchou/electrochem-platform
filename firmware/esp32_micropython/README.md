@@ -56,7 +56,8 @@ U = AIN0 − AIN1（电池两端）    I = (AIN2 − AIN3) / R_SHUNT_OHM
 |---|---|---|
 | `R_SHUNT_OHM` ★ | 10000.0 | **必须与实物一致**，I 由它换算（台架现用 10 kΩ） |
 | `U_CH` / `I_CH` | (0,1) / (2,3) | 差分对（正端, 负端），8 = AINCOM；读数为负就对调正负端 |
-| `EXC_FREQ_HZ` / `EXC_AMPLITUDE_V` | 10 / 0.2 | 方波频率与幅值（VA−VB 的半峰峰值）。溶液测量幅值宜小 |
+| `EXC_FREQ_HZ` / `EXC_AMPLITUDE_V` | 25 / 0.2 | 方波频率与幅值（VA−VB 的半峰峰值）。频率只取 50/(2k) Hz（25、12.5…），原因见第 7 节；溶液测量幅值宜小 |
+| `SETTLE_FRACTION` / `N_PAIRS` | 0.37 / 2 | 采样窗口起点与 U/I 采样对数。两者配合使窗口以半周期中点为中心（第 7 节）；改频率、对数或数据率后要重新居中 |
 | `CYCLES_PER_FRAME` / `WARMUP_CYCLES` / `FRAME_PERIOD_MS` | 4 / 1 / 1000 | 每帧先跑 1 个预热周期（不计入），再跑 4 个计入周期，然后电池回 0 V 静息，1 Hz 出帧 |
 | `ADS_PGA` / `ADS_DRATE_SPS` / `ADS_BUFFER` | 1 / 1000 / True | 缓冲打开时，各输入须在 0~3.0 V |
 | `DEVICE_ID` | None | None 时按芯片 MAC 生成 `ESP32-IV-xxxxxx`，多块板不用逐块改 |
@@ -78,8 +79,8 @@ Shell 里的输出长这样：以 `# ` 开头的是日志，其余每行是一�
 # INFO MCP4728 正常：addr=0x60，VA=VB=1.024 V（电池两端 0 V）
 # INFO ADS1256 正常：STATUS=0x30 ID=3，1000 SPS，PGA=1，缓冲开，已自校准
 # INFO DS18B20 正常：rom=28ff641e0f21035c，T=25.0625 °C
-# INFO 时序：单次读数 1265 µs；半周期 50000 µs（前 30000 µs 等稳定）；每帧激励 500 ms / 帧周期 1000 ms
-{"schema_version":2,"seq_no":1,"monotonic_ms":0,"voltage_raw_v":0.0999999,"current_raw_a":9.99999e-05,"temperature_raw_c":25.0625,"quality_flags":null,"device_id":"ESP32-IV-3C71BF","firmware_version":"0.1.0-mpy","range_id":"RS1000R_G1","excitation_frequency_hz":10.0,"excitation_amplitude_v":0.2}
+# INFO 时序：单次读数 1265 µs；半周期 20000 µs（前 7400 µs 等稳定）；每帧激励 200 ms / 帧周期 1000 ms
+{"schema_version":2,"seq_no":1,"monotonic_ms":0,"voltage_raw_v":0.0999999,"current_raw_a":9.99999e-05,"temperature_raw_c":25.0625,"quality_flags":null,"device_id":"ESP32-IV-3C71BF","firmware_version":"0.2.0-mpy","range_id":"RS1000R_G1","excitation_frequency_hz":25.0,"excitation_amplitude_v":0.2}
 ```
 
 REPL 台架工具（先按 Stop，再 `import main`）：
@@ -106,7 +107,7 @@ REPL 台架工具（先按 Stop，再 `import main`）：
 
 以下字段不由固件产出：`timestamp`/`t_seconds`（实验相对时间，后端计）、`timestamp_utc`（`capture_serial.py` 以主机接收时刻写入 `.jsonl`）、`sensor_path_id`/`calibration_id`/`compensation_model`（开始实验时由后端决定），以及 G/κ(T)/κ25。
 
-`G = I/U` 的取法（规格要求硬件冻结时唯一确定）在本固件中定为**方波平台段幅值法**：每个半周期先等 60% 时长让波形稳定，再按 U I I U 交错采样，让 U 与 I 的时间重心重合；正负半周相减，恒定零点偏置随之抵消。
+`G = I/U` 的取法（规格要求硬件冻结时唯一确定）在本固件中定为**方波居中采样幅值法**（0.2.0 起）：每个半周期里，采样窗口以半周期中点为中心，按 U I I U 交错采样，让 U 与 I 的时间重心重合；正负半周相减，恒定零点偏置随之抵消；激励取 25 Hz，使正负半周相隔正好一个 50 Hz 工频周期，工频干扰也在相减中抵消。0.1.0 用的是 10 Hz、在半周期 60%~70% 处采样，两版的帧可由 `firmware_version` 和 `excitation_frequency_hz` 区分。
 
 质量标志：
 
@@ -173,8 +174,9 @@ EC_DRIVER=csv EC_CSV_PATH=$HOME/runs/r1k_bench.csv EC_CSV_SAMPLE_RATE_HZ=1 EC_CE
 
 - U、I 由同一个 ADS1256 多路切换**分时**采样。交错采样只能对齐时间重心，不是同步采样；路线图 N7 要求的 U/I 同步偏差 <1 ms，要到后续 ESP32-S3 固件才能满足。
 - MicroPython + I2C DAC 下，方波频率实用上限约几十 Hz，kHz 级激励需要硬件波形发生。本固件的定位是台架验证与低频探索，实际频率随帧记录在 `excitation_frequency_hz`。
-- **低频极化误差**：电极界面的双电层相当于与溶液电阻串联的电容，频率越低、溶液电导越高，读数越偏低。按光面裸电极（约 1 cm²，双电层 10~50 µF）估算，10 Hz 测 1413 µS/cm 可能偏低 25%~86%；电阻负载没有这个问题，镀铂黑电极可降到 0.2% 左右。上溶液前要在台架上实测判定：同一溶液分别用 `SETTLE_FRACTION` 0.35 和 0.9、或 `EXC_FREQ_HZ` 5/10/20 Hz 各采一段，G 不随采样点和频率变化才可信。极化造成的偏低是**稳定的**偏低，v2 判稳照样显示「稳定」：判稳只看读数稳不稳，不看准不准。用电导率接近样品的标准液标定能吸收一部分，但偏低程度随电导率变化，浓度系列（线性标定、Kohlrausch 拟合）会被扭曲。
-- 激励按帧突发：每帧激励约 500 ms，其余时间电池两端为 0 V。每个周期正负对称，净直流为 0。
+- **工频干扰与激励频率**（2026-10-10 台架实测）：10 Hz 时正负半周的采样点相隔 2.5 个 50 Hz 周期，工频干扰在相减中被放大到约 2 倍（40 Hz 约 1.85 倍）；帧周期 1 s 又正好是 50 个工频周期，电网频偏让每帧的工频相位缓慢漂移，在 v2 曲线上表现为周期几十秒的「正弦」起伏。改为 25 Hz（半周期 = 1 个工频周期）后起伏消失。因此激励频率只取 50/(2k) Hz；在 60 Hz 电网下要相应改为 30、15 Hz。
+- **低频极化误差**：电极界面的双电层相当于与溶液电阻串联的电容，频率越低、溶液电导越高，读数越偏低；靠后采样还会放大这一误差，居中采样能在一阶上抵消它。光面铂片（台架现用 10×10 mm，间距 15 mm）的定量估算见 [`bench/审查报告.md`](bench/审查报告.md) 第七节。上溶液前要在台架上实测判定：同一溶液在 12.5 Hz 与 25 Hz（都居中采样）、以及 25 Hz 靠后采样（`SETTLE_FRACTION` 约 0.7）下各采一段，G 不随频率和采样位置变化才可信；变化超过约 1% 就要镀铂黑。极化造成的偏低是**稳定的**偏低，v2 判稳照样显示「稳定」：判稳只看读数稳不稳，不看准不准。用电导率接近样品的标准液标定能吸收一部分，但偏低程度随电导率变化，浓度系列（线性标定、Kohlrausch 拟合）会被扭曲。
+- 激励按帧突发：每帧激励约 200 ms（25 Hz 下 1 个预热 + 4 个计入周期），其余时间电池两端为 0 V。每个周期正负对称，净直流为 0。
 - 树莓派上的旧版台架脚本（第 9 节）在实物上的运行结果未经核实；台架验证步骤见 [`bench/审查报告.md`](bench/审查报告.md) 第五节。
 - 本固件只在 CPython 上用模拟硬件（ADS1256 协议/时序、MCP4728、DS18B20、电阻网络、ticks 回绕）验证过逻辑，并把输出经 `capture_serial.py` → CSV → 后端 CSV 驱动 + 计算链核对过数值。**`main.py` 本身还没在实物上跑过**，首次上板请按第 6 节从 `probe()` 开始。
 
