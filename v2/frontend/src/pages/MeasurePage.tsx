@@ -57,7 +57,14 @@ export function MeasurePage({ live, onShowRecord }: Props) {
   const latest = live.latest;
   const big = kappa(latest?.kappa25_us_cm);
   const lastFinished = lab?.last_finished ?? null;
-  const qc = live.qc;
+  const qc = running ? live.qc : (lastFinished?.qc ?? null);
+  const rep = kappa(qc?.representative_kappa25 ?? null);
+  const hasRep = qc?.representative_kappa25 != null;
+  const repNote = qc
+    ? qc.representative_kappa25 == null
+      ? '判稳未通过（FAIL），无代表值'
+      : `判稳窗口均值${qc.kappa25_sd != null ? ` ± ${fixed(qc.kappa25_sd, qc.kappa25_sd < 1 ? 3 : 1)}` : ''}`
+    : '开始测量后由判稳窗口计算';
 
   return (
     <div className="measure">
@@ -118,15 +125,36 @@ export function MeasurePage({ live, onShowRecord }: Props) {
       </section>
 
       <section className="card readout-card">
-        <div className="big-reading">
-          <span className="label">κ25</span>
-          <span className="value" data-testid="kappa25">
-            {big.text}
+        <div className="readout-head">
+          <span className="badge nofilter" data-testid="no-filter" title="所有读数均为每帧原始数据直接计算，未做平均、平滑或滤波处理">
+            无滤波
           </span>
-          <span className="unit">{big.unit}</span>
+          <span className="hint">所有读数为每帧原始数据直接计算，未做平均、平滑或滤波</span>
+        </div>
+        <div className="value-pair">
+          <div className="primary-reading">
+            <div className="big-reading">
+              <span className="label" title="原始值 κ(T) 按温度系数 α 补偿到 25 °C">温补值 κ25</span>
+              <span className="value" data-testid="kappa25">
+                {big.text}
+              </span>
+              <span className="unit">{big.unit}</span>
+            </div>
+            <p className="sub hint">原始值 κ(T) 按温度系数 α 补偿到 25 °C</p>
+          </div>
+          <div className="rep-reading">
+            <span className="label" title="判稳窗口内有效 κ25 的均值，判稳通过（PASS/WARN）时给出">
+              代表值 κ25
+            </span>
+            <span className="value" data-testid="representative-live">
+              {hasRep ? rep.text : '—'}
+            </span>
+            {hasRep && <span className="unit">{rep.unit}</span>}
+            <p className="sub hint">{repNote}</p>
+          </div>
         </div>
         <div className="small-readings">
-          <Reading label="κ(T)" text={kappaText(latest?.kappa_t_us_cm)} />
+          <Reading label="原始值 κ(T)" text={kappaText(latest?.kappa_t_us_cm)} testId="kappa-t" />
           <Reading label="G" {...joined(scaled(latest?.conductance_s, 'S'))} />
           <Reading label="U" {...joined(scaled(latest?.voltage_v, 'V'))} />
           <Reading label="I" {...joined(scaled(latest?.current_a, 'A'))} />

@@ -29,7 +29,7 @@ export function QcSummary({ qc }: { qc: Qc }) {
   return (
     <div className="qc">
       <dl className="facts">
-        <dt>代表 κ25</dt>
+        <dt>代表值 κ25</dt>
         <dd data-testid="representative">
           {qc.representative_kappa25 === null ? '—（不稳定，无代表值）' : kappaText(qc.representative_kappa25)}
           {qc.representative_kappa25 !== null && sd !== null ? ` ± ${fixed(sd, sd < 1 ? 3 : 1)}` : ''}

@@ -376,6 +376,54 @@ td.num {
   color: var(--muted);
 }
 
+.readout-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.badge.nofilter {
+  background: var(--amber-soft);
+  color: var(--amber);
+  border: 1px solid #fde68a;
+}
+
+.value-pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 40px;
+}
+
+.primary-reading .sub,
+.rep-reading .sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.rep-reading {
+  display: flex;
+  flex-direction: column;
+}
+
+.rep-reading .label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.rep-reading .value {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rep-reading .unit {
+  font-size: 14px;
+  color: var(--muted);
+}
+
 .big-reading {
   display: flex;
   align-items: baseline;
