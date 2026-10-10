@@ -1,7 +1,7 @@
 # main.py — electrochem-platform ESP32 I–V 台架采集固件（MicroPython）
 #
-# 硬件：ESP32 台架板 + ADS1256（SPI）+ MCP4728（I2C）+ DS18B20（1-Wire）。引脚按树莓派上实测通过的
-#       台架脚本（bench/，2026-10-10 同步）配置；MOSI 用 GPIO6，经典 ESP32 上那是 flash 引脚，板子应为 S3 一类。
+# 硬件：ESP32-S3 台架板 + ADS1256（SPI）+ MCP4728（I2C）+ DS18B20（1-Wire），引脚与树莓派上的 bench/ 脚本一致。
+#       ★ 本固件要求采样电阻下端接 MCP4728 VB；实物目前接 GND，上板前先改线（bench/审查报告.md F2）。
 # 测量：MCP4728 通道 B 输出中点电压作虚拟地，通道 A 在「中点 ± 幅值」间翻转，电池两端得到
 #       双极性方波；ADS1256 在每个半周期的平台段交错采 U（电池两端）和 I（采样电阻压降 / R），
 #       取「正半周均值 − 负半周均值」的一半作幅值，ADC/DAC 的恒定零点偏置在相减中抵消。
@@ -50,7 +50,7 @@ I_CH = (2, 3)                 # 采样电阻两端：AIN2 接电极 2 侧，AIN3
 R_SHUNT_OHM = 10000.0         # ★ 必须与实物一致：电流采样电阻阻值（Ω），I = V_shunt / R；台架现用 10 kΩ
 
 # MCP4728（I2C）
-I2C_ID, I2C_SCL, I2C_SDA, I2C_FREQ = 0, 9, 8, 100000   # 与 bench/mcp4728_test.py 一致（100 kHz 已实测）
+I2C_ID, I2C_SCL, I2C_SDA, I2C_FREQ = 0, 9, 8, 100000   # 与 bench/mcp4728_test.py 一致
 DAC_ADDR = None               # None = 在 0x60~0x67 自动查找
 DAC_VREF_V = 2.048            # 2.048 = 内部基准×1；4.096 = 内部基准×2（需 VDD≥4.5 V）；其他值 = 以 VDD 为基准
 DAC_DRIVE_CH = 0              # 通道 A：激励驱动端 → 电极 1
