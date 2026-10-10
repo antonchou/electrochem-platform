@@ -7,7 +7,8 @@
 > **进度声明**：本仓库的 `README.md` 与 `docs/` 为当前进度的唯一真相（Phase 3 + Phase 7 + 备选公式拟合已交付，见「里程碑」）。
 > 桌面版《树莓派电化学项目_交接文档_v1.0.docx》（2026-08-19）及旧《架构图》《全流程开发路线图》为历史快照；其 Phase 进度和 BA121S/CM2 模块路线均已过时。当前硬件路线见 `docs/电导率I-V测量链路与开发路线.md`。
 
-> **v2 重写**：`v2/` 子目录是按电导率 I–V 测量链路整体重写的独立版本（直连 ESP32 串口帧、标准液标定 Kcell、原始量落库），与本项目并存、互不依赖。见 [`v2/README.md`](v2/README.md) 与 [`v2/docs/设计说明.md`](v2/docs/设计说明.md)。
+> **主线已切到 v2（2026-10-10 起）**：后续开发和真实硬件接入都在 `v2/` 里进行。`v2/` 是按电导率 I–V 测量链路整体重写的版本：直连 ESP32 串口帧、用标准液标定 Kcell、原始量落库。见 [`v2/README.md`](v2/README.md) 与 [`v2/docs/设计说明.md`](v2/docs/设计说明.md)。
+> 根目录的原项目（下文简称 v1）**已冻结**：只修安全问题，留作参考和无硬件演示。它的验收记录（F01–F11、P02/P04/P05）和下文里程碑保持原样。
 
 ## 目录结构
 
@@ -15,7 +16,7 @@
 electrochem-platform/
 ├── backend/          # FastAPI 后端（实时流/控制/历史导出 + 模拟数据源）
 ├── frontend/         # React + TypeScript + Vite + ECharts Web UI
-├── firmware/         # ESP32-S3 固件（占位，后续阶段）
+├── firmware/         # ESP32-S3 台架固件（MicroPython，见 firmware/esp32_micropython/）
 ├── configs/          # 实验模板、设备与校准配置（版本化，rule 35/36）
 ├── data/
 │   ├── raw/          # 不可变原始数据（SQLite，append-only，不入 Git）
